@@ -206,6 +206,13 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# Generated protobuf stubs (run `make proto` to regenerate)
+packages/gen/src/vllm_grpc/v1/*_pb2.py
+packages/gen/src/vllm_grpc/v1/*_pb2_grpc.py
+
+# graphify output
+docs/graphs/
+
 # PyPI configuration file
 .pypirc
 

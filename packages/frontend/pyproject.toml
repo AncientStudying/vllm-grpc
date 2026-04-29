@@ -1,0 +1,19 @@
+[project]
+name = "vllm-grpc-frontend"
+version = "0.1.0"
+requires-python = ">=3.12"
+description = "gRPC frontend server for vllm-grpc"
+dependencies = [
+    "grpcio>=1.65",
+    "vllm-grpc-gen",
+]
+
+[tool.uv.sources]
+vllm-grpc-gen = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vllm_grpc_frontend"]

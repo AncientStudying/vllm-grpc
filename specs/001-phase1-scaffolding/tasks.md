@@ -19,10 +19,10 @@ description: "Task list for Phase 1 — Scaffolding"
 
 **Purpose**: Workspace root files that all packages depend on.
 
-- [ ] T001 Create root `pyproject.toml` declaring uv workspace with members `packages/gen`, `packages/proxy`, `packages/frontend` at `pyproject.toml`
-- [ ] T002 [P] Create `.python-version` containing `3.12` at `.python-version`
-- [ ] T003 [P] Update `.gitignore` to exclude `packages/gen/src/vllm_grpc/v1/*.py` (generated stubs only; keep `__init__.py` files) and standard Python ignores at `.gitignore`
-- [ ] T004 [P] Create root `Makefile` skeleton with empty targets: `proto`, `bootstrap`, `lint`, `typecheck`, `test`, `check`, `run-proxy`, `run-frontend` (targets will be filled in later phases) at `Makefile`
+- [x] T001 Create root `pyproject.toml` declaring uv workspace with members `packages/gen`, `packages/proxy`, `packages/frontend` at `pyproject.toml`
+- [x] T002 [P] Create `.python-version` containing `3.12` at `.python-version`
+- [x] T003 [P] Update `.gitignore` to exclude `packages/gen/src/vllm_grpc/v1/*.py` (generated stubs only; keep `__init__.py` files) and standard Python ignores at `.gitignore`
+- [x] T004 [P] Create root `Makefile` skeleton with empty targets: `proto`, `bootstrap`, `lint`, `typecheck`, `test`, `check`, `run-proxy`, `run-frontend` (targets will be filled in later phases) at `Makefile`
 
 ---
 
@@ -32,11 +32,11 @@ description: "Task list for Phase 1 — Scaffolding"
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T005 Create `proto/vllm_grpc/v1/health.proto` with `Health` service, `Ping` unary RPC, empty `HealthRequest`, and `HealthResponse { string message = 1; }` per `contracts/health-grpc.md` at `proto/vllm_grpc/v1/health.proto`
-- [ ] T006 Create `packages/gen/pyproject.toml` declaring `name = "vllm-grpc-gen"`, `version = "0.1.0"`, `src` layout, no external runtime deps at `packages/gen/pyproject.toml`
-- [ ] T007 [P] Create static namespace-package init files `packages/gen/src/vllm_grpc/__init__.py` and `packages/gen/src/vllm_grpc/v1/__init__.py` (empty files; committed to repo; stubs alongside them are gitignored) at `packages/gen/src/`
-- [ ] T008 Implement `make proto` target in `Makefile`: runs `uv run python -m grpc_tools.protoc -I proto --python_out=packages/gen/src --grpc_python_out=packages/gen/src proto/vllm_grpc/v1/health.proto` at `Makefile`
-- [ ] T009 Run `make proto` and verify `packages/gen/src/vllm_grpc/v1/health_pb2.py` and `health_pb2_grpc.py` are generated cleanly (manual validation checkpoint)
+- [x] T005 Create `proto/vllm_grpc/v1/health.proto` with `Health` service, `Ping` unary RPC, empty `HealthRequest`, and `HealthResponse { string message = 1; }` per `contracts/health-grpc.md` at `proto/vllm_grpc/v1/health.proto`
+- [x] T006 Create `packages/gen/pyproject.toml` declaring `name = "vllm-grpc-gen"`, `version = "0.1.0"`, `src` layout, no external runtime deps at `packages/gen/pyproject.toml`
+- [x] T007 [P] Create static namespace-package init files `packages/gen/src/vllm_grpc/__init__.py` and `packages/gen/src/vllm_grpc/v1/__init__.py` (empty files; committed to repo; stubs alongside them are gitignored) at `packages/gen/src/`
+- [x] T008 Implement `make proto` target in `Makefile`: runs `uv run python -m grpc_tools.protoc -I proto --python_out=packages/gen/src --grpc_python_out=packages/gen/src proto/vllm_grpc/v1/health.proto` at `Makefile`
+- [x] T009 Run `make proto` and verify `packages/gen/src/vllm_grpc/v1/health_pb2.py` and `health_pb2_grpc.py` are generated cleanly (manual validation checkpoint)
 
 **Checkpoint**: Foundation ready — stub files exist, gen package importable. User story work can begin.
 
@@ -50,24 +50,24 @@ description: "Task list for Phase 1 — Scaffolding"
 
 ### Package Setup for User Story 1
 
-- [ ] T010 Create `packages/frontend/pyproject.toml` with `name = "vllm-grpc-frontend"`, `grpcio` and `vllm-grpc-gen = {workspace = true}` deps, src layout, and `vllm_grpc_frontend.main:main` entry point at `packages/frontend/pyproject.toml`
-- [ ] T011 [P] Create `packages/proxy/pyproject.toml` with `name = "vllm-grpc-proxy"`, `fastapi`, `uvicorn[standard]`, `grpcio`, and `vllm-grpc-gen = {workspace = true}` deps, src layout, and `vllm_grpc_proxy.main:main` entry point at `packages/proxy/pyproject.toml`
+- [x] T010 Create `packages/frontend/pyproject.toml` with `name = "vllm-grpc-frontend"`, `grpcio` and `vllm-grpc-gen = {workspace = true}` deps, src layout, and `vllm_grpc_frontend.main:main` entry point at `packages/frontend/pyproject.toml`
+- [x] T011 [P] Create `packages/proxy/pyproject.toml` with `name = "vllm-grpc-proxy"`, `fastapi`, `uvicorn[standard]`, `grpcio`, and `vllm-grpc-gen = {workspace = true}` deps, src layout, and `vllm_grpc_proxy.main:main` entry point at `packages/proxy/pyproject.toml`
 
 ### Tests for User Story 1
 
-- [ ] T012 [P] [US1] Write unit tests for `HealthServicer` (call servicer method directly, assert `response.message == "pong"`) at `packages/frontend/tests/test_health_ping.py`
-- [ ] T013 [P] [US1] Write unit tests for `GET /healthz` (mock `GrpcHealthClient.ping`; test 200 path and 503 path when gRPC raises) using `httpx.AsyncClient` at `packages/proxy/tests/test_healthz.py`
-- [ ] T014 [P] [US1] Create `packages/frontend/tests/conftest.py` and `packages/proxy/tests/conftest.py` with shared pytest-asyncio fixtures at `packages/*/tests/conftest.py`
+- [x] T012 [P] [US1] Write unit tests for `HealthServicer` (call servicer method directly, assert `response.message == "pong"`) at `packages/frontend/tests/test_health_ping.py`
+- [x] T013 [P] [US1] Write unit tests for `GET /healthz` (mock `GrpcHealthClient.ping`; test 200 path and 503 path when gRPC raises) using `httpx.AsyncClient` at `packages/proxy/tests/test_healthz.py`
+- [x] T014 [P] [US1] Create `packages/frontend/tests/conftest.py` and `packages/proxy/tests/conftest.py` with shared pytest-asyncio fixtures at `packages/*/tests/conftest.py`
 
 ### Implementation for User Story 1
 
-- [ ] T015 [P] [US1] Implement `HealthServicer.Ping` returning `HealthResponse(message="pong")` in `packages/frontend/src/vllm_grpc_frontend/health.py`
-- [ ] T016 [US1] Implement `asyncio` gRPC server in `packages/frontend/src/vllm_grpc_frontend/main.py`: reads `FRONTEND_HOST` / `FRONTEND_PORT` env vars, registers `HealthServicer`, starts `grpc.aio` server at `packages/frontend/src/vllm_grpc_frontend/main.py`
-- [ ] T017 [P] [US1] Implement `GrpcHealthClient` in `packages/proxy/src/vllm_grpc_proxy/grpc_client.py`: opens insecure channel to `FRONTEND_ADDR`, calls `Health.Ping` with 2 s deadline, returns `HealthResponse` or raises at `packages/proxy/src/vllm_grpc_proxy/grpc_client.py`
-- [ ] T018 [US1] Implement `GET /healthz` FastAPI route in `packages/proxy/src/vllm_grpc_proxy/main.py`: calls `GrpcHealthClient.ping()`, returns `{"status":"ok"}` (200) or `{"status":"error","detail":"..."}` (503) per `contracts/rest-healthz.md` at `packages/proxy/src/vllm_grpc_proxy/main.py`
-- [ ] T019 [US1] Complete `Makefile` with `bootstrap` (`uv sync --frozen && make proto`), `run-frontend` (`uv run python -m vllm_grpc_frontend.main`), and `run-proxy` (`uv run uvicorn vllm_grpc_proxy.main:app`) targets at `Makefile`
-- [ ] T020 [US1] Create `scripts/curl/healthz.sh` that runs `curl -s http://localhost:${PROXY_PORT:-8000}/healthz` at `scripts/curl/healthz.sh`
-- [ ] T021 [US1] Write `README.md` developer onboarding section: prerequisites, `make bootstrap`, start frontend, start proxy, curl `/healthz`, expected output at `README.md`
+- [x] T015 [P] [US1] Implement `HealthServicer.Ping` returning `HealthResponse(message="pong")` in `packages/frontend/src/vllm_grpc_frontend/health.py`
+- [x] T016 [US1] Implement `asyncio` gRPC server in `packages/frontend/src/vllm_grpc_frontend/main.py`: reads `FRONTEND_HOST` / `FRONTEND_PORT` env vars, registers `HealthServicer`, starts `grpc.aio` server at `packages/frontend/src/vllm_grpc_frontend/main.py`
+- [x] T017 [P] [US1] Implement `GrpcHealthClient` in `packages/proxy/src/vllm_grpc_proxy/grpc_client.py`: opens insecure channel to `FRONTEND_ADDR`, calls `Health.Ping` with 2 s deadline, returns `HealthResponse` or raises at `packages/proxy/src/vllm_grpc_proxy/grpc_client.py`
+- [x] T018 [US1] Implement `GET /healthz` FastAPI route in `packages/proxy/src/vllm_grpc_proxy/main.py`: calls `GrpcHealthClient.ping()`, returns `{"status":"ok"}` (200) or `{"status":"error","detail":"..."}` (503) per `contracts/rest-healthz.md` at `packages/proxy/src/vllm_grpc_proxy/main.py`
+- [x] T019 [US1] Complete `Makefile` with `bootstrap` (`uv sync --frozen && make proto`), `run-frontend` (`uv run python -m vllm_grpc_frontend.main`), and `run-proxy` (`uv run uvicorn vllm_grpc_proxy.main:app`) targets at `Makefile`
+- [x] T020 [US1] Create `scripts/curl/healthz.sh` that runs `curl -s http://localhost:${PROXY_PORT:-8000}/healthz` at `scripts/curl/healthz.sh`
+- [x] T021 [US1] Write `README.md` developer onboarding section: prerequisites, `make bootstrap`, start frontend, start proxy, curl `/healthz`, expected output at `README.md`
 
 **Checkpoint**: `make bootstrap && make run-frontend & make run-proxy & curl localhost:8000/healthz` returns `{"status":"ok"}`. User Story 1 independently complete.
 
@@ -81,16 +81,16 @@ description: "Task list for Phase 1 — Scaffolding"
 
 ### Tests for User Story 2
 
-- [ ] T022 [P] [US2] Verify `make lint` passes locally (must show zero ruff errors and zero format violations) across `packages/`
-- [ ] T023 [P] [US2] Verify `make typecheck` passes locally (`mypy --strict` on `packages/proxy/src` and `packages/frontend/src`) with zero errors
+- [x] T022 [P] [US2] Verify `make lint` passes locally (must show zero ruff errors and zero format violations) across `packages/`
+- [x] T023 [P] [US2] Verify `make typecheck` passes locally (`mypy --strict` on `packages/proxy/src` and `packages/frontend/src`) with zero errors
 
 ### Implementation for User Story 2
 
-- [ ] T024 [P] [US2] Add `[tool.ruff]` (line-length, target-version, select rules) and `[tool.mypy]` (strict = true, per-package overrides) sections to root `pyproject.toml` at `pyproject.toml`
-- [ ] T025 [P] [US2] Add `grpc-stubs` as a dev dependency to `packages/proxy/pyproject.toml` and `packages/frontend/pyproject.toml` (required for `mypy --strict` on grpcio imports) at `packages/*/pyproject.toml`
-- [ ] T026 [US2] Create `.github/workflows/ci.yml` with three jobs — `lint` (`ruff check` + `ruff format --check`), `typecheck` (`mypy --strict`), `test` (`pytest`) — all using `astral-sh/setup-uv` and `uv sync --frozen` at `.github/workflows/ci.yml`
-- [ ] T027 [US2] Create `.github/workflows/proto.yml` with one job that runs `make proto` then `git diff --exit-code packages/gen/src` to verify committed stubs match proto sources at `.github/workflows/proto.yml`
-- [ ] T028 [US2] Complete `Makefile` `lint`, `typecheck`, `test`, and `check` targets at `Makefile`
+- [x] T024 [P] [US2] Add `[tool.ruff]` (line-length, target-version, select rules) and `[tool.mypy]` (strict = true, per-package overrides) sections to root `pyproject.toml` at `pyproject.toml`
+- [x] T025 [P] [US2] Add `grpc-stubs` as a dev dependency to `packages/proxy/pyproject.toml` and `packages/frontend/pyproject.toml` (required for `mypy --strict` on grpcio imports) at `packages/*/pyproject.toml`
+- [x] T026 [US2] Create `.github/workflows/ci.yml` with three jobs — `lint` (`ruff check` + `ruff format --check`), `typecheck` (`mypy --strict`), `test` (`pytest`) — all using `astral-sh/setup-uv` and `uv sync --frozen` at `.github/workflows/ci.yml`
+- [x] T027 [US2] Create `.github/workflows/proto.yml` with one job that runs `make proto` then `git diff --exit-code packages/gen/src` to verify committed stubs match proto sources at `.github/workflows/proto.yml`
+- [x] T028 [US2] Complete `Makefile` `lint`, `typecheck`, `test`, and `check` targets at `Makefile`
 
 **Checkpoint**: All CI jobs green on `main`. User Story 2 independently complete.
 
@@ -104,8 +104,8 @@ description: "Task list for Phase 1 — Scaffolding"
 
 ### Implementation for User Story 3
 
-- [ ] T029 [US3] Add spec-kit usage section to `README.md` — how to run `/specify`, `/plan`, `/tasks`; where artifacts are written; link to `specs/` directory at `README.md`
-- [ ] T030 [US3] Verify `.specify/feature.json` points to `specs/001-phase1-scaffolding` and spec-kit config in `.specify/init-options.json` is correct at `.specify/feature.json`
+- [x] T029 [US3] Add spec-kit usage section to `README.md` — how to run `/specify`, `/plan`, `/tasks`; where artifacts are written; link to `specs/` directory at `README.md`
+- [x] T030 [US3] Verify `.specify/feature.json` points to `specs/001-phase1-scaffolding` and spec-kit config in `.specify/init-options.json` is correct at `.specify/feature.json`
 
 **Checkpoint**: `specs/001-phase1-scaffolding/` contains spec.md, plan.md, and tasks.md. User Story 3 independently complete (artifacts produced by this planning run).
 
@@ -119,9 +119,9 @@ description: "Task list for Phase 1 — Scaffolding"
 
 ### Implementation for User Story 4
 
-- [ ] T031 [P] [US4] Create `graphify.json` configuration at repo root: point at `packages/`, `proto/`, `scripts/`; set output to `docs/graphs/` at `graphify.json`
+- [x] T031 [P] [US4] Create `graphify.json` configuration at repo root: point at `packages/`, `proto/`, `scripts/`; set output to `docs/graphs/` at `graphify.json`
 - [ ] T032 [US4] Run graphify and confirm HTML output is written to `docs/graphs/` with visible component nodes (manual validation checkpoint)
-- [ ] T033 [US4] Add graphify usage instructions to `README.md`: how to install, how to run, where output goes at `README.md`
+- [x] T033 [US4] Add graphify usage instructions to `README.md`: how to install, how to run, where output goes at `README.md`
 
 **Checkpoint**: `docs/graphs/` contains a rendered HTML graph. User Story 4 independently complete.
 
@@ -131,10 +131,10 @@ description: "Task list for Phase 1 — Scaffolding"
 
 **Purpose**: Final validation and cleanup before merging to `main`.
 
-- [ ] T034 Run `make check` end-to-end (lint + typecheck + test) and confirm zero errors across all packages
+- [x] T034 Run `make check` end-to-end (lint + typecheck + test) and confirm zero errors across all packages
 - [ ] T035 [P] Follow `specs/001-phase1-scaffolding/quickstart.md` step by step on a clean shell (no pre-running services) and confirm every step works as documented
-- [ ] T036 [P] Ensure all source packages have `py.typed` marker files (`packages/proxy/src/vllm_grpc_proxy/py.typed`, `packages/frontend/src/vllm_grpc_frontend/py.typed`) for mypy compatibility at `packages/*/src/*/py.typed`
-- [ ] T037 [P] Add `packages/gen/src/vllm_grpc/v1/` pattern to `.gitignore` and confirm `git status` shows generated stub files as ignored after `make proto` at `.gitignore`
+- [x] T036 [P] Ensure all source packages have `py.typed` marker files (`packages/proxy/src/vllm_grpc_proxy/py.typed`, `packages/frontend/src/vllm_grpc_frontend/py.typed`) for mypy compatibility at `packages/*/src/*/py.typed`
+- [x] T037 [P] Add `packages/gen/src/vllm_grpc/v1/` pattern to `.gitignore` and confirm `git status` shows generated stub files as ignored after `make proto` at `.gitignore`
 - [ ] T038 Merge `001-phase1-scaffolding` to `main` and confirm all CI jobs green
 
 ---

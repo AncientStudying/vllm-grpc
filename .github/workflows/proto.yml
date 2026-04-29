@@ -1,0 +1,21 @@
+name: Proto Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  proto-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --all-packages
+      - name: Regenerate proto stubs
+        run: make proto
+      - name: Verify stubs match sources
+        run: git diff --exit-code packages/gen/src/
