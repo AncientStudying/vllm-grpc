@@ -1,0 +1,13 @@
+{
+  "name": "vllm-grpc",
+  "description": "Protobuf/gRPC frontend for vLLM",
+  "sources": [
+    "packages/proxy/src",
+    "packages/frontend/src",
+    "packages/gen/src",
+    "proto"
+  ],
+  "output": "docs/graphs",
+  "include_patterns": ["**/*.py", "**/*.proto"],
+  "exclude_patterns": ["**/__pycache__/**", "**/*.pyc"]
+}

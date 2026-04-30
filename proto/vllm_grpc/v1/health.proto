@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package vllm_grpc.v1;
+
+service Health {
+  rpc Ping (HealthRequest) returns (HealthResponse);
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string message = 1;
+}

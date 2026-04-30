@@ -1,3 +1,6 @@
+# MAC OS
+.DS_Store
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -205,6 +208,15 @@ tempCodeRunnerFile.py
 
 # Ruff stuff:
 .ruff_cache/
+
+# Generated protobuf stubs (run `make proto` to regenerate)
+packages/gen/src/vllm_grpc/v1/*_pb2.py
+packages/gen/src/vllm_grpc/v1/*_pb2_grpc.py
+
+# graphify output
+docs/graphs/
+graphify-out/cache/
+graphify-out/manifest.json
 
 # PyPI configuration file
 .pypirc
