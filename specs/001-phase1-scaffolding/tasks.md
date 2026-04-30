@@ -120,7 +120,7 @@ description: "Task list for Phase 1 — Scaffolding"
 ### Implementation for User Story 4
 
 - [x] T031 [P] [US4] Create `graphify.json` configuration at repo root: point at `packages/`, `proto/`, `scripts/`; set output to `docs/graphs/` at `graphify.json`
-- [ ] T032 [US4] Run graphify and confirm HTML output is written to `docs/graphs/` with visible component nodes (manual validation checkpoint)
+- [x] T032 [US4] Run graphify and confirm HTML output is written to `docs/graphs/` with visible component nodes (manual validation checkpoint)
 - [x] T033 [US4] Add graphify usage instructions to `README.md`: how to install, how to run, where output goes at `README.md`
 
 **Checkpoint**: `docs/graphs/` contains a rendered HTML graph. User Story 4 independently complete.
@@ -132,7 +132,7 @@ description: "Task list for Phase 1 — Scaffolding"
 **Purpose**: Final validation and cleanup before merging to `main`.
 
 - [x] T034 Run `make check` end-to-end (lint + typecheck + test) and confirm zero errors across all packages
-- [ ] T035 [P] Follow `specs/001-phase1-scaffolding/quickstart.md` step by step on a clean shell (no pre-running services) and confirm every step works as documented
+- [x] T035 [P] Follow `specs/001-phase1-scaffolding/quickstart.md` step by step on a clean shell (no pre-running services) and confirm every step works as documented
 - [x] T036 [P] Ensure all source packages have `py.typed` marker files (`packages/proxy/src/vllm_grpc_proxy/py.typed`, `packages/frontend/src/vllm_grpc_frontend/py.typed`) for mypy compatibility at `packages/*/src/*/py.typed`
 - [x] T037 [P] Add `packages/gen/src/vllm_grpc/v1/` pattern to `.gitignore` and confirm `git status` shows generated stub files as ignored after `make proto` at `.gitignore`
 - [ ] T038 Merge `001-phase1-scaffolding` to `main` and confirm all CI jobs green
