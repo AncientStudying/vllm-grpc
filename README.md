@@ -32,6 +32,11 @@ make run-proxy
 # 5. Verify the end-to-end ping
 curl -s http://localhost:8000/healthz
 # → {"status":"ok"}
+
+# 6. Send a chat completion
+bash scripts/curl/chat-nonstreaming.sh
+# or with the openai Python SDK:
+uv run python scripts/python/chat-nonstreaming.py
 ```
 
 ---
@@ -56,6 +61,7 @@ make run-frontend   # Start gRPC server on :50051
 | `PROXY_PORT` | `8000` | REST proxy listen port |
 | `FRONTEND_PORT` | `50051` | gRPC frontend listen port |
 | `FRONTEND_ADDR` | `localhost:50051` | Proxy → frontend address |
+| `MODEL_NAME` | `Qwen/Qwen3-0.6B` | Model loaded by the frontend |
 
 ---
 
@@ -65,11 +71,17 @@ make run-frontend   # Start gRPC server on :50051
 proto/                     # Protobuf source of truth
   vllm_grpc/v1/
     health.proto
+    chat.proto             # Phase 3: ChatService (non-streaming completion)
 packages/
   gen/                     # Generated stubs (built by make proto, not committed)
-  proxy/                   # FastAPI REST server (GET /healthz → gRPC Health.Ping)
-  frontend/                # grpc.aio server (Health.Ping → pong)
-scripts/curl/              # curl test scripts
+  proxy/                   # FastAPI REST proxy (POST /v1/chat/completions, GET /healthz)
+  frontend/                # grpc.aio server (ChatService.Complete, Health.Ping)
+scripts/
+  curl/
+    chat-nonstreaming.sh   # curl chat completion example
+  python/
+    chat-nonstreaming.py   # openai SDK chat completion example
+tests/integration/         # FakeChatServicer bridge test (no GPU required)
 docs/
   PLAN.md                  # Project plan and phase roadmap
   decisions/               # ADRs

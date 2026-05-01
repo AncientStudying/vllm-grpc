@@ -7,6 +7,7 @@ import grpc
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, Response
 
+from vllm_grpc_proxy.chat_router import router as chat_router
 from vllm_grpc_proxy.grpc_client import GrpcHealthClient
 
 _client = GrpcHealthClient()
@@ -18,6 +19,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(chat_router)
 
 
 @app.get("/healthz")

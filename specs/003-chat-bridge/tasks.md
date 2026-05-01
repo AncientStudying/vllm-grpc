@@ -17,9 +17,9 @@
 **Purpose**: Wire in the new proto, integration test directory, and `openai` dev dependency before
 any implementation code is written.
 
-- [ ] T001 Update `Makefile` proto target to compile `proto/vllm_grpc/v1/chat.proto` alongside `health.proto`; add `tests/integration` to the `test` target's pytest invocation
-- [ ] T002 [P] Add `"openai>=1.0"` to `[dependency-groups] dev` in `pyproject.toml`; run `uv sync --all-packages` to confirm it resolves without conflicts
-- [ ] T003 [P] Create `tests/integration/__init__.py` (empty) and `tests/integration/conftest.py` (empty pytest conftest placeholder) at the workspace root
+- [x] T001 Update `Makefile` proto target to compile `proto/vllm_grpc/v1/chat.proto` alongside `health.proto`; add `tests/integration` to the `test` target's pytest invocation
+- [x] T002 [P] Add `"openai>=1.0"` to `[dependency-groups] dev` in `pyproject.toml`; run `uv sync --all-packages` to confirm it resolves without conflicts
+- [x] T003 [P] Create `tests/integration/__init__.py` (empty) and `tests/integration/conftest.py` (empty pytest conftest placeholder) at the workspace root
 
 ---
 
@@ -30,9 +30,9 @@ user story. No story implementation can begin until these are in place.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T004 Write `proto/vllm_grpc/v1/chat.proto` — define `ChatMessage` (role, content), `ChatCompleteRequest` (messages, model, max_tokens, optional temperature/top_p/seed), `ChatCompleteResponse` (message, finish_reason, prompt_tokens, completion_tokens), and `ChatService.Complete` unary RPC; see `contracts/chat-proto.md` for the exact definition
-- [ ] T005 Run `make proto`; confirm `packages/gen/src/vllm_grpc/v1/chat_pb2.py` and `chat_pb2_grpc.py` are generated; add `"vllm_grpc.v1.chat_pb2"` and `"vllm_grpc.v1.chat_pb2_grpc"` to the `ignore_errors = true` override block in `pyproject.toml`'s `[tool.mypy.overrides]` section; confirm `.gitignore` excludes the generated chat stubs
-- [ ] T006 Implement `tests/integration/fake_frontend.py` — a `FakeChatServicer` class that implements `ChatService.Complete` (using the generated `chat_pb2_grpc` base class) and returns a hardcoded `ChatCompleteResponse` (message.role="assistant", message.content="4.", finish_reason="stop", prompt_tokens=10, completion_tokens=3) without importing vllm; also implement an async context-manager helper `fake_frontend_server(port)` that starts and stops a `grpc.aio.server` with the servicer attached
+- [x] T004 Write `proto/vllm_grpc/v1/chat.proto` — define `ChatMessage` (role, content), `ChatCompleteRequest` (messages, model, max_tokens, optional temperature/top_p/seed), `ChatCompleteResponse` (message, finish_reason, prompt_tokens, completion_tokens), and `ChatService.Complete` unary RPC; see `contracts/chat-proto.md` for the exact definition
+- [x] T005 Run `make proto`; confirm `packages/gen/src/vllm_grpc/v1/chat_pb2.py` and `chat_pb2_grpc.py` are generated; add `"vllm_grpc.v1.chat_pb2"` and `"vllm_grpc.v1.chat_pb2_grpc"` to the `ignore_errors = true` override block in `pyproject.toml`'s `[tool.mypy.overrides]` section; confirm `.gitignore` excludes the generated chat stubs
+- [x] T006 Implement `tests/integration/fake_frontend.py` — a `FakeChatServicer` class that implements `ChatService.Complete` (using the generated `chat_pb2_grpc` base class) and returns a hardcoded `ChatCompleteResponse` (message.role="assistant", message.content="4.", finish_reason="stop", prompt_tokens=10, completion_tokens=3) without importing vllm; also implement an async context-manager helper `fake_frontend_server(port)` that starts and stops a `grpc.aio.server` with the servicer attached
 
 **Checkpoint**: Proto stubs compile; `FakeChatServicer` exists and is importable. User story work can begin.
 
@@ -46,19 +46,19 @@ user story. No story implementation can begin until these are in place.
 
 ### Implementation for User Story 1
 
-- [ ] T007 [P] [US1] Implement `packages/proxy/src/vllm_grpc_proxy/chat_translate.py` — define `OpenAIChatMessage` and `OpenAIChatRequest` Pydantic models (fields from `contracts/rest-api.md`); implement `openai_request_to_proto(req: OpenAIChatRequest) -> chat_pb2.ChatCompleteRequest` and `proto_response_to_openai_dict(resp: chat_pb2.ChatCompleteResponse, model: str) -> dict[str, Any]` (constructs the full OpenAI JSON dict per `contracts/rest-api.md` including uuid4 id, timestamp, choices, usage)
-- [ ] T008 [P] [US1] Implement `packages/frontend/src/vllm_grpc_frontend/chat_translate.py` — implement `proto_to_sampling_params(req: chat_pb2.ChatCompleteRequest) -> SamplingParams` (maps max_tokens, temperature/top_p/seed with correct defaults per `research.md` R2); implement `messages_to_prompt(messages: list[chat_pb2.ChatMessage], tokenizer: PreTrainedTokenizer) -> str` (calls `tokenizer.apply_chat_template` per `research.md` R3); implement `request_output_to_proto(output: RequestOutput) -> chat_pb2.ChatCompleteResponse` (extracts text, finish_reason, token counts per `data-model.md` Layer 3)
-- [ ] T009 [P] [US1] Write `packages/proxy/tests/test_chat_translate.py` — unit tests for `openai_request_to_proto()` (all fields present, optional fields absent, empty messages list rejected) and `proto_response_to_openai_dict()` (finish_reason=stop, finish_reason=length, usage counts correct)
-- [ ] T010 [P] [US1] Write `packages/frontend/tests/test_chat_translate.py` — unit tests for `proto_to_sampling_params()` (seed present vs absent, temperature/top_p defaults) and `request_output_to_proto()` (finish_reason=stop with token counts, finish_reason=length)
-- [ ] T011 [US1] Extend `packages/proxy/src/vllm_grpc_proxy/grpc_client.py` — add `GrpcChatClient` class (mirrors `GrpcHealthClient` pattern): `__init__(addr)`, `async def complete(req: chat_pb2.ChatCompleteRequest) -> chat_pb2.ChatCompleteResponse` (opens channel, calls `ChatServiceStub.Complete` with 30-second deadline); depends on T004 stubs compiled
-- [ ] T012 [US1] Implement `packages/proxy/src/vllm_grpc_proxy/chat_router.py` — FastAPI `APIRouter`; `POST /v1/chat/completions` endpoint that: (1) parses body into `OpenAIChatRequest`, (2) returns HTTP 501 JSON if `stream=True` (per `contracts/rest-api.md` error format), (3) calls `openai_request_to_proto()`, (4) calls `GrpcChatClient.complete()`, (5) returns `JSONResponse(proto_response_to_openai_dict(...))`; maps `grpc.aio.AioRpcError` to HTTP 502/504/422 per error table; depends on T007, T011
-- [ ] T013 [US1] Update `packages/proxy/src/vllm_grpc_proxy/main.py` — instantiate `GrpcChatClient` at module level; include `chat_router.router` in the FastAPI app; depends on T012
-- [ ] T014 [US1] Implement `packages/frontend/src/vllm_grpc_frontend/chat.py` — `ChatServicer` class implementing `chat_pb2_grpc.ChatServiceServicer`; `__init__(engine: AsyncLLM, tokenizer: PreTrainedTokenizer)`; `async def Complete(request, context)` calls `messages_to_prompt()`, `proto_to_sampling_params()`, the async generator loop per `research.md` R2, then `request_output_to_proto()`; depends on T008
-- [ ] T015 [US1] Update `packages/frontend/src/vllm_grpc_frontend/main.py` — instantiate `AsyncLLM` and tokenizer at startup using `MODEL_NAME` env var (default `Qwen/Qwen3-0.6B`); register `ChatServicer` via `chat_pb2_grpc.add_ChatServiceServicerToServer()`; depends on T014
-- [ ] T016 [P] [US1] Write `packages/proxy/tests/test_chat_endpoint.py` — tests for `POST /v1/chat/completions` using `httpx.AsyncClient(app=app, base_url="http://test")`; mock `GrpcChatClient.complete()` to return a canned proto response; assert: (1) happy path returns HTTP 200 with valid OpenAI JSON, (2) `stream=True` returns HTTP 501 with `error.message`, (3) gRPC `UNAVAILABLE` returns HTTP 502; depends on T012
-- [ ] T017 [P] [US1] Write `packages/frontend/tests/test_chat_servicer.py` — test `ChatServicer.Complete()` with a stub `AsyncLLM` that yields a pre-built `RequestOutput`; assert `ChatCompleteResponse` fields match expected values; test with seed present and seed absent; depends on T014
-- [ ] T018 [US1] Write `tests/integration/test_chat_bridge.py` — pytest asyncio test that: (1) uses `fake_frontend_server()` fixture to start `FakeChatServicer` on ephemeral port, (2) points `GrpcChatClient` at that port and starts FastAPI via `httpx.AsyncClient(app=app)`, (3) sends `POST /v1/chat/completions` with seed=42, (4) asserts response is HTTP 200 with `choices[0].message.content == "4."` and `usage.total_tokens > 0`; depends on T006, T013
-- [ ] T019 [US1] Run `make check` (lint + typecheck + test); fix all ruff format/lint errors and mypy --strict errors; confirm `test_chat_bridge.py` passes
+- [x] T007 [P] [US1] Implement `packages/proxy/src/vllm_grpc_proxy/chat_translate.py` — define `OpenAIChatMessage` and `OpenAIChatRequest` Pydantic models (fields from `contracts/rest-api.md`); implement `openai_request_to_proto(req: OpenAIChatRequest) -> chat_pb2.ChatCompleteRequest` and `proto_response_to_openai_dict(resp: chat_pb2.ChatCompleteResponse, model: str) -> dict[str, Any]` (constructs the full OpenAI JSON dict per `contracts/rest-api.md` including uuid4 id, timestamp, choices, usage)
+- [x] T008 [P] [US1] Implement `packages/frontend/src/vllm_grpc_frontend/chat_translate.py` — implement `proto_to_sampling_params(req: chat_pb2.ChatCompleteRequest) -> SamplingParams` (maps max_tokens, temperature/top_p/seed with correct defaults per `research.md` R2); implement `messages_to_prompt(messages: list[chat_pb2.ChatMessage], tokenizer: PreTrainedTokenizer) -> str` (calls `tokenizer.apply_chat_template` per `research.md` R3); implement `request_output_to_proto(output: RequestOutput) -> chat_pb2.ChatCompleteResponse` (extracts text, finish_reason, token counts per `data-model.md` Layer 3)
+- [x] T009 [P] [US1] Write `packages/proxy/tests/test_chat_translate.py` — unit tests for `openai_request_to_proto()` (all fields present, optional fields absent, empty messages list rejected) and `proto_response_to_openai_dict()` (finish_reason=stop, finish_reason=length, usage counts correct)
+- [x] T010 [P] [US1] Write `packages/frontend/tests/test_chat_translate.py` — unit tests for `proto_to_sampling_params()` (seed present vs absent, temperature/top_p defaults) and `request_output_to_proto()` (finish_reason=stop with token counts, finish_reason=length)
+- [x] T011 [US1] Extend `packages/proxy/src/vllm_grpc_proxy/grpc_client.py` — add `GrpcChatClient` class (mirrors `GrpcHealthClient` pattern): `__init__(addr)`, `async def complete(req: chat_pb2.ChatCompleteRequest) -> chat_pb2.ChatCompleteResponse` (opens channel, calls `ChatServiceStub.Complete` with 30-second deadline); depends on T004 stubs compiled
+- [x] T012 [US1] Implement `packages/proxy/src/vllm_grpc_proxy/chat_router.py` — FastAPI `APIRouter`; `POST /v1/chat/completions` endpoint that: (1) parses body into `OpenAIChatRequest`, (2) returns HTTP 501 JSON if `stream=True` (per `contracts/rest-api.md` error format), (3) calls `openai_request_to_proto()`, (4) calls `GrpcChatClient.complete()`, (5) returns `JSONResponse(proto_response_to_openai_dict(...))`; maps `grpc.aio.AioRpcError` to HTTP 502/504/422 per error table; depends on T007, T011
+- [x] T013 [US1] Update `packages/proxy/src/vllm_grpc_proxy/main.py` — instantiate `GrpcChatClient` at module level; include `chat_router.router` in the FastAPI app; depends on T012
+- [x] T014 [US1] Implement `packages/frontend/src/vllm_grpc_frontend/chat.py` — `ChatServicer` class implementing `chat_pb2_grpc.ChatServiceServicer`; `__init__(engine: AsyncLLM, tokenizer: PreTrainedTokenizer)`; `async def Complete(request, context)` calls `messages_to_prompt()`, `proto_to_sampling_params()`, the async generator loop per `research.md` R2, then `request_output_to_proto()`; depends on T008
+- [x] T015 [US1] Update `packages/frontend/src/vllm_grpc_frontend/main.py` — instantiate `AsyncLLM` and tokenizer at startup using `MODEL_NAME` env var (default `Qwen/Qwen3-0.6B`); register `ChatServicer` via `chat_pb2_grpc.add_ChatServiceServicerToServer()`; depends on T014
+- [x] T016 [P] [US1] Write `packages/proxy/tests/test_chat_endpoint.py` — tests for `POST /v1/chat/completions` using `httpx.AsyncClient(app=app, base_url="http://test")`; mock `GrpcChatClient.complete()` to return a canned proto response; assert: (1) happy path returns HTTP 200 with valid OpenAI JSON, (2) `stream=True` returns HTTP 501 with `error.message`, (3) gRPC `UNAVAILABLE` returns HTTP 502; depends on T012
+- [x] T017 [P] [US1] Write `packages/frontend/tests/test_chat_servicer.py` — test `ChatServicer.Complete()` with a stub `AsyncLLM` that yields a pre-built `RequestOutput`; assert `ChatCompleteResponse` fields match expected values; test with seed present and seed absent; depends on T014
+- [x] T018 [US1] Write `tests/integration/test_chat_bridge.py` — pytest asyncio test that: (1) uses `fake_frontend_server()` fixture to start `FakeChatServicer` on ephemeral port, (2) points `GrpcChatClient` at that port and starts FastAPI via `httpx.AsyncClient(app=app)`, (3) sends `POST /v1/chat/completions` with seed=42, (4) asserts response is HTTP 200 with `choices[0].message.content == "4."` and `usage.total_tokens > 0`; depends on T006, T013
+- [x] T019 [US1] Run `make check` (lint + typecheck + test); fix all ruff format/lint errors and mypy --strict errors; confirm `test_chat_bridge.py` passes
 
 **Checkpoint**: `make check` passes. Full proxy → gRPC → FakeChatServicer → OpenAI JSON pipeline works. US1 is complete and independently testable.
 
@@ -72,7 +72,7 @@ user story. No story implementation can begin until these are in place.
 
 ### Implementation for User Story 2
 
-- [ ] T020 [US2] Implement `scripts/python/chat-nonstreaming.py` — uses `openai.OpenAI(base_url="http://localhost:8000/v1", api_key="none")` to call `client.chat.completions.create(model="Qwen/Qwen3-0.6B", messages=[...], max_tokens=64, seed=42)`; prints `response.choices[0].message.content`; prints `response.usage`; handles `openai.APIError` with a clear diagnostic message and non-zero exit; depends on T013 being runnable
+- [x] T020 [US2] Implement `scripts/python/chat-nonstreaming.py` — uses `openai.OpenAI(base_url="http://localhost:8000/v1", api_key="none")` to call `client.chat.completions.create(model="Qwen/Qwen3-0.6B", messages=[...], max_tokens=64, seed=42)`; prints `response.choices[0].message.content`; prints `response.usage`; handles `openai.APIError` with a clear diagnostic message and non-zero exit; depends on T013 being runnable
 
 **Checkpoint**: US2 complete — existing openai SDK client code works against the proxy unchanged.
 
@@ -86,7 +86,7 @@ user story. No story implementation can begin until these are in place.
 
 ### Implementation for User Story 3
 
-- [ ] T021 [US3] Verify `packages/proxy/tests/test_chat_endpoint.py` includes a dedicated test for `stream=True` → HTTP 501 with JSON body containing `error.message` and `error.type == "not_implemented_error"`; add or strengthen the test case if the assertion in T016 is not explicit enough; run `make test` to confirm it passes
+- [x] T021 [US3] Verify `packages/proxy/tests/test_chat_endpoint.py` includes a dedicated test for `stream=True` → HTTP 501 with JSON body containing `error.message` and `error.type == "not_implemented_error"`; add or strengthen the test case if the assertion in T016 is not explicit enough; run `make test` to confirm it passes
 
 **Checkpoint**: US3 complete — the 501 error path is explicitly tested and documented.
 
@@ -100,8 +100,8 @@ user story. No story implementation can begin until these are in place.
 
 ### Implementation for User Story 4
 
-- [ ] T022 [US4] Implement `scripts/curl/chat-nonstreaming.sh` — curl `POST http://localhost:8000/v1/chat/completions` with `Content-Type: application/json`, body with `model`, `messages`, `max_tokens=64`, `seed=42`; pipe response through `python -m json.tool` for readable output; include a usage comment at the top explaining `PROXY_PORT` override; make the script executable (`chmod +x`)
-- [ ] T023 [US4] Validate quickstart.md Option B end-to-end: run `make bootstrap && make test` from a clean state (`uv sync --all-packages && make proto` then `make check`); confirm the full sequence completes without manual intervention; note any discrepancy with quickstart.md and update that file if needed
+- [x] T022 [US4] Implement `scripts/curl/chat-nonstreaming.sh` — curl `POST http://localhost:8000/v1/chat/completions` with `Content-Type: application/json`, body with `model`, `messages`, `max_tokens=64`, `seed=42`; pipe response through `python -m json.tool` for readable output; include a usage comment at the top explaining `PROXY_PORT` override; make the script executable (`chmod +x`)
+- [x] T023 [US4] Validate quickstart.md Option B end-to-end: run `make bootstrap && make test` from a clean state (`uv sync --all-packages && make proto` then `make check`); confirm the full sequence completes without manual intervention; note any discrepancy with quickstart.md and update that file if needed
 
 **Checkpoint**: US4 complete — `scripts/curl/chat-nonstreaming.sh` and `scripts/python/chat-nonstreaming.py` both work against a live proxy; `make test` is self-healing from scratch.
 
@@ -109,9 +109,9 @@ user story. No story implementation can begin until these are in place.
 
 ## Final Phase: Polish & Cross-Cutting Concerns
 
-- [ ] T024 [P] Update `README.md` — add Phase 3 to the project status section; add `make run-proxy` and `make run-frontend` invocation examples; note the `scripts/curl/chat-nonstreaming.sh` and `scripts/python/chat-nonstreaming.py` entry points
-- [ ] T025 [P] Verify `.gitignore` explicitly excludes `packages/gen/src/vllm_grpc/v1/chat_pb2.py` and `packages/gen/src/vllm_grpc/v1/chat_pb2_grpc.py`; add patterns if missing
-- [ ] T026 Run `make check` from a completely clean state (`git clean -fdx` + `make bootstrap` + `make check`); confirm lint, typecheck, unit tests, and integration tests all pass; this is the final CI gate validation before opening the PR
+- [x] T024 [P] Update `README.md` — add Phase 3 to the project status section; add `make run-proxy` and `make run-frontend` invocation examples; note the `scripts/curl/chat-nonstreaming.sh` and `scripts/python/chat-nonstreaming.py` entry points
+- [x] T025 [P] Verify `.gitignore` explicitly excludes `packages/gen/src/vllm_grpc/v1/chat_pb2.py` and `packages/gen/src/vllm_grpc/v1/chat_pb2_grpc.py`; add patterns if missing
+- [x] T026 Run `make check` from a completely clean state (`git clean -fdx` + `make bootstrap` + `make check`); confirm lint, typecheck, unit tests, and integration tests all pass; this is the final CI gate validation before opening the PR
 
 ---
 
