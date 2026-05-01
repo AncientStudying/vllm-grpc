@@ -9,7 +9,8 @@ proto:
 		-I proto \
 		--python_out=packages/gen/src \
 		--grpc_python_out=packages/gen/src \
-		proto/vllm_grpc/v1/health.proto
+		proto/vllm_grpc/v1/health.proto \
+		proto/vllm_grpc/v1/chat.proto
 
 bootstrap:
 	uv sync --all-packages
@@ -24,7 +25,7 @@ typecheck:
 
 test:
 	uv sync --all-packages
-	uv run pytest packages/proxy/tests packages/frontend/tests -v
+	uv run pytest packages/proxy/tests packages/frontend/tests tests/integration -v
 
 check: lint typecheck test
 

@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package vllm_grpc.v1;
+
+service ChatService {
+  rpc Complete (ChatCompleteRequest) returns (ChatCompleteResponse);
+}
+
+message ChatMessage {
+  string role    = 1;
+  string content = 2;
+}
+
+message ChatCompleteRequest {
+  repeated ChatMessage messages   = 1;
+  string               model      = 2;
+  int32                max_tokens = 3;
+  optional float       temperature = 4;
+  optional float       top_p       = 5;
+  optional int64       seed        = 6;
+}
+
+message ChatCompleteResponse {
+  ChatMessage message            = 1;
+  string      finish_reason      = 2;
+  int32       prompt_tokens      = 3;
+  int32       completion_tokens  = 4;
+}
