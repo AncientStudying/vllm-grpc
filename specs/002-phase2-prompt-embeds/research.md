@@ -124,6 +124,49 @@ For the verification script, a syntactically valid `prompt_embeds` input is a fl
 
 ---
 
+---
+
+## R6: Empirical Findings — vLLM 0.11.0 and 0.19.0 Investigation (2026-04-30)
+
+**Status**: Supersedes assumptions in R1 and R2. Based on source inspection of installed packages and live server experiments.
+
+### R1 Correction: prompt_embeds is V1-native, not V0-only
+
+R1 stated that `prompt_embeds` is a V0-only path and that `VLLM_USE_V1_ENGINE=0` is required. This is wrong as of vLLM 0.11.0:
+
+- V0 engine was **removed** in vLLM 0.11.0; setting `VLLM_USE_V1=0` raises `AssertionError`
+- `prompt_embeds` was **ported to V1** and is now a first-class feature in both 0.11.0 and 0.19.0
+- The `--enable-prompt-embeds` flag exists in both versions (confirmed via `vllm serve --help=enable-prompt-embeds`)
+- Wire format is unchanged: base64-encoded `torch.save()` output, sent as a top-level `prompt_embeds` JSON field (not inside `extra_body`)
+
+### R2 Correction: vllm-metal is a separate plugin, not part of the standard vLLM package
+
+R2 stated that vllm-metal is "part of the standard `vllm` package when installed on macOS/arm64". This is wrong:
+
+- `vllm-metal` 0.2.0 is a separate plugin package, installed at `~/.venv-vllm-metal` alongside vLLM 0.19.0
+- `uv run --with vllm` installs base vLLM without the plugin — the metal plugin is absent in that environment
+- vllm-metal registers a `MetalWorker` class that replaces the default GPU worker when the Metal platform is detected
+
+### Prompt-embeds backend support matrix (confirmed by source inspection)
+
+| vLLM model runner | Implements `prompt_embeds` |
+|-------------------|---------------------------|
+| `v1/worker/gpu_model_runner.py` (CUDA) | ✅ Yes |
+| `v1/worker/tpu_model_runner.py` | ✅ Yes |
+| `v1/worker/cpu_model_runner.py` | ❌ No (0.11.0 and 0.19.0) |
+| `vllm_metal/v1/model_runner.py` (Metal/MLX) | ❌ No (0.2.0) |
+
+### Open questions requiring empirical validation (updated)
+
+| # | Question | Status |
+|---|----------|--------|
+| Q1 | What error does vllm-metal's MetalWorker produce when `prompt_embeds` is sent? | Open — empirical test needed |
+| Q2 | Does vllm-metal 0.2.0 start cleanly with vLLM 0.19.0 on M2 Pro? | Open — empirical test needed |
+| Q3 | What is the exact HTTP error/traceback when CPU receives `prompt_embeds` in 0.19.0? | Open — transformers compat blocked 0.11.0 test |
+| Q4 | Does Modal A10G + vLLM 0.19.0 + `--enable-prompt-embeds` succeed end-to-end? | Open — requires Modal auth |
+
+---
+
 ## Summary of Open Questions Requiring Empirical Validation
 
 The following cannot be resolved without running experiments on the actual hardware and vLLM version:

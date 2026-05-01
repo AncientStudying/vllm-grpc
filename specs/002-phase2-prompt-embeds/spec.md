@@ -2,14 +2,15 @@
 
 **Feature Branch**: `002-phase2-prompt-embeds`  
 **Created**: 2026-04-29  
-**Status**: Draft  
+**Updated**: 2026-04-30 — scope expanded to vLLM 0.20.0 + vllm-metal 0.2.0; clean local install via uv dependency group  
+**Status**: In Progress  
 **Input**: User description: "Phase 2"
 
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Determine Viable Prompt-Embeds Environment (Priority: P1)
 
-A developer needs to know, before writing any chat-completions code, which compute environment can actually serve Qwen3-0.6B with V0 `prompt_embeds` enabled via vLLM's native OpenAI server. This investigation prevents a late-phase surprise where the chosen environment turns out not to work.
+A developer needs to know, before writing any chat-completions code, which compute environment can actually serve Qwen3-0.6B with `prompt_embeds` enabled via vLLM's native OpenAI server. The investigation uses vLLM 0.20.0 (the current ecosystem release) and vllm-metal 0.2.0 (the Apple Silicon plugin), ensuring architectural decisions reflect the current state of the vLLM ecosystem rather than a point-in-time snapshot. This prevents a late-phase surprise where the chosen environment turns out not to work.
 
 **Why this priority**: Phase 6 (Completions API with Prompt Embeds) cannot be planned without this decision. Every other phase can proceed in parallel, but Phase 6 is blocked until the environment is confirmed.
 
@@ -33,7 +34,7 @@ A developer writes an Architecture Decision Record capturing the environment cho
 
 **Acceptance Scenarios**:
 
-1. **Given** experiments are complete, **When** the ADR is written, **Then** it covers all three candidate environments: M2 vllm-metal, M2 CPU-only, and cloud GPU.
+1. **Given** experiments are complete, **When** the ADR is written, **Then** it covers all three candidate environments tested under vLLM 0.20.0: M2 vllm-metal 0.2.0, M2 CPU-only, and cloud GPU.
 2. **Given** the ADR is written, **When** a developer reads it, **Then** they can reproduce the decision-making process from the data alone.
 
 ---
@@ -55,8 +56,8 @@ A developer needs a single script that, run on a fresh machine matching the dev 
 
 ### Edge Cases
 
-- What happens if `vllm-metal` is installed but silently falls back to CPU for V0 paths (producing correct but slow output)?
-- What if `--enable-prompt-embeds` is a flag that doesn't exist in the installed vLLM version?
+- What happens if vllm-metal 0.2.0's `MetalWorker` receives a `prompt_embeds` request but its model runner has no implementation — does it crash, silently ignore, or delegate?
+- What if vllm-metal 0.2.0 and vLLM 0.20.0 have a compatibility issue that prevents the server from starting at all?
 - What if cloud-GPU instance provisioning is temporarily unavailable or takes longer than the time box?
 - What if the Qwen3-0.6B model download fails mid-setup (network interruption)?
 - What if the verification script returns a response but the output is clearly incoherent (e.g., empty completion or error masked as 200)?
@@ -65,8 +66,8 @@ A developer needs a single script that, run on a fresh machine matching the dev 
 
 ### Functional Requirements
 
-- **FR-001**: The investigation MUST evaluate three candidate environments: (a) M2 vllm-metal, (b) M2 CPU-only vLLM, and (c) a small CUDA cloud instance (Modal, RunPod, or Lambda L4).
-- **FR-002**: Each environment evaluation MUST determine whether V0 fallback is active and whether `prompt_embeds` are accepted end-to-end by vLLM's native OpenAI server.
+- **FR-001**: The investigation MUST evaluate three candidate environments using vLLM 0.20.0 as the target version: (a) M2 vllm-metal 0.2.0 (Apple Silicon GPU via MLX), (b) M2 CPU-only vLLM 0.20.0, and (c) a small CUDA cloud instance (Modal, RunPod, or Lambda L4).
+- **FR-002**: Each environment evaluation MUST empirically confirm whether `prompt_embeds` are accepted end-to-end by vLLM's native OpenAI server — source code inspection alone is not sufficient evidence.
 - **FR-003**: For any environment that accepts `prompt_embeds`, the evaluation MUST record the time-to-first-token and total wall-clock time for a 50-token completion of Qwen3-0.6B.
 - **FR-004**: The investigation MUST produce a single environment decision — M2 vllm-metal, M2 CPU-only, or cloud GPU — with documented rationale.
 - **FR-005**: The investigation MUST produce a setup script that reproduces the chosen environment on a fresh machine matching the dev hardware profile (M2 Pro MacBook Pro, 32 GB, macOS).
@@ -95,9 +96,9 @@ A developer needs a single script that, run on a fresh machine matching the dev 
 
 - The development machine is an M2 Pro MacBook Pro, 32 GB unified memory, running macOS — this is the primary hardware target.
 - `uv` and Python 3.12 are pre-installed on the dev machine (Phase 1 deliverable).
-- `vllm-metal` refers to the Apple Silicon GPU plugin for vLLM; if it does not exist as a separate package, this candidate is evaluated using whatever vLLM's macOS install path provides.
-- The V0 prompt-embeds path is accessed via `--enable-prompt-embeds` flag or equivalent; exact flag name is confirmed during investigation.
-- The Qwen3-0.6B model weights are downloaded from Hugging Face; a Hugging Face account and token may be required.
+- **vllm-metal 0.2.0** is the Apple Silicon GPU plugin, installed as a GitHub release wheel. **vLLM 0.20.0** is the version paired with it by the official `install.sh`. Both are declared in `pyproject.toml` under `[dependency-groups] investigation` and installed via `uv sync --group investigation` — matching the project's uv-first pattern for vllm.
+- **vLLM 0.20.0** is the target version for all candidates. The `--enable-prompt-embeds` flag exists in this version. The wire format is base64-encoded `torch.save()` output sent as the top-level `prompt_embeds` JSON field. Candidate B (CPU) runs with `VLLM_PLUGINS=""` to suppress the metal plugin in the shared environment.
+- The Qwen3-0.6B model weights are downloaded from Hugging Face; no authentication token is required for this model.
 - Cloud GPU evaluation (Modal/RunPod/Lambda L4) requires a paid account; cost is estimated but full provisioning may be deferred if the M2 path works.
 - The throwaway verification script does not need to be production-quality — its sole purpose is to confirm end-to-end prompt-embeds functionality.
 - No bridge or proxy code is written in this phase; all calls go directly to vLLM's native OpenAI server.
