@@ -209,6 +209,10 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# Benchmark run output (ephemeral; baselines go to docs/benchmarks/ instead)
+bench-results/
+bench-ci-results/
+
 # Generated protobuf stubs (run `make proto` to regenerate)
 packages/gen/src/vllm_grpc/v1/*_pb2.py
 packages/gen/src/vllm_grpc/v1/*_pb2_grpc.py
