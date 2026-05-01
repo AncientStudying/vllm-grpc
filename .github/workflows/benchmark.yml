@@ -1,0 +1,86 @@
+name: Benchmark CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/proxy/**"
+      - "packages/frontend/**"
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen --all-packages
+
+      - name: Generate proto stubs
+        run: make proto
+
+      - name: Start stub servers
+        run: |
+          uv run python -m vllm_grpc_bench.fake_server --port 8900 --include-proxy-header &
+          uv run python -m vllm_grpc_bench.fake_server --port 8901 &
+          echo "Waiting for stub servers..."
+          for i in $(seq 1 10); do
+            nc -z 127.0.0.1 8900 && nc -z 127.0.0.1 8901 && break
+            sleep 1
+          done
+
+      - name: Run benchmark
+        run: |
+          uv run python -m vllm_grpc_bench \
+            --proxy-url http://localhost:8900 \
+            --native-url http://localhost:8901 \
+            --output-dir bench-ci-results
+
+      - name: Compare against baseline
+        id: compare
+        run: |
+          if [ -f docs/benchmarks/phase-3-ci-baseline.json ]; then
+            uv run python -m vllm_grpc_bench compare \
+              docs/benchmarks/phase-3-ci-baseline.json \
+              bench-ci-results/results.json \
+              > comparison.md || true
+          else
+            echo "No CI baseline committed yet — skipping regression comparison." > comparison.md
+          fi
+
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const comparison = fs.existsSync('comparison.md')
+              ? fs.readFileSync('comparison.md', 'utf8')
+              : '_No comparison output._';
+            const body = `## Benchmark CI (stub backend)\n\n${comparison}\n\n<!-- benchmark-ci-comment -->`;
+            const sentinel = '<!-- benchmark-ci-comment -->';
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(sentinel));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

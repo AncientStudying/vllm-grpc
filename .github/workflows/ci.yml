@@ -28,7 +28,7 @@ jobs:
       - run: uv sync --frozen --all-packages
       - name: Generate proto stubs
         run: make proto
-      - run: uv run mypy --strict packages/proxy/src packages/frontend/src
+      - run: uv run mypy --strict packages/proxy/src packages/frontend/src tools/benchmark/src
 
   test:
     runs-on: ubuntu-latest
@@ -40,4 +40,4 @@ jobs:
       - run: uv sync --frozen --all-packages
       - name: Generate proto stubs
         run: make proto
-      - run: uv run pytest packages/proxy/tests packages/frontend/tests -v
+      - run: uv run pytest packages/proxy/tests packages/frontend/tests tools/benchmark/tests -v

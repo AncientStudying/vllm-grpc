@@ -1,8 +1,12 @@
 PROXY_PORT ?= 8000
+NATIVE_PORT ?= 8001
 FRONTEND_PORT ?= 50051
 FRONTEND_ADDR ?= localhost:$(FRONTEND_PORT)
 
-.PHONY: proto bootstrap lint typecheck test check run-proxy run-frontend
+BENCH_PROXY_PORT ?= 8900
+BENCH_NATIVE_PORT ?= 8901
+
+.PHONY: proto bootstrap lint typecheck test check run-proxy run-frontend bench bench-ci bench-compare
 
 proto:
 	uv run python -m grpc_tools.protoc \
@@ -21,11 +25,11 @@ lint:
 	uv run ruff format --check .
 
 typecheck:
-	uv run mypy --strict packages/proxy/src packages/frontend/src
+	uv run mypy --strict packages/proxy/src packages/frontend/src tools/benchmark/src
 
 test:
 	uv sync --all-packages
-	uv run pytest packages/proxy/tests packages/frontend/tests tests/integration -v
+	uv run pytest packages/proxy/tests packages/frontend/tests tests/integration tools/benchmark/tests -v
 
 check: lint typecheck test
 
@@ -35,3 +39,26 @@ run-proxy:
 
 run-frontend:
 	FRONTEND_PORT=$(FRONTEND_PORT) uv run python -m vllm_grpc_frontend.main
+
+bench:
+	uv run python -m vllm_grpc_bench \
+		--proxy-url http://localhost:$(PROXY_PORT) \
+		--native-url http://localhost:$(NATIVE_PORT) \
+		--output-dir bench-results
+
+bench-ci:
+	uv run python -m vllm_grpc_bench.fake_server --port $(BENCH_PROXY_PORT) --include-proxy-header & \
+	FAKE_PROXY_PID=$$!; \
+	uv run python -m vllm_grpc_bench.fake_server --port $(BENCH_NATIVE_PORT) & \
+	FAKE_NATIVE_PID=$$!; \
+	sleep 1; \
+	uv run python -m vllm_grpc_bench \
+		--proxy-url http://localhost:$(BENCH_PROXY_PORT) \
+		--native-url http://localhost:$(BENCH_NATIVE_PORT) \
+		--output-dir bench-ci-results; \
+	BENCH_EXIT=$$?; \
+	kill $$FAKE_PROXY_PID $$FAKE_NATIVE_PID 2>/dev/null || true; \
+	exit $$BENCH_EXIT
+
+bench-compare:
+	uv run python -m vllm_grpc_bench compare $(BASELINE) $(RESULTS) --threshold $(or $(THRESHOLD),0.10)

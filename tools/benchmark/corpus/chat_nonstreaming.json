@@ -1,0 +1,82 @@
+[
+  {
+    "id": "sample-001",
+    "messages": [{"role": "user", "content": "Say hello."}],
+    "model": "Qwen/Qwen3-0.6B",
+    "max_tokens": 10,
+    "temperature": 0.0,
+    "seed": 42
+  },
+  {
+    "id": "sample-002",
+    "messages": [{"role": "user", "content": "What is 2+2?"}],
+    "model": "Qwen/Qwen3-0.6B",
+    "max_tokens": 10,
+    "temperature": 0.0,
+    "seed": 42
+  },
+  {
+    "id": "sample-003",
+    "messages": [{"role": "user", "content": "Reply with one word: yes or no."}],
+    "model": "Qwen/Qwen3-0.6B",
+    "max_tokens": 10,
+    "temperature": 0.0,
+    "seed": 42
+  },
+  {
+    "id": "sample-004",
+    "messages": [{"role": "user", "content": "Python is a programming language known for its readability and simplicity. It supports multiple paradigms including procedural, object-oriented, and functional programming. Summarize in one sentence."}],
+    "model": "Qwen/Qwen3-0.6B",
+    "max_tokens": 10,
+    "temperature": 0.0,
+    "seed": 42
+  },
+  {
+    "id": "sample-005",
+    "messages": [{"role": "user", "content": "Machine learning is a subset of artificial intelligence that enables systems to learn from data. Models are trained on examples and can generalize to unseen inputs. What is the key advantage of machine learning over rule-based systems?"}],
+    "model": "Qwen/Qwen3-0.6B",
+    "max_tokens": 10,
+    "temperature": 0.0,
+    "seed": 42
+  },
+  {
+    "id": "sample-006",
+    "messages": [{"role": "user", "content": "REST APIs use HTTP methods such as GET, POST, PUT, and DELETE to perform operations on resources. Each resource is identified by a URL. Resources can be represented in formats like JSON or XML. What HTTP method is used to create a new resource?"}],
+    "model": "Qwen/Qwen3-0.6B",
+    "max_tokens": 10,
+    "temperature": 0.0,
+    "seed": 42
+  },
+  {
+    "id": "sample-007",
+    "messages": [{"role": "user", "content": "Docker is a platform for developing, shipping, and running applications in isolated containers. Containers package an application and its dependencies together, ensuring consistent behavior across different environments. Unlike virtual machines, containers share the host OS kernel, making them lightweight and fast to start. Give one benefit of using Docker containers over traditional deployment."}],
+    "model": "Qwen/Qwen3-0.6B",
+    "max_tokens": 10,
+    "temperature": 0.0,
+    "seed": 42
+  },
+  {
+    "id": "sample-008",
+    "messages": [{"role": "user", "content": "gRPC is a high-performance remote procedure call framework developed by Google. It uses Protocol Buffers as its interface definition language and supports bidirectional streaming. gRPC works over HTTP/2, which enables multiplexing multiple streams over a single connection. It provides features like authentication, load balancing, and health checking. gRPC is commonly used in microservices architectures where low latency and high throughput are required. The protocol buffer format is more compact than JSON, which reduces serialization overhead. List two advantages of gRPC over REST."}],
+    "model": "Qwen/Qwen3-0.6B",
+    "max_tokens": 10,
+    "temperature": 0.0,
+    "seed": 42
+  },
+  {
+    "id": "sample-009",
+    "messages": [{"role": "user", "content": "Kubernetes is an open-source container orchestration platform originally developed by Google and now maintained by the Cloud Native Computing Foundation. It automates the deployment, scaling, and management of containerized applications. Kubernetes organizes containers into logical units called pods, which can be replicated across nodes in a cluster. A scheduler assigns pods to nodes based on resource availability. Services provide stable network endpoints for pods, while ingress controllers manage external traffic. Persistent volumes allow stateful applications to store data beyond the lifetime of individual pods. ConfigMaps and Secrets separate configuration from application code. Kubernetes supports rolling updates and rollbacks to minimize downtime during deployments. Horizontal pod autoscaling adjusts the number of running pods based on CPU or custom metrics. Name the component responsible for storing cluster state."}],
+    "model": "Qwen/Qwen3-0.6B",
+    "max_tokens": 10,
+    "temperature": 0.0,
+    "seed": 42
+  },
+  {
+    "id": "sample-010",
+    "messages": [{"role": "user", "content": "Large language models (LLMs) are deep neural networks trained on massive text corpora using self-supervised learning objectives such as next-token prediction. Transformer architectures with attention mechanisms allow these models to capture long-range dependencies in text. Pretraining on diverse data gives LLMs broad world knowledge, while fine-tuning on task-specific datasets adapts them to particular use cases. Reinforcement learning from human feedback (RLHF) further aligns model outputs with human preferences. Inference involves sampling from the model's output distribution, with parameters like temperature and top-p controlling output diversity. LLMs can be deployed via APIs or served locally using quantized model weights to reduce memory requirements. Model parallelism and tensor parallelism distribute computation across multiple GPUs for efficient serving. Caching key-value pairs from previous tokens speeds up autoregressive generation. The vLLM serving framework implements paged attention to manage GPU memory efficiently, enabling high throughput for concurrent requests. What technique does vLLM use to manage GPU memory during inference?"}],
+    "model": "Qwen/Qwen3-0.6B",
+    "max_tokens": 10,
+    "temperature": 0.0,
+    "seed": 42
+  }
+]

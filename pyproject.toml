@@ -7,7 +7,7 @@ readme = "README.md"
 dependencies = []
 
 [tool.uv.workspace]
-members = ["packages/gen", "packages/proxy", "packages/frontend"]
+members = ["packages/gen", "packages/proxy", "packages/frontend", "tools/benchmark"]
 
 [dependency-groups]
 # vllm-metal 0.2.0 is installed here; vllm is added at runtime via --with vllm

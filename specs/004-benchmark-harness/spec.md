@@ -2,7 +2,7 @@
 
 **Feature Branch**: `004-benchmark-harness`
 **Created**: 2026-05-01
-**Status**: Draft
+**Status**: Implemented
 **Input**: User description: "Phase 4 — Metrics and Test Harness (docs/PLAN.md)"
 
 ## User Scenarios & Testing *(mandatory)*
@@ -76,7 +76,14 @@ A developer working on a future phase wants to add a new measurement (such as ti
 - How does the report handle a run where some requests produce errors rather than valid completions?
 - What happens when a request exceeds a maximum expected response time?
 - How does the automated PR check behave when no committed baseline exists?
-- What happens when the committed baseline was produced on different hardware than the current benchmark run?
+- When the committed baseline was produced on different hardware: the `hostname` field in `RunMeta` makes the discrepancy visible in the report; no metric normalization is performed; regression thresholds apply regardless of hardware. Comparing runs across different machines is a known limitation and the user's responsibility to avoid.
+
+## Clarifications
+
+### Session 2026-05-01
+
+- Q: Should FR-006 require both CSV and JSON, or leave the format choice open? → A: Both CSV and JSON are always produced in every run; FR-006 updated accordingly.
+- Q: What is the accepted policy when baseline and new run are on different hardware? → A: Known limitation — `hostname` is recorded in `RunMeta` so the discrepancy is visible, but no normalization is performed and regression thresholds apply regardless; users are responsible for comparing same-hardware runs.
 
 ## Requirements *(mandatory)*
 
@@ -87,7 +94,7 @@ A developer working on a future phase wants to add a new measurement (such as ti
 - **FR-003**: The system MUST measure and report end-to-end latency at the P50, P95, and P99 percentiles for each endpoint.
 - **FR-004**: The system MUST measure and report throughput (completions per second) at a configurable concurrency level for each endpoint.
 - **FR-005**: The system MUST measure and report processing overhead attributable to the proxy translation layer per request, separately from model inference time.
-- **FR-006**: The system MUST emit a machine-readable report (CSV or JSON) containing all measurements for both endpoints.
+- **FR-006**: The system MUST emit both a CSV report and a JSON report containing all measurements for both endpoints. Both formats are always produced in a single run; CSV enables spreadsheet import and JSON enables programmatic comparison.
 - **FR-007**: The system MUST emit a human-readable markdown summary alongside the machine-readable report, explicitly indicating which path is faster, slower, or neutral on each metric.
 - **FR-008**: A full benchmark run MUST complete within five minutes on the project's development machine.
 - **FR-009**: The system MUST support committing a named baseline snapshot from a completed benchmark run to the repository.
