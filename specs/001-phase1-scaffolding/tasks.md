@@ -135,7 +135,7 @@ description: "Task list for Phase 1 — Scaffolding"
 - [x] T035 [P] Follow `specs/001-phase1-scaffolding/quickstart.md` step by step on a clean shell (no pre-running services) and confirm every step works as documented
 - [x] T036 [P] Ensure all source packages have `py.typed` marker files (`packages/proxy/src/vllm_grpc_proxy/py.typed`, `packages/frontend/src/vllm_grpc_frontend/py.typed`) for mypy compatibility at `packages/*/src/*/py.typed`
 - [x] T037 [P] Add `packages/gen/src/vllm_grpc/v1/` pattern to `.gitignore` and confirm `git status` shows generated stub files as ignored after `make proto` at `.gitignore`
-- [ ] T038 Merge `001-phase1-scaffolding` to `main` and confirm all CI jobs green
+- [x] T038 Merge `001-phase1-scaffolding` to `main` and confirm all CI jobs green
 
 ---
 

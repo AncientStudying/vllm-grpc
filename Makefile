@@ -23,6 +23,7 @@ typecheck:
 	uv run mypy --strict packages/proxy/src packages/frontend/src
 
 test:
+	uv sync --all-packages
 	uv run pytest packages/proxy/tests packages/frontend/tests -v
 
 check: lint typecheck test
