@@ -55,10 +55,10 @@ _image = (
         "uvicorn[standard]>=0.30",
         "httpx>=0.27",
     )
-    .add_local_dir("proto", "/build/proto")
-    .add_local_dir("packages/gen", "/build/packages/gen")
-    .add_local_dir("packages/frontend", "/build/packages/frontend")
-    .add_local_dir("packages/proxy", "/build/packages/proxy")
+    .add_local_dir("proto", "/build/proto", copy=True)
+    .add_local_dir("packages/gen", "/build/packages/gen", copy=True)
+    .add_local_dir("packages/frontend", "/build/packages/frontend", copy=True)
+    .add_local_dir("packages/proxy", "/build/packages/proxy", copy=True)
     .run_commands(
         "python -m grpc_tools.protoc"
         " -I /build/proto"
