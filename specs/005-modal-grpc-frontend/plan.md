@@ -117,10 +117,10 @@ _image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("vllm==0.20.0", "grpcio>=1.65", "grpcio-tools>=1.65",
                  "fastapi>=0.115", "uvicorn[standard]>=0.30", "httpx>=0.27")
-    .copy_local_dir("proto", "/build/proto")
-    .copy_local_dir("packages/gen", "/build/packages/gen")
-    .copy_local_dir("packages/frontend", "/build/packages/frontend")
-    .copy_local_dir("packages/proxy", "/build/packages/proxy")
+    .add_local_dir("proto", "/build/proto")
+    .add_local_dir("packages/gen", "/build/packages/gen")
+    .add_local_dir("packages/frontend", "/build/packages/frontend")
+    .add_local_dir("packages/proxy", "/build/packages/proxy")
     .run_commands(
         "python -m grpc_tools.protoc -I /build/proto ..."   # regenerate stubs
         "pip install /build/packages/gen",

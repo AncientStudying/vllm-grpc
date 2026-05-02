@@ -41,13 +41,13 @@
 
 **Decision**: Build the Modal container image with:
 1. `pip_install("vllm==0.20.0", "grpcio>=1.65", "fastapi>=0.115", "uvicorn[standard]>=0.30")`
-2. `.copy_local_dir("proto", "/build/proto")`
-3. `.copy_local_dir("packages/gen", "/build/packages/gen")`
-4. `.copy_local_dir("packages/frontend", "/build/packages/frontend")`
-5. `.copy_local_dir("packages/proxy", "/build/packages/proxy")`
+2. `.add_local_dir("proto", "/build/proto")`
+3. `.add_local_dir("packages/gen", "/build/packages/gen")`
+4. `.add_local_dir("packages/frontend", "/build/packages/frontend")`
+5. `.add_local_dir("packages/proxy", "/build/packages/proxy")`
 6. `.run_commands(...)` — run `grpc_tools.protoc` to generate stubs, then `pip install` each package
 
-**Rationale**: The workspace packages (`vllm-grpc-gen`, `vllm-grpc-frontend`, `vllm-grpc-proxy`) are not published to PyPI; they must be installed from source. Modal's `.copy_local_dir()` + `.run_commands("pip install <path>")` is the standard pattern for local packages. Running `protoc` inside the image build ensures the image is reproducible from a fresh clone (no local stub generation required on the developer's machine first).
+**Rationale**: The workspace packages (`vllm-grpc-gen`, `vllm-grpc-frontend`, `vllm-grpc-proxy`) are not published to PyPI; they must be installed from source. Modal's `.add_local_dir()` + `.run_commands("pip install <path>")` is the standard pattern for local packages. Running `protoc` inside the image build ensures the image is reproducible from a fresh clone (no local stub generation required on the developer's machine first).
 
 **Proto stubs are gitignored**: `packages/gen/src/vllm_grpc/v1/*_pb2.py` are gitignored. The image build regenerates them via `grpcio-tools` — not from local disk — so the image is always consistent with the proto source.
 
