@@ -109,8 +109,8 @@ def smoke_test() -> dict[str, object]:
     frontend_proc = subprocess.Popen(
         ["python", "-m", "vllm_grpc_frontend.main"],
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
     )
 
     # ── Step 2: poll gRPC health ─────────────────────────────────────────────
@@ -119,9 +119,15 @@ def smoke_test() -> dict[str, object]:
     for _ in range(_GRPC_STARTUP_POLLS):
         _time.sleep(_GRPC_POLL_INTERVAL_S)
         if frontend_proc.poll() is not None:
+            out = b""
+            if frontend_proc.stdout:
+                out = frontend_proc.stdout.read()
             return {
                 "ok": False,
-                "error": "gRPC frontend process exited unexpectedly during startup",
+                "error": (
+                    "gRPC frontend process exited unexpectedly during startup.\n"
+                    + out.decode(errors="replace")[-2000:]
+                ),
                 "cold_start_s": _time.monotonic() - t_start,
                 "request_latency_s": 0.0,
                 "completion_text": None,
