@@ -9,6 +9,19 @@ Replace the stub-run baseline files committed in Phase 4 with real GPU-backed nu
 
 ## Technical Context
 
+### gRPC Frontend Architecture
+
+`vllm_grpc_frontend` is a **peer package to vLLM**, not a wrapper around it. It imports vLLM's Python API (`AsyncLLMEngine` / `SamplingParams`) directly and replaces `vllm/entrypoints/openai` entirely — there is no vLLM REST server behind the frontend. When `bench_modal.py` starts `serve_grpc_for_bench()`, the Modal container runs only the gRPC frontend process; vLLM's `api_server` entrypoint is not involved.
+
+This means the benchmark paths are:
+
+- **REST run**: harness → TCP tunnel → `vllm.entrypoints.openai.api_server` (JSON over HTTP, calls AsyncLLMEngine internally)
+- **gRPC run**: harness → local uvicorn proxy (REST→gRPC translation) → TCP tunnel → `vllm_grpc_frontend.main` (protobuf over gRPC, calls AsyncLLMEngine internally)
+
+Both paths ultimately call `AsyncLLMEngine`. The observed latency delta (~530% at concurrency=1) is driven by the **proxy translation hop** (localhost REST→gRPC) and the additional tunnel segment, not by any overhead inside the frontend itself. A native gRPC client connecting directly to the frontend — bypassing the proxy — would see latency much closer to the REST baseline, with potential gains from protobuf serialization efficiency.
+
+See `docs/PLAN.md §2 Architecture Summary` for the canonical topology.
+
 **Language/Version**: Python 3.12 (workspace-wide)
 
 **Primary Dependencies**:
