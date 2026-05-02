@@ -61,6 +61,27 @@ class RunMeta:
     concurrency_levels: list[int]
     proxy_url: str
     native_url: str
+    modal_function_id: str | None = None
+    gpu_type: str | None = None
+    cold_start_s: float | None = None
+
+
+@dataclass
+class CrossRunRow:
+    metric: str
+    concurrency: int
+    value_a: float | None
+    value_b: float | None
+    delta_pct: float | None
+
+
+@dataclass
+class CrossRunReport:
+    label_a: str
+    label_b: str
+    rows: list[CrossRunRow]
+    meta_a: RunMeta
+    meta_b: RunMeta
 
 
 @dataclass
@@ -138,7 +159,13 @@ def compute_summaries(results: list[RequestResult]) -> list[RunSummary]:
     return summaries
 
 
-def build_run_meta(config: BenchmarkConfig) -> RunMeta:
+def build_run_meta(
+    config: BenchmarkConfig,
+    *,
+    modal_function_id: str | None = None,
+    gpu_type: str | None = None,
+    cold_start_s: float | None = None,
+) -> RunMeta:
     try:
         git_sha = (
             subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
@@ -156,4 +183,7 @@ def build_run_meta(config: BenchmarkConfig) -> RunMeta:
         concurrency_levels=config.concurrency_levels,
         proxy_url=config.proxy_url,
         native_url=config.native_url,
+        modal_function_id=modal_function_id,
+        gpu_type=gpu_type,
+        cold_start_s=cold_start_s,
     )

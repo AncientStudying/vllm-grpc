@@ -16,7 +16,7 @@
 
 **Purpose**: Add the new Makefile target so the bench-modal command is available before any code is written.
 
-- [ ] T001 Add `bench-modal` target to `Makefile`: `uv run --with modal modal run scripts/python/bench_modal.py`; extend `.PHONY` line to include `bench-modal`
+- [X] T001 Add `bench-modal` target to `Makefile`: `uv run --with modal modal run scripts/python/bench_modal.py`; extend `.PHONY` line to include `bench-modal`
 
 **Checkpoint**: `make bench-modal` fails with "No module named bench_modal" (expected — script doesn't exist yet). `make check` still passes unchanged.
 
@@ -28,14 +28,14 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T002 [P] Extend `tools/benchmark/src/vllm_grpc_bench/metrics.py`:
+- [X] T002 [P] Extend `tools/benchmark/src/vllm_grpc_bench/metrics.py`:
   - Add three optional fields to `RunMeta` dataclass (after existing fields, default `None`): `modal_function_id: str | None = None`, `gpu_type: str | None = None`, `cold_start_s: float | None = None`
   - Update `build_run_meta()` to accept and pass through these three keyword args with `None` defaults
   - Add `CrossRunRow` dataclass: fields `metric: str`, `concurrency: int`, `value_a: float | None`, `value_b: float | None`, `delta_pct: float | None`
   - Add `CrossRunReport` dataclass: fields `label_a: str`, `label_b: str`, `rows: list[CrossRunRow]`, `meta_a: RunMeta`, `meta_b: RunMeta`
   - (Per `specs/007-modal-real-baselines/data-model.md §Modified Entities` and `§New Entities`)
 
-- [ ] T003 [P] Update `_deserialize_run()` in `tools/benchmark/src/vllm_grpc_bench/__main__.py`:
+- [X] T003 [P] Update `_deserialize_run()` in `tools/benchmark/src/vllm_grpc_bench/__main__.py`:
   - Change the three new `RunMeta` fields to use `.get()`: `modal_function_id=meta_d.get("modal_function_id")`, `gpu_type=meta_d.get("gpu_type")`, `cold_start_s=float(v) if (v := meta_d.get("cold_start_s")) is not None else None`
   - Existing `results.json` files without these keys must still deserialize without error
 
@@ -49,27 +49,27 @@
 
 **Independent Test**: Run `make bench-modal` with valid Modal credentials. Verify that `docs/benchmarks/phase-3-modal-rest-baseline.json`, `phase-3-modal-grpc-baseline.json`, and `phase-3-modal-comparison.md` are all created with valid, non-zero metric values and that no manual step was required between the REST and gRPC runs.
 
-- [ ] T004 [P] [US1] Add `compare_cross(run_a: BenchmarkRun, run_b: BenchmarkRun, label_a: str, label_b: str) -> CrossRunReport` to `tools/benchmark/src/vllm_grpc_bench/compare.py`:
+- [X] T004 [P] [US1] Add `compare_cross(run_a: BenchmarkRun, run_b: BenchmarkRun, label_a: str, label_b: str) -> CrossRunReport` to `tools/benchmark/src/vllm_grpc_bench/compare.py`:
   - Build a lookup of `run_a` summaries by concurrency (ignoring `target` field)
   - For each concurrency level in `run_b` summaries, find the matching `run_a` summary
   - Extract metrics per the table in `data-model.md §CrossRunRow`: `latency_p50/p95/p99_ms`, `throughput_rps`, `request_bytes_mean`, `response_bytes_mean` — from the dominant target of each run (`native` for REST run, `proxy` for gRPC run)
   - Compute `delta_pct = (value_b - value_a) / value_a` where both values are non-None and `value_a != 0`; otherwise `None`
   - Return `CrossRunReport(label_a=label_a, label_b=label_b, rows=[...], meta_a=run_a.meta, meta_b=run_b.meta)`
 
-- [ ] T005 [P] [US1] Add `write_cross_run_md(report: CrossRunReport, output_path: Path) -> Path` to `tools/benchmark/src/vllm_grpc_bench/reporter.py`:
+- [X] T005 [P] [US1] Add `write_cross_run_md(report: CrossRunReport, output_path: Path) -> Path` to `tools/benchmark/src/vllm_grpc_bench/reporter.py`:
   - Write a markdown document with: title line, run metadata section (label, timestamp, git_sha, hostname, gpu_type, cold_start_s for each run), then one table per concurrency level with columns `Metric | {label_a} | {label_b} | Δ`
   - All six metrics must appear in each table (per FR-004 — no metric selectively omitted); if a value is `None`, write `—`
   - `delta_pct` formatted as `+12.3%` / `-5.1%` / `—`
   - Returns `output_path` after writing
 
-- [ ] T006 [US1] Create `scripts/python/bench_modal.py` with module-level constants and shared Modal infrastructure:
+- [X] T006 [US1] Create `scripts/python/bench_modal.py` with module-level constants and shared Modal infrastructure:
   - Copy module-level constants from `contracts/bench-modal-script.md §Module-Level Constants`: `_VLLM_VERSION`, `_MODEL_PATH`, `_REST_PORT`, `_GRPC_PORT`, `_FUNCTION_TIMEOUT_S`, `_STOP_CHECK_INTERVAL_S`, `_ADDR_POLL_TIMEOUT_S`, `_DICT_NAME`, `_CORPUS_PATH`, `_CONCURRENCY`
   - Define `app = modal.App("vllm-grpc-bench-modal")`
   - Define `_MODEL_VOLUME = modal.Volume.from_name("vllm-grpc-model-weights", create_if_missing=False)`
   - Define `_rest_image`: `modal.Image.debian_slim(python_version="3.12").pip_install(f"vllm=={_VLLM_VERSION}", "httpx>=0.27")` (mirrors `modal_vllm_rest.py`)
   - Define `_grpc_image`: same image construction as `modal_frontend_serve.py` (pip_install vllm + grpcio + grpcio-tools, add_local_dir for proto and packages, run_commands to build stubs and pip-install gen + frontend)
 
-- [ ] T007 [P] [US1] Implement `serve_rest_for_bench()` as `@app.function(gpu="A10G", image=_rest_image, volumes={_MODEL_PATH: _MODEL_VOLUME}, timeout=_FUNCTION_TIMEOUT_S)` in `scripts/python/bench_modal.py`:
+- [X] T007 [P] [US1] Implement `serve_rest_for_bench()` as `@app.function(gpu="A10G", image=_rest_image, volumes={_MODEL_PATH: _MODEL_VOLUME}, timeout=_FUNCTION_TIMEOUT_S)` in `scripts/python/bench_modal.py`:
   - At function start, record `t_start = time.monotonic()`
   - Start vLLM REST subprocess: `python -m vllm.entrypoints.openai.api_server --model _MODEL_PATH --port _REST_PORT`
   - Poll `http://localhost:{_REST_PORT}/health` with httpx every 5 s, up to `_REST_STARTUP_POLLS` (120) times; if process exits early or timeout reached, raise `RuntimeError`
@@ -77,11 +77,11 @@
   - Open `with modal.forward(_REST_PORT, unencrypted=True) as tunnel:`; write `modal.Dict.from_name(_DICT_NAME)["rest_addr"] = tunnel.tcp_socket` and `["rest_cold_start_s"] = cold_start_s`
   - Block in sleep loop (`time.sleep(_STOP_CHECK_INTERVAL_S)`) checking `modal.Dict.from_name(_DICT_NAME).get("rest_stop")`; exit loop and return when stop signal is set
 
-- [ ] T008 [P] [US1] Implement `serve_grpc_for_bench()` as `@app.function(gpu="A10G", image=_grpc_image, volumes={_MODEL_PATH: _MODEL_VOLUME}, timeout=_FUNCTION_TIMEOUT_S)` in `scripts/python/bench_modal.py`:
+- [X] T008 [P] [US1] Implement `serve_grpc_for_bench()` as `@app.function(gpu="A10G", image=_grpc_image, volumes={_MODEL_PATH: _MODEL_VOLUME}, timeout=_FUNCTION_TIMEOUT_S)` in `scripts/python/bench_modal.py`:
   - Mirrors Phase 3.2 `serve_frontend()` in `modal_frontend_serve.py`: start gRPC frontend subprocess, poll `Health.Ping` with grpcio, compute `cold_start_s`, open `modal.forward(_GRPC_PORT, unencrypted=True)`, write `grpc_addr` and `grpc_cold_start_s` to `modal.Dict.from_name(_DICT_NAME)`, block on `grpc_stop` key
   - Add `# type: ignore` where required for `modal.Dict` dynamic API; each suppression must have a comment per Constitution IV
 
-- [ ] T009 [US1] Implement `@app.local_entrypoint() def main()` in `scripts/python/bench_modal.py` — full orchestration per `contracts/bench-modal-script.md §Execution Flow`:
+- [X] T009 [US1] Implement `@app.local_entrypoint() def main()` in `scripts/python/bench_modal.py` — full orchestration per `contracts/bench-modal-script.md §Execution Flow`:
   - **REST phase**: `f_rest = serve_rest_for_bench.spawn()` → poll `modal.Dict.from_name(_DICT_NAME).get("rest_addr")` with `_ADDR_POLL_TIMEOUT_S` timeout (on timeout: set `rest_stop`, exit code 1) → print tunnel address → run harness via `subprocess.run(["uv", "run", "-m", "vllm_grpc_bench", "--proxy-url", rest_addr, "--native-url", rest_addr, "--corpus", _CORPUS_PATH, "--concurrency", _CONCURRENCY, "--output-dir", "bench-results"])` → copy `bench-results/results.json` to `bench-results/results-rest.json` → set `rest_stop`
   - **gRPC phase**: `f_grpc = serve_grpc_for_bench.spawn()` → poll `grpc_addr` → start proxy subprocess (`FRONTEND_ADDR=<grpc_addr> uv run uvicorn vllm_grpc_proxy.main:app --host 0.0.0.0 --port 8000`) → run harness (proxy-url and native-url both `http://localhost:8000`) → copy `bench-results/results.json` to `bench-results/results-grpc.json` → kill proxy → set `grpc_stop`
   - Load both JSON files via `_deserialize_run()`; attach `modal_function_id`, `gpu_type`, `cold_start_s` from `modal.Dict` to each `RunMeta`
@@ -99,7 +99,7 @@
 
 **Independent Test**: Run the compare-cross subcommand with two existing result files on disk. Verify the report is written in under 30 seconds with no network calls and that the process exits 0. Run again with a non-existent file path and verify exit code 2.
 
-- [ ] T010 [US2] Add `compare-cross` subcommand to `tools/benchmark/src/vllm_grpc_bench/__main__.py` — per `contracts/harness-cli-extension.md §New Subcommand`:
+- [X] T010 [US2] Add `compare-cross` subcommand to `tools/benchmark/src/vllm_grpc_bench/__main__.py` — per `contracts/harness-cli-extension.md §New Subcommand`:
   - Add a `compare-cross` subparser under `_build_parser()` with `--result-a PATH` (required), `--result-b PATH` (required), `--label-a LABEL` (default `"run-a"`), `--label-b LABEL` (default `"run-b"`), `--output PATH` (optional)
   - In `main()`: if `args.subcommand == "compare-cross"`, validate both paths exist (exit 2 if not), call `_deserialize_run()` on each, call `compare_cross(run_a, run_b, ...)`, call `write_cross_run_md(report, output_path)` if `--output` set or print report to stdout, exit 0
   - Import `compare_cross` from `vllm_grpc_bench.compare` and `write_cross_run_md` from `vllm_grpc_bench.reporter`
@@ -114,7 +114,7 @@
 
 **Independent Test**: Open a sample PR touching `packages/proxy/src/` or `packages/frontend/src/`. Verify CI posts a comment that includes both the stub regression section (existing Phase 4 behaviour) and a Modal cross-run summary section generated from the committed baseline files.
 
-- [ ] T011 [US3] Update `.github/workflows/benchmark.yml` to add a `modal-baseline-summary` step after the existing regression check:
+- [X] T011 [US3] Update `.github/workflows/benchmark.yml` to add a `modal-baseline-summary` step after the existing regression check:
   - Step runs: `python -m vllm_grpc_bench compare-cross --result-a docs/benchmarks/phase-3-modal-rest-baseline.json --result-b docs/benchmarks/phase-3-modal-grpc-baseline.json --label-a REST --label-b gRPC --output /tmp/modal-cross-summary.md`
   - If either baseline file is absent, the step exits 0 with a message "Modal baselines not yet committed — skipping Modal summary"
   - Append `/tmp/modal-cross-summary.md` content as a new section in the PR comment body (after the existing stub regression section)
@@ -128,7 +128,7 @@
 
 **Purpose**: Lint/type-check gate, then live run to produce and commit the actual baseline files.
 
-- [ ] T012 [P] Run `make check` against all files modified in this phase; confirm `ruff` and `mypy --strict` pass with zero errors for `scripts/python/bench_modal.py` and the three extended harness modules (`metrics.py`, `compare.py`, `reporter.py`, `__main__.py`)
+- [X] T012 [P] Run `make check` against all files modified in this phase; confirm `ruff` and `mypy --strict` pass with zero errors for `scripts/python/bench_modal.py` and the three extended harness modules (`metrics.py`, `compare.py`, `reporter.py`, `__main__.py`)
 
 - [ ] T013 Manual gate — run `make bench-modal` on the developer machine with valid Modal credentials and pre-staged weights; verify all five output files are produced in `docs/benchmarks/` with non-zero metric values; review `phase-3-modal-comparison.md` to confirm no metric is missing and the report is honest
 

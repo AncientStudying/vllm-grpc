@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from vllm_grpc_bench.compare import compare
+from vllm_grpc_bench.compare import compare, compare_cross
 from vllm_grpc_bench.corpus import load_corpus
 from vllm_grpc_bench.metrics import (
     BenchmarkConfig,
@@ -21,7 +21,7 @@ from vllm_grpc_bench.metrics import (
     build_run_meta,
     compute_summaries,
 )
-from vllm_grpc_bench.reporter import write_csv, write_json, write_summary_md
+from vllm_grpc_bench.reporter import write_cross_run_md, write_csv, write_json, write_summary_md
 from vllm_grpc_bench.runner import run_target
 
 _DEFAULT_CORPUS = Path(__file__).parent.parent.parent / "corpus" / "chat_nonstreaming.json"
@@ -39,6 +39,23 @@ def _build_parser() -> argparse.ArgumentParser:
     cmp.add_argument("baseline", metavar="BASELINE_PATH", help="Path to baseline results.json")
     cmp.add_argument("new_results", metavar="NEW_RESULTS_PATH", help="Path to new results.json")
     cmp.add_argument("--threshold", type=float, default=0.10)
+
+    # ---- compare-cross subcommand ----
+    cmp_cross = sub.add_parser(
+        "compare-cross",
+        help="Head-to-head comparison of two separate runs (e.g. REST vs gRPC)",
+    )
+    cmp_cross.add_argument("--result-a", required=True, metavar="PATH", help="First results.json")
+    cmp_cross.add_argument("--result-b", required=True, metavar="PATH", help="Second results.json")
+    cmp_cross.add_argument("--label-a", default="run-a", metavar="LABEL", help="Label for run A")
+    cmp_cross.add_argument("--label-b", default="run-b", metavar="LABEL", help="Label for run B")
+    cmp_cross.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Write report to file (default: stdout)",
+    )
 
     # ---- run (default) ----
     parser.add_argument("--proxy-url", required=False, default=None)
@@ -152,6 +169,7 @@ async def _run(args: argparse.Namespace) -> int:
 
 def _deserialize_run(data: Any) -> BenchmarkRun:
     meta_d: Any = data["meta"]
+    _cs = meta_d.get("cold_start_s")
     meta = RunMeta(
         timestamp=str(meta_d["timestamp"]),
         git_sha=str(meta_d["git_sha"]),
@@ -160,6 +178,11 @@ def _deserialize_run(data: Any) -> BenchmarkRun:
         concurrency_levels=[int(v) for v in meta_d["concurrency_levels"]],
         proxy_url=str(meta_d["proxy_url"]),
         native_url=str(meta_d["native_url"]),
+        modal_function_id=str(meta_d["modal_function_id"])
+        if meta_d.get("modal_function_id")
+        else None,
+        gpu_type=str(meta_d["gpu_type"]) if meta_d.get("gpu_type") else None,
+        cold_start_s=float(_cs) if _cs is not None else None,
     )
 
     def _f(d: Any, key: str) -> float | None:
@@ -237,6 +260,32 @@ def main() -> None:
         report = compare(baseline_run, new_run, threshold=args.threshold)
         _print_comparison(report)
         sys.exit(1 if report.has_regression else 0)
+
+    if args.subcommand == "compare-cross":
+        path_a = Path(args.result_a)
+        path_b = Path(args.result_b)
+        if not path_a.exists():
+            print(f"Error: {path_a} not found", file=sys.stderr)
+            sys.exit(2)
+        if not path_b.exists():
+            print(f"Error: {path_b} not found", file=sys.stderr)
+            sys.exit(2)
+        run_a = _deserialize_run(json.loads(path_a.read_text()))
+        run_b = _deserialize_run(json.loads(path_b.read_text()))
+        cross_report = compare_cross(run_a, run_b, label_a=args.label_a, label_b=args.label_b)
+        output_path: Path | None = args.output
+        if output_path is not None:
+            write_cross_run_md(cross_report, output_path)
+            print(f"Report written to {output_path}")
+        else:
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as tf:
+                tmp_path = Path(tf.name)
+            write_cross_run_md(cross_report, tmp_path)
+            print(tmp_path.read_text())
+            tmp_path.unlink(missing_ok=True)
+        sys.exit(0)
 
     exit_code = asyncio.run(_run(args))
     sys.exit(exit_code)
