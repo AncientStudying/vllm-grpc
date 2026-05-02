@@ -19,6 +19,7 @@ investigation = [
 ]
 dev = [
     "grpcio-tools>=1.65",
+    "modal>=0.73",
     "ruff>=0.4",
     "mypy>=1.10",
     "pytest>=8",
@@ -54,4 +55,8 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = ["vllm", "vllm.*", "transformers", "transformers.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["huggingface_hub", "huggingface_hub.*"]
 ignore_missing_imports = true
