@@ -33,7 +33,7 @@
 
 - [X] T002 Implement `scripts/python/modal_download_weights.py`: define `_MODEL_VOLUME = modal.Volume.from_name("vllm-grpc-model-weights", create_if_missing=True)`, a CPU-only Modal function that calls `huggingface_hub.snapshot_download(repo_id="Qwen/Qwen3-0.6B", local_dir="/mnt/weights")` with idempotency guard (`if Path("/mnt/weights/config.json").exists(): return`), calls `_MODEL_VOLUME.commit()`, and a `@app.local_entrypoint()` that prints elapsed time and exit status
 - [X] T003 [P] Add `download-weights` Makefile target in `Makefile`: `uv run --with modal modal run scripts/python/modal_download_weights.py`
-- [ ] T004 Run `make download-weights` manually; confirm exit 0 and that `vllm-grpc-model-weights` volume appears in the Modal dashboard
+- [X] T004 Run `make download-weights` manually; confirm exit 0 and that `vllm-grpc-model-weights` volume appears in the Modal dashboard
 
 **Checkpoint**: Modal Volume `vllm-grpc-model-weights` exists and contains `config.json`.
 
