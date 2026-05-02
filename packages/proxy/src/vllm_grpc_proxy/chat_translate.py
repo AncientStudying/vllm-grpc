@@ -5,7 +5,7 @@ import uuid
 from typing import Any
 
 from pydantic import BaseModel, Field
-from vllm_grpc.v1 import chat_pb2  # type: ignore[import-untyped]
+from vllm_grpc.v1 import chat_pb2
 
 
 class OpenAIChatMessage(BaseModel):

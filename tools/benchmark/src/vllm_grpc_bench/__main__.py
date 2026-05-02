@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from vllm_grpc_bench.compare import compare, compare_cross
+from vllm_grpc_bench.compare import compare, compare_cross, compare_three_way
 from vllm_grpc_bench.corpus import load_corpus
 from vllm_grpc_bench.metrics import (
     BenchmarkConfig,
@@ -21,7 +21,13 @@ from vllm_grpc_bench.metrics import (
     build_run_meta,
     compute_summaries,
 )
-from vllm_grpc_bench.reporter import write_cross_run_md, write_csv, write_json, write_summary_md
+from vllm_grpc_bench.reporter import (
+    write_cross_run_md,
+    write_csv,
+    write_json,
+    write_summary_md,
+    write_three_way_md,
+)
 from vllm_grpc_bench.runner import run_target
 
 _DEFAULT_CORPUS = Path(__file__).parent.parent.parent / "corpus" / "chat_nonstreaming.json"
@@ -50,6 +56,29 @@ def _build_parser() -> argparse.ArgumentParser:
     cmp_cross.add_argument("--label-a", default="run-a", metavar="LABEL", help="Label for run A")
     cmp_cross.add_argument("--label-b", default="run-b", metavar="LABEL", help="Label for run B")
     cmp_cross.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Write report to file (default: stdout)",
+    )
+
+    # ---- compare-three-way subcommand ----
+    cmp_three = sub.add_parser(
+        "compare-three-way",
+        help="Three-way comparison of REST / gRPC-proxy / gRPC-direct runs",
+    )
+    cmp_three.add_argument("--result-a", required=True, metavar="PATH", help="REST results.json")
+    cmp_three.add_argument(
+        "--result-b", required=True, metavar="PATH", help="gRPC-proxy results.json"
+    )
+    cmp_three.add_argument(
+        "--result-c", required=True, metavar="PATH", help="gRPC-direct results.json"
+    )
+    cmp_three.add_argument("--label-a", default="rest", metavar="LABEL")
+    cmp_three.add_argument("--label-b", default="grpc-proxy", metavar="LABEL")
+    cmp_three.add_argument("--label-c", default="grpc-direct", metavar="LABEL")
+    cmp_three.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -260,6 +289,39 @@ def main() -> None:
         report = compare(baseline_run, new_run, threshold=args.threshold)
         _print_comparison(report)
         sys.exit(1 if report.has_regression else 0)
+
+    if args.subcommand == "compare-three-way":
+        path_a = Path(args.result_a)
+        path_b = Path(args.result_b)
+        path_c = Path(args.result_c)
+        for p in (path_a, path_b, path_c):
+            if not p.exists():
+                print(f"Error: {p} not found", file=sys.stderr)
+                sys.exit(2)
+        run_a = _deserialize_run(json.loads(path_a.read_text()))
+        run_b = _deserialize_run(json.loads(path_b.read_text()))
+        run_c = _deserialize_run(json.loads(path_c.read_text()))
+        three_report = compare_three_way(
+            run_a,
+            run_b,
+            run_c,
+            label_a=args.label_a,
+            label_b=args.label_b,
+            label_c=args.label_c,
+        )
+        output_path_three: Path | None = args.output
+        if output_path_three is not None:
+            write_three_way_md(three_report, output_path_three)
+            print(f"Report written to {output_path_three}")
+        else:
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as tf:
+                tmp_path = Path(tf.name)
+            write_three_way_md(three_report, tmp_path)
+            print(tmp_path.read_text())
+            tmp_path.unlink(missing_ok=True)
+        sys.exit(0)
 
     if args.subcommand == "compare-cross":
         path_a = Path(args.result_a)

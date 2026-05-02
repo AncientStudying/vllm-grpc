@@ -4,7 +4,7 @@ import asyncio
 import os
 
 import grpc
-from vllm_grpc.v1 import chat_pb2_grpc, health_pb2_grpc  # type: ignore[import-untyped]
+from vllm_grpc.v1 import chat_pb2_grpc, health_pb2_grpc
 
 from vllm_grpc_frontend.chat import ChatServicer
 from vllm_grpc_frontend.health import HealthServicer

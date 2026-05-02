@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from vllm_grpc.v1 import chat_pb2  # type: ignore[import-untyped]
+from vllm_grpc.v1 import chat_pb2
 from vllm_grpc_frontend.chat_translate import (
     messages_to_prompt,
     proto_to_sampling_params,

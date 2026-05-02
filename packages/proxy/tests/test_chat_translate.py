@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
-from vllm_grpc.v1 import chat_pb2  # type: ignore[import-untyped]
+from vllm_grpc.v1 import chat_pb2
 from vllm_grpc_proxy.chat_translate import (
     OpenAIChatRequest,
     openai_request_to_proto,

@@ -4,7 +4,7 @@ import uuid
 from typing import Any
 
 import grpc
-from vllm_grpc.v1 import chat_pb2, chat_pb2_grpc  # type: ignore[import-untyped]
+from vllm_grpc.v1 import chat_pb2, chat_pb2_grpc
 
 from vllm_grpc_frontend.chat_translate import (
     messages_to_prompt,

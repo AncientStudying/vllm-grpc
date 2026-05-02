@@ -25,7 +25,7 @@ class BenchmarkConfig:
 @dataclass
 class RequestResult:
     sample_id: str
-    target: Literal["proxy", "native"]
+    target: Literal["proxy", "native", "grpc-direct"]
     concurrency: int
     latency_ms: float | None
     request_bytes: int
@@ -37,7 +37,7 @@ class RequestResult:
 
 @dataclass
 class RunSummary:
-    target: Literal["proxy", "native"]
+    target: Literal["proxy", "native", "grpc-direct"]
     concurrency: int
     n_requests: int
     n_errors: int
@@ -85,6 +85,28 @@ class CrossRunReport:
 
 
 @dataclass
+class ThreeWayRow:
+    metric: str
+    concurrency: int
+    value_a: float | None
+    value_b: float | None
+    value_c: float | None
+    delta_pct_b: float | None
+    delta_pct_c: float | None
+
+
+@dataclass
+class ThreeWayReport:
+    label_a: str
+    label_b: str
+    label_c: str
+    rows: list[ThreeWayRow]
+    meta_a: RunMeta
+    meta_b: RunMeta
+    meta_c: RunMeta
+
+
+@dataclass
 class BenchmarkRun:
     meta: RunMeta
     summaries: list[RunSummary]
@@ -124,7 +146,7 @@ def _percentile(values: list[float], p: float) -> float | None:
 
 
 def compute_summaries(results: list[RequestResult]) -> list[RunSummary]:
-    groups: dict[tuple[Literal["proxy", "native"], int], list[RequestResult]] = {}
+    groups: dict[tuple[Literal["proxy", "native", "grpc-direct"], int], list[RequestResult]] = {}
     for r in results:
         key = (r.target, r.concurrency)
         groups.setdefault(key, []).append(r)

@@ -7,6 +7,8 @@ from vllm_grpc_bench.metrics import (
     CrossRunRow,
     RegressionEntry,
     RunSummary,
+    ThreeWayReport,
+    ThreeWayRow,
 )
 
 _METRIC_FIELDS = [
@@ -126,4 +128,70 @@ def compare_cross(
         rows=rows,
         meta_a=run_a.meta,
         meta_b=run_b.meta,
+    )
+
+
+def compare_three_way(
+    run_a: BenchmarkRun,
+    run_b: BenchmarkRun,
+    run_c: BenchmarkRun,
+    label_a: str = "REST",
+    label_b: str = "gRPC-proxy",
+    label_c: str = "gRPC-direct",
+) -> ThreeWayReport:
+    # run_a = REST harness (pick "native" target rows)
+    # run_b = gRPC-proxy harness (pick "proxy" target rows)
+    # run_c = gRPC-direct harness (pick "grpc-direct" target rows)
+    index_a: dict[int, RunSummary] = {
+        s.concurrency: s for s in run_a.summaries if s.target == _REST_TARGET
+    }
+    index_b: dict[int, RunSummary] = {
+        s.concurrency: s for s in run_b.summaries if s.target == _GRPC_TARGET
+    }
+    index_c: dict[int, RunSummary] = {
+        s.concurrency: s for s in run_c.summaries if s.target == "grpc-direct"
+    }
+
+    all_concurrencies = sorted(set(index_a) | set(index_b) | set(index_c))
+    rows: list[ThreeWayRow] = []
+
+    for conc in all_concurrencies:
+        s_a = index_a.get(conc)
+        s_b = index_b.get(conc)
+        s_c = index_c.get(conc)
+        for field_name in _CROSS_METRIC_FIELDS:
+            val_a = getattr(s_a, field_name) if s_a is not None else None
+            val_b = getattr(s_b, field_name) if s_b is not None else None
+            val_c = getattr(s_c, field_name) if s_c is not None else None
+
+            if val_a is not None and val_b is not None and val_a != 0:
+                delta_b: float | None = (val_b - val_a) / val_a * 100
+            else:
+                delta_b = None
+
+            if val_a is not None and val_c is not None and val_a != 0:
+                delta_c: float | None = (val_c - val_a) / val_a * 100
+            else:
+                delta_c = None
+
+            rows.append(
+                ThreeWayRow(
+                    metric=field_name,
+                    concurrency=conc,
+                    value_a=val_a,
+                    value_b=val_b,
+                    value_c=val_c,
+                    delta_pct_b=delta_b,
+                    delta_pct_c=delta_c,
+                )
+            )
+
+    return ThreeWayReport(
+        label_a=label_a,
+        label_b=label_b,
+        label_c=label_c,
+        rows=rows,
+        meta_a=run_a.meta,
+        meta_b=run_b.meta,
+        meta_c=run_c.meta,
     )

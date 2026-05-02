@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 import grpc
-from vllm_grpc.v1 import (  # type: ignore[import-untyped]
+from vllm_grpc.v1 import (
     chat_pb2,
     chat_pb2_grpc,
     health_pb2,

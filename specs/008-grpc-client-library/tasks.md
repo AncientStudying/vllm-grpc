@@ -15,11 +15,11 @@
 
 **Purpose**: Register the new package in the workspace and lay down the file skeleton before any logic is written.
 
-- [ ] T001 Add `"packages/client"` to `[tool.uv.workspace] members` list in `pyproject.toml`
-- [ ] T002 Create `packages/client/pyproject.toml` with name `vllm-grpc-client`, `requires-python = ">=3.12"`, dependencies `grpcio>=1.65` and `vllm-grpc-gen` (workspace source), hatchling build backend, wheel target `packages = ["src/vllm_grpc_client"]`
-- [ ] T003 [P] Create empty `packages/client/src/vllm_grpc_client/__init__.py`
-- [ ] T004 [P] Create empty `packages/client/src/vllm_grpc_client/py.typed`
-- [ ] T005 Add `"vllm-grpc-client"` to `[project] dependencies` and `[tool.uv.sources] vllm-grpc-client = { workspace = true }` in `tools/benchmark/pyproject.toml`
+- [X] T001 Add `"packages/client"` to `[tool.uv.workspace] members` list in `pyproject.toml`
+- [X] T002 Create `packages/client/pyproject.toml` with name `vllm-grpc-client`, `requires-python = ">=3.12"`, dependencies `grpcio>=1.65` and `vllm-grpc-gen` (workspace source), hatchling build backend, wheel target `packages = ["src/vllm_grpc_client"]`
+- [X] T003 [P] Create empty `packages/client/src/vllm_grpc_client/__init__.py`
+- [X] T004 [P] Create empty `packages/client/src/vllm_grpc_client/py.typed`
+- [X] T005 Add `"vllm-grpc-client"` to `[project] dependencies` and `[tool.uv.sources] vllm-grpc-client = { workspace = true }` in `tools/benchmark/pyproject.toml`
 
 **Checkpoint**: `uv sync` succeeds; `packages/client` appears in the workspace.
 
@@ -31,10 +31,10 @@
 
 **Independent Test**: Instantiate `VllmGrpcClient("host:port")`, call `chat.complete()` with `seed=42` against a running frontend, verify a typed `ChatCompleteResult` is returned. Run twice; both responses must have identical `content`.
 
-- [ ] T006 [US1] Implement `ChatCompleteResult` dataclass (fields: `content`, `role`, `finish_reason`, `prompt_tokens`, `completion_tokens`) and `ChatClient` class with `complete()` method that maps `messages: list[dict[str, str]]` → `repeated ChatMessage`, calls `ChatService.Complete` unary RPC, and returns `ChatCompleteResult` in `packages/client/src/vllm_grpc_client/chat.py`
-- [ ] T007 [US1] Implement `VllmGrpcClient` with `addr: str`, `timeout: float = 30.0`, `__aenter__` opening `grpc.aio.insecure_channel(addr)`, `__aexit__` calling `await channel.close()`, and `.chat` property returning a `ChatClient` bound to the shared channel in `packages/client/src/vllm_grpc_client/client.py`
-- [ ] T008 [US1] Export `VllmGrpcClient` from `packages/client/src/vllm_grpc_client/__init__.py` (single public symbol)
-- [ ] T009 [US1] Verify `mypy --strict packages/client` passes with zero errors and `ruff check packages/client` passes with zero violations
+- [X] T006 [US1] Implement `ChatCompleteResult` dataclass (fields: `content`, `role`, `finish_reason`, `prompt_tokens`, `completion_tokens`) and `ChatClient` class with `complete()` method that maps `messages: list[dict[str, str]]` → `repeated ChatMessage`, calls `ChatService.Complete` unary RPC, and returns `ChatCompleteResult` in `packages/client/src/vllm_grpc_client/chat.py`
+- [X] T007 [US1] Implement `VllmGrpcClient` with `addr: str`, `timeout: float = 30.0`, `__aenter__` opening `grpc.aio.insecure_channel(addr)`, `__aexit__` calling `await channel.close()`, and `.chat` property returning a `ChatClient` bound to the shared channel in `packages/client/src/vllm_grpc_client/client.py`
+- [X] T008 [US1] Export `VllmGrpcClient` from `packages/client/src/vllm_grpc_client/__init__.py` (single public symbol)
+- [X] T009 [US1] Verify `mypy --strict packages/client` passes with zero errors and `ruff check packages/client` passes with zero violations
 
 **Checkpoint**: `from vllm_grpc_client import VllmGrpcClient` works; `mypy --strict` passes; quickstart Scenario 1 can be executed against a running frontend.
 
@@ -46,13 +46,13 @@
 
 **Independent Test**: Run `make bench-modal`. Verify all three targets complete with zero errors and `docs/benchmarks/phase-4.2-three-way-comparison.md` exists with all metrics populated.
 
-- [ ] T010 [US2] Add `ThreeWayRow` dataclass (`metric`, `concurrency`, `value_a`, `value_b`, `value_c`, `delta_pct_b`, `delta_pct_c` — all matching contracts/three-way-bench.md) and `ThreeWayReport` dataclass (`label_a`, `label_b`, `label_c`, `rows`, `meta_a`, `meta_b`, `meta_c`) to `tools/benchmark/src/vllm_grpc_bench/metrics.py`
-- [ ] T011 [US2] Implement `compare_three_way(run_a, run_b, run_c, label_a, label_b, label_c) -> ThreeWayReport` covering metrics `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `throughput_rps`, `request_bytes_mean`, `response_bytes_mean` with `delta_pct_b/c = (val - val_a) / val_a * 100` (None if either is None or val_a == 0) in `tools/benchmark/src/vllm_grpc_bench/compare.py`
-- [ ] T012 [US2] Implement `write_three_way_md(report: ThreeWayReport, path: Path) -> None` writing a markdown table with columns `metric | concurrency | {label_a} | {label_b} | Δ vs {label_a} | {label_c} | Δ vs {label_a}` in `tools/benchmark/src/vllm_grpc_bench/reporter.py`
-- [ ] T013 [US2] Add `compare-three-way` subcommand with required `--result-a/b/c PATH` and optional `--label-a/b/c LABEL` (defaults: `rest`, `grpc-proxy`, `grpc-direct`) and `--output PATH` following the same validation pattern as `compare-cross` in `tools/benchmark/src/vllm_grpc_bench/__main__.py`
-- [ ] T014 [US2] Add `run_grpc_target(addr: str, samples: list[RequestSample], concurrency: int, timeout: float) -> list[RequestResult]` using `VllmGrpcClient` (one channel, shared across semaphore-bounded `asyncio.gather`), setting `target="grpc-direct"`, measuring `request_bytes = len(ChatCompleteRequest(...).SerializeToString())` and `response_bytes = len(response_proto.SerializeToString())`; extend `Target` literal to `Literal["proxy", "native", "grpc-direct"]` in `tools/benchmark/src/vllm_grpc_bench/runner.py`
-- [ ] T015 [US2] Extend the gRPC phase in `scripts/python/bench_modal.py`: after the proxy harness run completes, keep `serve_grpc_for_bench` alive, tear down the local proxy subprocess, then call `run_grpc_target(grpc_addr, ...)` and write raw results to `_GRPC_DIRECT_RESULTS` (a new `pathlib.Path` constant pointing to the results dir)
-- [ ] T016 [US2] Extend the comparison phase in `scripts/python/bench_modal.py`: load all three result JSONs, call `compare_three_way()`, call `write_three_way_md()`, and write all five output files to `docs/benchmarks/` only after all three targets succeed — if any target produced errors or the harness raised, skip all output writes and exit non-zero (FR-008)
+- [X] T010 [US2] Add `ThreeWayRow` dataclass (`metric`, `concurrency`, `value_a`, `value_b`, `value_c`, `delta_pct_b`, `delta_pct_c` — all matching contracts/three-way-bench.md) and `ThreeWayReport` dataclass (`label_a`, `label_b`, `label_c`, `rows`, `meta_a`, `meta_b`, `meta_c`) to `tools/benchmark/src/vllm_grpc_bench/metrics.py`
+- [X] T011 [US2] Implement `compare_three_way(run_a, run_b, run_c, label_a, label_b, label_c) -> ThreeWayReport` covering metrics `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `throughput_rps`, `request_bytes_mean`, `response_bytes_mean` with `delta_pct_b/c = (val - val_a) / val_a * 100` (None if either is None or val_a == 0) in `tools/benchmark/src/vllm_grpc_bench/compare.py`
+- [X] T012 [US2] Implement `write_three_way_md(report: ThreeWayReport, path: Path) -> None` writing a markdown table with columns `metric | concurrency | {label_a} | {label_b} | Δ vs {label_a} | {label_c} | Δ vs {label_a}` in `tools/benchmark/src/vllm_grpc_bench/reporter.py`
+- [X] T013 [US2] Add `compare-three-way` subcommand with required `--result-a/b/c PATH` and optional `--label-a/b/c LABEL` (defaults: `rest`, `grpc-proxy`, `grpc-direct`) and `--output PATH` following the same validation pattern as `compare-cross` in `tools/benchmark/src/vllm_grpc_bench/__main__.py`
+- [X] T014 [US2] Add `run_grpc_target(addr: str, samples: list[RequestSample], concurrency: int, timeout: float) -> list[RequestResult]` using `VllmGrpcClient` (one channel, shared across semaphore-bounded `asyncio.gather`), setting `target="grpc-direct"`, measuring `request_bytes = len(ChatCompleteRequest(...).SerializeToString())` and `response_bytes = len(response_proto.SerializeToString())`; extend `Target` literal to `Literal["proxy", "native", "grpc-direct"]` in `tools/benchmark/src/vllm_grpc_bench/runner.py`
+- [X] T015 [US2] Extend the gRPC phase in `scripts/python/bench_modal.py`: after the proxy harness run completes, keep `serve_grpc_for_bench` alive, tear down the local proxy subprocess, then call `run_grpc_target(grpc_addr, ...)` and write raw results to `_GRPC_DIRECT_RESULTS` (a new `pathlib.Path` constant pointing to the results dir)
+- [X] T016 [US2] Extend the comparison phase in `scripts/python/bench_modal.py`: load all three result JSONs, call `compare_three_way()`, call `write_three_way_md()`, and write all five output files to `docs/benchmarks/` only after all three targets succeed — if any target produced errors or the harness raised, skip all output writes and exit non-zero (FR-008)
 
 **Checkpoint**: `python -m vllm_grpc_bench compare-three-way --help` works; `mypy --strict tools/benchmark` passes.
 
@@ -64,10 +64,10 @@
 
 **Independent Test**: Remove all `# type: ignore[import-untyped]` lines. Run `mypy --strict packages/proxy packages/frontend packages/client`. Verify zero errors referencing missing type information from `vllm_grpc`.
 
-- [ ] T017 [US3] Create empty file `packages/gen/src/vllm_grpc/py.typed` (PEP 561 marker)
-- [ ] T018 [P] [US3] Remove `# type: ignore[import-untyped]` from `vllm_grpc.v1` imports in `packages/proxy/src/vllm_grpc_proxy/chat_translate.py`, `packages/proxy/src/vllm_grpc_proxy/grpc_client.py`, `packages/proxy/tests/test_chat_translate.py`, and `packages/proxy/tests/test_chat_endpoint.py`
-- [ ] T019 [P] [US3] Remove `# type: ignore[import-untyped]` from `vllm_grpc.v1` imports in `packages/frontend/src/vllm_grpc_frontend/chat.py`, `packages/frontend/src/vllm_grpc_frontend/health.py`, `packages/frontend/src/vllm_grpc_frontend/chat_translate.py`, `packages/frontend/src/vllm_grpc_frontend/main.py`, `packages/frontend/tests/test_chat_servicer.py`, `packages/frontend/tests/test_chat_translate.py`, and `packages/frontend/tests/test_health_ping.py` — leave `# type: ignore[misc]` and `# type: ignore[type-arg]` in `chat.py` and `health.py` intact (grpcio servicer gaps, out of scope)
-- [ ] T020 [US3] Verify `mypy --strict packages/proxy packages/frontend packages/client` shows zero errors referencing missing type information from `vllm_grpc`
+- [X] T017 [US3] Create empty file `packages/gen/src/vllm_grpc/py.typed` (PEP 561 marker)
+- [X] T018 [P] [US3] Remove `# type: ignore[import-untyped]` from `vllm_grpc.v1` imports in `packages/proxy/src/vllm_grpc_proxy/chat_translate.py`, `packages/proxy/src/vllm_grpc_proxy/grpc_client.py`, `packages/proxy/tests/test_chat_translate.py`, and `packages/proxy/tests/test_chat_endpoint.py`
+- [X] T019 [P] [US3] Remove `# type: ignore[import-untyped]` from `vllm_grpc.v1` imports in `packages/frontend/src/vllm_grpc_frontend/chat.py`, `packages/frontend/src/vllm_grpc_frontend/health.py`, `packages/frontend/src/vllm_grpc_frontend/chat_translate.py`, `packages/frontend/src/vllm_grpc_frontend/main.py`, `packages/frontend/tests/test_chat_servicer.py`, `packages/frontend/tests/test_chat_translate.py`, and `packages/frontend/tests/test_health_ping.py` — leave `# type: ignore[misc]` and `# type: ignore[type-arg]` in `chat.py` and `health.py` intact (grpcio servicer gaps, out of scope)
+- [X] T020 [US3] Verify `mypy --strict packages/proxy packages/frontend packages/client` shows zero errors referencing missing type information from `vllm_grpc`
 
 **Checkpoint**: No `import-untyped` suppressions remain for `vllm_grpc` imports across all three packages; `misc`/`type-arg` suppressions in frontend remain untouched.
 
@@ -78,8 +78,8 @@
 **Purpose**: End-to-end validation — benchmark run + CI gate verification.
 
 - [ ] T021 Run `make bench-modal` (requires Modal credentials and pre-staged model weights) to generate Phase 4.2 baseline results; commit the five output files (`phase-4.2-grpc-direct-baseline.json`, `phase-4.2-grpc-direct-baseline.md`, `phase-4.2-three-way-comparison.md`, `phase-4.2-rest-baseline.json`, `phase-4.2-grpc-proxy-baseline.json`) to `docs/benchmarks/`
-- [ ] T022 Verify `make lint` and `make typecheck` pass across all packages (`packages/gen`, `packages/proxy`, `packages/frontend`, `packages/client`, `tools/benchmark`)
-- [ ] T023 Verify `make test` passes for `packages/proxy`, `packages/frontend`, and `tools/benchmark`
+- [X] T022 Verify `make lint` and `make typecheck` pass across all packages (`packages/gen`, `packages/proxy`, `packages/frontend`, `packages/client`, `tools/benchmark`)
+- [X] T023 Verify `make test` passes for `packages/proxy`, `packages/frontend`, and `tools/benchmark`
 
 ---
 

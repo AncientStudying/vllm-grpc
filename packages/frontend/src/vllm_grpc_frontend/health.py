@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import grpc
-from vllm_grpc.v1 import health_pb2, health_pb2_grpc  # type: ignore[import-untyped]
+from vllm_grpc.v1 import health_pb2, health_pb2_grpc
 
 
 class HealthServicer(health_pb2_grpc.HealthServicer):  # type: ignore[misc]

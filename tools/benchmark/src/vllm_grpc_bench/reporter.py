@@ -5,7 +5,13 @@ import dataclasses
 import json
 from pathlib import Path
 
-from vllm_grpc_bench.metrics import BenchmarkRun, CrossRunReport, RunMeta, RunSummary
+from vllm_grpc_bench.metrics import (
+    BenchmarkRun,
+    CrossRunReport,
+    RunMeta,
+    RunSummary,
+    ThreeWayReport,
+)
 
 
 def _to_dict(obj: object) -> object:
@@ -215,3 +221,65 @@ def write_cross_run_md(report: CrossRunReport, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines))
     return output_path
+
+
+def write_three_way_md(report: ThreeWayReport, path: Path) -> None:
+    if not report.rows:
+        return
+
+    la, lb, lc = report.label_a, report.label_b, report.label_c
+
+    lines: list[str] = [
+        f"# Three-Way Benchmark Comparison: {la} / {lb} / {lc}",
+        "",
+        "## Run Metadata",
+        "",
+    ]
+    lines += _meta_section(la, report.meta_a)
+    lines.append("")
+    lines += _meta_section(lb, report.meta_b)
+    lines.append("")
+    lines += _meta_section(lc, report.meta_c)
+    lines.append("")
+
+    concurrencies = sorted({r.concurrency for r in report.rows})
+    for conc in concurrencies:
+        conc_rows = [r for r in report.rows if r.concurrency == conc]
+        by_metric = {r.metric: r for r in conc_rows}
+
+        sep_a = "-" * (len(la) + 2)
+        sep_b = "-" * (len(lb) + 2)
+        sep_delta = "-" * (len(f"Δ vs {la}") + 2)
+        sep_c = "-" * (len(lc) + 2)
+
+        lines += [
+            f"## Concurrency = {conc}",
+            "",
+            f"| metric | concurrency | {la} | {lb} | Δ vs {la} | {lc} | Δ vs {la} |",
+            f"|--------|-------------|{sep_a}|{sep_b}|{sep_delta}|{sep_c}|{sep_delta}|",
+        ]
+
+        for field_name, (label, precision) in _CROSS_METRIC_LABELS.items():
+            row = by_metric.get(field_name)
+            if row is None:
+                lines.append(f"| {label} | {conc} | — | — | — | — | — |")
+                continue
+            va = _fmt(row.value_a, precision)
+            vb = _fmt(row.value_b, precision)
+            vc = _fmt(row.value_c, precision)
+
+            def _dpct(v: float | None) -> str:
+                if v is None:
+                    return "—"
+                sign = "+" if v >= 0 else ""
+                return f"{sign}{v:.1f}%"
+
+            lines.append(
+                f"| {label} | {conc} | {va} | {vb} | {_dpct(row.delta_pct_b)}"
+                f" | {vc} | {_dpct(row.delta_pct_c)} |"
+            )
+
+        lines.append("")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines))

@@ -25,7 +25,7 @@ lint:
 	uv run ruff format --check .
 
 typecheck:
-	uv run mypy --strict packages/proxy/src packages/frontend/src tools/benchmark/src
+	uv run mypy --strict packages/proxy/src packages/frontend/src packages/client/src tools/benchmark/src
 
 test:
 	uv sync --all-packages

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import grpc
 import pytest
 from httpx import ASGITransport, AsyncClient
-from vllm_grpc.v1 import chat_pb2  # type: ignore[import-untyped]
+from vllm_grpc.v1 import chat_pb2
 from vllm_grpc_proxy.main import app
 
 _CANNED_RESPONSE = chat_pb2.ChatCompleteResponse(
