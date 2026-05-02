@@ -275,6 +275,40 @@ Each phase begins with a spec-kit `/specify` invocation that turns the phase goa
 
 ---
 
+### Phase 3.2 — Local Proxy → Modal gRPC Tunnel
+
+**Goal.** Establish the network path that Phase 3.1 deferred: the proxy runs on the developer's local workstation (M2), the gRPC frontend runs on Modal A10G, and protobuf/gRPC frames travel over an actual network connection between them. This is the only topology that exercises the wire-efficiency thesis, and it is a prerequisite for Phase 4.1 real benchmarks.
+
+**Background.** Phase 3.1 placed both the proxy and the gRPC frontend as subprocesses inside the same Modal container (`FRONTEND_ADDR=localhost:50051` intra-container). This validated end-to-end functional correctness on GPU, but no protobuf bytes ever traversed a network. The original Phase 3.1 exit criteria in this plan called for "a ChatService.Complete RPC from the proxy" — meaning a separately-running proxy. Phase 3.2 closes that gap. Modal is currently the only GPU environment available; this phase is therefore the only credible means to test the prototype under real conditions.
+
+**Approach.** Use `modal.forward(port, unencrypted=True)` to expose the gRPC frontend's TCP port from inside the Modal container as a stable external `host:port`. The proxy's existing `FRONTEND_ADDR` env var is set to this address — no proxy code changes required. The key design constraint is to avoid the generator-yield-inside-forward pattern flagged as unreliable in Phase 3.1 research (R-001). Instead, the Modal function blocks with a sleep loop (no `yield`), and the tunnel address is communicated to the local entrypoint via a `modal.Dict` shared-state object.
+
+**Primary unknown to validate.** Whether `modal.forward(unencrypted=True)` correctly passes persistent HTTP/2 connections carrying gRPC frames. gRPC keeps connections alive with PING frames; the tunnel must tolerate this without dropping the connection. This must be confirmed empirically before implementation is considered complete.
+
+**Inputs.** Phase 3.1 Modal deployment. Phase 3 working bridge (`packages/proxy/`, `packages/frontend/`).
+
+**Deliverables.**
+
+- `scripts/python/modal_frontend_serve.py` — long-lived Modal app that:
+  - Starts the vLLM gRPC frontend subprocess inside Modal A10G (same image and volume as Phase 3.1)
+  - Polls `Health.Ping` until the server is ready and records `cold_start_s`
+  - Opens a `modal.forward(50051, unencrypted=True)` tunnel and writes the tunnel address (`host:port`) to a `modal.Dict` shared-state object
+  - Blocks (sleep loop, no `yield`) until the function timeout, keeping the tunnel alive
+  - Local entrypoint polls the `modal.Dict` for the tunnel address, prints it as `export FRONTEND_ADDR=<addr>`, and then blocks waiting for Ctrl+C; on exit the Modal app tears down automatically
+- `Makefile` target `modal-serve-frontend`: `uv run --with modal modal run scripts/python/modal_frontend_serve.py`
+- Updated `docs/decisions/0002-modal-deployment.md`: document the Phase 3.2 tunnel approach, the `modal.Dict` address-communication pattern, observed HTTP/2 tunnel behavior, and the validated local-proxy → Modal-gRPC topology
+- Manual validation: start the proxy locally with `FRONTEND_ADDR` set to the Modal tunnel address; run `scripts/curl/chat-nonstreaming-modal.sh` and confirm a deterministic completion is returned
+
+**Exit criteria.**
+
+- `make modal-serve-frontend` brings up the gRPC frontend on Modal A10G and prints a stable `FRONTEND_ADDR=<host>:<port>` to the developer's terminal
+- The proxy, started locally with that `FRONTEND_ADDR`, sends a `ChatService.Complete` request that travels as protobuf over the `modal.forward` tunnel and returns a valid, deterministic completion (`seed=42`)
+- The tunnel remains stable for at least one full request/response cycle; any instability is documented
+- `docs/decisions/0002-modal-deployment.md` is updated with the validated topology and any observed `modal.forward` behavior (PING handling, connection drops, reconnection)
+- All new `.py` files pass `ruff` and `mypy --strict`
+
+---
+
 ### Phase 4 — Metrics and Test Harness
 
 **Goal.** Build the measurement infrastructure *before* adding more feature surface, so every later phase lands with numbers attached.
@@ -303,7 +337,7 @@ Each phase begins with a spec-kit `/specify` invocation that turns the phase goa
 
 **Goal.** Replace the stub-run baseline files committed in Phase 4 with real GPU-backed numbers that actually test the wire-overhead thesis. Because Modal functions are ephemeral, the two targets (REST and gRPC) cannot be held alive simultaneously; benchmarks are run sequentially and the harness's existing compare path stitches the two result files into a single report.
 
-**Inputs.** Phase 3.1 Modal deployments (both REST and gRPC frontend). Phase 4 benchmark harness.
+**Inputs.** Phase 3.2 validated local proxy → Modal gRPC tunnel. Phase 3.1 REST comparison deployment. Phase 4 benchmark harness.
 
 **Deliverables.**
 

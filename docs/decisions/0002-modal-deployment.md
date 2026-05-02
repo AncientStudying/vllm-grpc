@@ -123,20 +123,80 @@ same model with the same seed. SC-003 is satisfied.
 2. **Pre-stage weights** — `make download-weights` (one-time; idempotent; CPU-only, no GPU cost).
 3. **Run smoke tests** — `make smoke-grpc-frontend` / `make smoke-rest`.
 
-## Manual External Tunnel (Advanced)
+## Phase 3.2: Local Proxy → Modal gRPC Tunnel
 
-To run a local proxy against a Modal-hosted gRPC server (without the automated lifecycle
-script), use `modal.forward()` to expose the gRPC port:
+Phase 3.1 ran both the proxy and gRPC frontend inside the same Modal container
+(`FRONTEND_ADDR=localhost:50051` intra-container). No protobuf bytes traversed a network.
+Phase 3.2 closes that gap: the gRPC frontend runs on A10G, the proxy runs on the developer's
+local machine, and gRPC frames travel over a real network connection.
 
-```python
-import modal
+### Topology
 
-with modal.forward(50051) as tunnel:
-    # tunnel.tcp_socket is the external host:port
-    # Start a local proxy: FRONTEND_ADDR=<tunnel.tcp_socket> make run-proxy
-    input("Press Enter to tear down...")
+```
+Developer machine (M2)                    Modal A10G container
+┌─────────────────────────┐               ┌──────────────────────────────┐
+│  make run-proxy          │               │  vllm_grpc_frontend.main      │
+│  (FRONTEND_ADDR=         │  gRPC/HTTP2  │  listening on 0.0.0.0:50051   │
+│   r435.modal.host:45419) │──────────────▶│                              │
+│                          │◀─────────────│  modal.forward(50051,         │
+│  curl / SDK client       │              │    unencrypted=True)           │
+└─────────────────────────┘               └──────────────────────────────┘
 ```
 
-This pattern is useful for interactive testing but requires keeping the Python process alive
-for the duration of the tunnel. The automated smoke-test scripts are preferred for CI-style
-validation.
+### Address Communication Pattern
+
+The serve script (`scripts/python/modal_frontend_serve.py`) uses a `modal.Dict` named
+`"vllm-grpc-serve"` to pass the tunnel address from the container to the local entrypoint:
+
+1. Container opens `modal.forward(50051, unencrypted=True)`; gets `tunnel.tcp_socket` →
+   `(host, port)`.
+2. Container writes `frontend_addr = f"{host}:{port}"` to the `modal.Dict`.
+3. Local entrypoint polls the `modal.Dict` every 2 s until `frontend_addr` appears, then
+   prints `export FRONTEND_ADDR=<addr>`.
+4. Developer exports the address and runs `make run-proxy`.
+
+### Spawn + Stop-Signal Teardown
+
+`serve_frontend.spawn()` starts the container function as a background task so the local
+entrypoint can print the tunnel address without blocking. When the developer presses Ctrl+C,
+the local entrypoint writes `stop_signal=True` to the `modal.Dict`. The container function
+checks this flag every 5 s, exits the `modal.forward()` context (closing the tunnel), kills
+the frontend subprocess, and returns. The container is reclaimed by Modal at that point.
+
+**Runaway-cost guard**: the function has `timeout=3600` (1 hour). If the local entrypoint
+exits abnormally (terminal closed, crash) without sending the stop signal, the container runs
+until this timeout and then stops automatically.
+
+### Observed Tunnel Behavior (2026-05-02, A10G, Qwen/Qwen3-0.6B)
+
+| Metric | Value |
+|---|---|
+| `cold_start_s` | 130.1 s |
+| Requests sent | 2 (sequential, ~14 s apart) |
+| Both requests succeeded | ✅ |
+| Connection errors / UNAVAILABLE | None |
+| Tunnel dropped mid-session | No |
+| Deterministic output (same seed) | ✅ — identical `content` both runs |
+| Teardown (Ctrl+C → container stopped) | Clean; < 30 s |
+
+`modal.forward(unencrypted=True)` correctly passes gRPC/HTTP/2 frames including keep-alive
+PING frames across multiple sequential requests without dropping the connection. The tunnel
+address format is `<hostname>:<port>` (e.g., `r435.modal.host:45419`), which is a valid
+value for `FRONTEND_ADDR` / `grpc.aio.insecure_channel()` without further transformation.
+
+Observed completion (both runs, `seed=42`, `max_tokens=20`):
+```
+<think>
+Okay, the user is asking what 2 + 2 is. Let me think.
+```
+This matches the Phase 3.1 intra-container result, confirming the tunnel does not alter
+generation.
+
+### Prerequisites for Phase 3.2
+
+1. **Modal account** — `modal token new` (one-time per machine).
+2. **Pre-stage weights** — `make download-weights` (one-time; from Phase 3.1).
+3. **Start the serve** — `make modal-serve-frontend`; wait for `FRONTEND_ADDR` line.
+4. **Connect the proxy** — in a second terminal: `FRONTEND_ADDR=<addr> make run-proxy`.
+5. **Send a request** — `bash scripts/curl/chat-nonstreaming-modal.sh`.
+6. **Tear down** — Ctrl+C in the first terminal.
