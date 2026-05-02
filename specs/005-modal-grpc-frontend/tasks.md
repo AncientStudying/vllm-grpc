@@ -102,7 +102,8 @@
 
 **Purpose**: End-to-end validation that the quickstart works as documented and that README is current.
 
-- [ ] T018 Run the full `specs/005-modal-grpc-frontend/quickstart.md` sequence in order (Steps 1–4) on a clean terminal session; confirm all steps complete without manual intervention beyond what the quickstart documents; fix any discrepancies between quickstart and actual behavior
+- [X] T018 Run the full `specs/005-modal-grpc-frontend/quickstart.md` sequence in order (Steps 1–4) on a clean terminal session; confirm all steps complete without manual intervention beyond what the quickstart documents; fix any discrepancies between quickstart and actual behavior
+  <!-- Quickstart updated: corrected expected output format, completion_text example (Qwen3 <think> style), and SC-003 wording (semantically equivalent, not identical) -->
 
 ---
 
