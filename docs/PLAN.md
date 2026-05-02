@@ -250,6 +250,31 @@ Each phase begins with a spec-kit `/specify` invocation that turns the phase goa
 
 ---
 
+### Phase 3.1 — Modal gRPC Frontend Deployment
+
+**Goal.** Make the Phase 3 gRPC frontend deployable on Modal so that real GPU-backed benchmarks are possible. The M2 is adequate for local development and architecture validation, but its vLLM install is fragile and CPU-only numbers are not meaningful for the wire-overhead thesis. This phase produces a reproducible Modal deployment of `packages/frontend/` against which the Phase 4 harness can run real measurements.
+
+**Inputs.** Phase 3 working bridge. ADR 0001 (Modal A10G confirmed as the viable compute environment).
+
+**Deliverables.**
+
+- `scripts/python/modal_frontend.py` — Modal app definition that:
+  - Builds a `debian_slim(python_version="3.12")` image with `vllm==0.20.0` and the `vllm-grpc-frontend` wheel (or editable install from the workspace)
+  - Exposes the gRPC server port via a Modal `@web_endpoint` tunnel or `allow_concurrent_inputs` function
+  - Accepts the same `VLLM_MODEL` and gRPC listen address env vars already used by the local frontend
+- `scripts/python/modal_vllm_rest.py` — Modal app definition for vLLM's native OpenAI REST server (the REST comparison target; mirrors the `verify_prompt_embeds_modal.py` pattern from Phase 2)
+- Proxy config updated to accept a `GRPC_TARGET` env var so it can point at either localhost (local dev) or the Modal gRPC endpoint without code changes
+- `scripts/curl/chat-nonstreaming-modal.sh` — smoke-test curl script that exercises the full path: local proxy → Modal gRPC frontend → vLLM on A10G
+- Documentation in `docs/decisions/0002-modal-deployment.md` covering: container build approach, how to set `GRPC_TARGET`, known cold-start latency (excluded from benchmark timing), and teardown behavior
+
+**Exit criteria.**
+
+- `modal run scripts/python/modal_frontend.py` deploys the gRPC frontend and it responds to a `ChatService.Complete` RPC from the proxy
+- The smoke-test curl script produces a deterministic completion (fixed seed) against the Modal endpoint
+- Cold-start time is documented; the deploy-then-benchmark sequence is scripted so it can be reproduced from a fresh machine with only `modal token new` as a prerequisite
+
+---
+
 ### Phase 4 — Metrics and Test Harness
 
 **Goal.** Build the measurement infrastructure *before* adding more feature surface, so every later phase lands with numbers attached.
@@ -271,6 +296,35 @@ Each phase begins with a spec-kit `/specify` invocation that turns the phase goa
 - A single `bench` task produces a head-to-head report on the dev machine in under five minutes
 - The report shows whether the bridge is faster, slower, or neutral on each metric — honestly, no thumb on the scale
 - CI regression comment works on a sample PR
+
+---
+
+### Phase 4.1 — Real Comparative Baselines (Modal)
+
+**Goal.** Replace the stub-run baseline files committed in Phase 4 with real GPU-backed numbers that actually test the wire-overhead thesis. Because Modal functions are ephemeral, the two targets (REST and gRPC) cannot be held alive simultaneously; benchmarks are run sequentially and the harness's existing compare path stitches the two result files into a single report.
+
+**Inputs.** Phase 3.1 Modal deployments (both REST and gRPC frontend). Phase 4 benchmark harness.
+
+**Deliverables.**
+
+- `scripts/python/bench_modal.py` — orchestration script that:
+  1. Deploys (or reuses a running) `modal_vllm_rest.py` app, waits for it to be healthy, runs the harness corpus against it, saves `results-rest.json`, then tears down
+  2. Deploys `modal_frontend.py` (proxy + gRPC frontend pair), waits for health, runs the same corpus, saves `results-grpc.json`, then tears down
+  3. Calls the harness `compare` module with the two result files and writes the comparison report to `docs/benchmarks/`
+  - Cold-start time (Modal provisioning) is measured separately and excluded from per-request latency numbers; it is recorded in run metadata for transparency
+  - Each run embeds `git_sha`, `hostname`, Modal function ID, and GPU type in its `RunMeta` so results are fully traceable
+- Updated harness CLI: `--result-a` / `--result-b` flags (or `bench compare <file-a> <file-b>`) for the offline compare path, so the two sequential JSON files can be diffed without re-running
+- `docs/benchmarks/phase-3-modal-rest-baseline.json` and `.md` — real REST results (committed from dev machine after first successful run)
+- `docs/benchmarks/phase-3-modal-grpc-baseline.json` and `.md` — real gRPC results (committed from dev machine after first successful run)
+- `docs/benchmarks/phase-3-modal-comparison.md` — head-to-head summary: P50/P95/P99 latency, wire bytes per request/response, throughput at each concurrency level, for REST vs gRPC; honest framing with no metric selectively omitted
+- `Makefile` target `bench-modal` that runs `bench_modal.py` end-to-end
+
+**Exit criteria.**
+
+- `make bench-modal` runs both deployments sequentially, collects results, and writes the comparison report without manual intervention
+- Cold-start latency is visible in run metadata but excluded from reported P50/P95/P99
+- The comparison report honestly shows whether gRPC is faster, slower, or neutral on each metric against vLLM-native REST on the same A10G hardware
+- Baseline JSON files are committed and the CI harness can detect regressions against them on future PRs
 
 ---
 
