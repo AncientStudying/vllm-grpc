@@ -6,7 +6,7 @@ FRONTEND_ADDR ?= localhost:$(FRONTEND_PORT)
 BENCH_PROXY_PORT ?= 8900
 BENCH_NATIVE_PORT ?= 8901
 
-.PHONY: proto bootstrap lint typecheck test check run-proxy run-frontend bench bench-ci bench-compare
+.PHONY: proto bootstrap lint typecheck test check run-proxy run-frontend bench bench-ci bench-compare download-weights smoke-grpc-frontend smoke-rest
 
 proto:
 	uv run python -m grpc_tools.protoc \
@@ -62,3 +62,12 @@ bench-ci:
 
 bench-compare:
 	uv run python -m vllm_grpc_bench compare $(BASELINE) $(RESULTS) --threshold $(or $(THRESHOLD),0.10)
+
+download-weights:
+	uv run --with modal modal run scripts/python/modal_download_weights.py
+
+smoke-grpc-frontend:
+	uv run --with modal modal run scripts/python/modal_frontend_smoke.py
+
+smoke-rest:
+	uv run --with modal modal run scripts/python/modal_vllm_rest.py
