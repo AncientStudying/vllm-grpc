@@ -88,11 +88,27 @@ def _row(
     return f"| {label} | {pf} | {nf} | {delta} |"
 
 
+# Metrics rendered for any single-target run (no comparison column).
+_SINGLE_TARGET_METRICS: list[tuple[str, str, int]] = [
+    ("latency_p50_ms", "Latency P50 (ms)", 2),
+    ("latency_p95_ms", "Latency P95 (ms)", 2),
+    ("latency_p99_ms", "Latency P99 (ms)", 2),
+    ("throughput_rps", "Throughput (rps)", 2),
+    ("request_bytes_mean", "Request bytes (mean)", 0),
+    ("response_bytes_mean", "Response bytes (mean)", 0),
+]
+
+# Human-readable display names for targets that aren't proxy/native.
+_TARGET_DISPLAY_NAMES: dict[str, str] = {
+    "grpc-direct": "gRPC-direct",
+}
+
+
 def write_summary_md(run: BenchmarkRun, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     out = output_dir / "summary.md"
 
-    by_concurrency: dict[int, dict[str, object]] = {}
+    by_concurrency: dict[int, dict[str, RunSummary]] = {}
     for s in run.summaries:
         by_concurrency.setdefault(s.concurrency, {})[s.target] = s
 
@@ -102,48 +118,55 @@ def write_summary_md(run: BenchmarkRun, output_dir: Path) -> Path:
         f"**Run**: {run.meta.timestamp}  ",
         f"**Commit**: {run.meta.git_sha}  ",
         f"**Host**: {run.meta.hostname}  ",
-        "",
     ]
+    if run.meta.gpu_type:
+        lines.append(f"**GPU**: {run.meta.gpu_type}  ")
+    if run.meta.cold_start_s is not None:
+        lines.append(f"**Cold start**: {run.meta.cold_start_s:.1f}s  ")
+    lines.append("")
 
     for conc in sorted(by_concurrency.keys()):
         targets = by_concurrency[conc]
-        proxy = targets.get("proxy")
-        native = targets.get("native")
+        p = targets.get("proxy")
+        n = targets.get("native")
 
-        p = proxy if isinstance(proxy, RunSummary) else None
-        n = native if isinstance(native, RunSummary) else None
+        lines += [f"## Concurrency = {conc}", ""]
 
-        pp50 = p.latency_p50_ms if p else None
-        pp95 = p.latency_p95_ms if p else None
-        pp99 = p.latency_p99_ms if p else None
-        pthr = p.throughput_rps if p else None
-        preq = p.request_bytes_mean if p else None
-        prsp = p.response_bytes_mean if p else None
-        ppm50 = p.proxy_ms_p50 if p else None
-        ppm95 = p.proxy_ms_p95 if p else None
-        ppm99 = p.proxy_ms_p99 if p else None
-        np50 = n.latency_p50_ms if n else None
-        np95 = n.latency_p95_ms if n else None
-        np99 = n.latency_p99_ms if n else None
-        nthr = n.throughput_rps if n else None
-        nreq = n.request_bytes_mean if n else None
-        nrsp = n.response_bytes_mean if n else None
-        lines += [
-            f"## Concurrency = {conc}",
-            "",
-            "| Metric | Proxy | Native | Δ |",
-            "|--------|-------|--------|---|",
-            _row("Latency P50 (ms)", pp50, np50),
-            _row("Latency P95 (ms)", pp95, np95),
-            _row("Latency P99 (ms)", pp99, np99),
-            _row("Throughput (rps)", pthr, nthr),
-            _row("Request bytes (mean)", preq, nreq, precision=0),
-            _row("Response bytes (mean)", prsp, nrsp, precision=0),
-            _row("Proxy ms P50", ppm50, None, precision=3, proxy_only=True),
-            _row("Proxy ms P95", ppm95, None, precision=3, proxy_only=True),
-            _row("Proxy ms P99", ppm99, None, precision=3, proxy_only=True),
-            "",
-        ]
+        if p is not None or n is not None:
+            lines += ["| Metric | Proxy | Native | Δ |", "|--------|-------|--------|---|"]
+            for field, label, prec in [
+                ("latency_p50_ms", "Latency P50 (ms)", 2),
+                ("latency_p95_ms", "Latency P95 (ms)", 2),
+                ("latency_p99_ms", "Latency P99 (ms)", 2),
+                ("throughput_rps", "Throughput (rps)", 2),
+                ("request_bytes_mean", "Request bytes (mean)", 0),
+                ("response_bytes_mean", "Response bytes (mean)", 0),
+            ]:
+                pval: float | None = getattr(p, field) if p else None
+                nval: float | None = getattr(n, field) if n else None
+                lines.append(_row(label, pval, nval, precision=prec))
+            for field, label, prec in [
+                ("proxy_ms_p50", "Proxy ms P50", 3),
+                ("proxy_ms_p95", "Proxy ms P95", 3),
+                ("proxy_ms_p99", "Proxy ms P99", 3),
+            ]:
+                pval = getattr(p, field) if p else None
+                lines.append(_row(label, pval, None, precision=prec, proxy_only=True))
+            lines.append("")
+
+        # Render a flat table for every target that isn't proxy or native.
+        for tgt in sorted(t for t in targets if t not in ("proxy", "native")):
+            s = targets[tgt]
+            label = _TARGET_DISPLAY_NAMES.get(tgt, tgt)
+            sep = "-" * (len(label) + 2)
+            lines += [
+                f"| Metric | {label} |",
+                f"|--------|{sep}|",
+            ]
+            for field_name, metric_label, precision in _SINGLE_TARGET_METRICS:
+                val: float | None = getattr(s, field_name)
+                lines.append(f"| {metric_label} | {_fmt(val, precision)} |")
+            lines.append("")
 
     out.write_text("\n".join(lines))
     return out

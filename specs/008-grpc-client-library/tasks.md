@@ -77,7 +77,7 @@
 
 **Purpose**: End-to-end validation — benchmark run + CI gate verification.
 
-- [ ] T021 Run `make bench-modal` (requires Modal credentials and pre-staged model weights) to generate Phase 4.2 baseline results; commit the five output files (`phase-4.2-grpc-direct-baseline.json`, `phase-4.2-grpc-direct-baseline.md`, `phase-4.2-three-way-comparison.md`, `phase-4.2-rest-baseline.json`, `phase-4.2-grpc-proxy-baseline.json`) to `docs/benchmarks/`
+- [X] T021 Run `make bench-modal` (requires Modal credentials and pre-staged model weights) to generate Phase 4.2 baseline results; commit the five output files (`phase-4.2-grpc-direct-baseline.json`, `phase-4.2-grpc-direct-baseline.md`, `phase-4.2-three-way-comparison.md`, `phase-4.2-rest-baseline.json`, `phase-4.2-grpc-proxy-baseline.json`) to `docs/benchmarks/`
 - [X] T022 Verify `make lint` and `make typecheck` pass across all packages (`packages/gen`, `packages/proxy`, `packages/frontend`, `packages/client`, `tools/benchmark`)
 - [X] T023 Verify `make test` passes for `packages/proxy`, `packages/frontend`, and `tools/benchmark`
 
