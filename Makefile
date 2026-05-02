@@ -6,7 +6,7 @@ FRONTEND_ADDR ?= localhost:$(FRONTEND_PORT)
 BENCH_PROXY_PORT ?= 8900
 BENCH_NATIVE_PORT ?= 8901
 
-.PHONY: proto bootstrap lint typecheck test check run-proxy run-frontend bench bench-ci bench-compare download-weights smoke-grpc-frontend smoke-rest
+.PHONY: proto bootstrap lint typecheck test check run-proxy run-frontend bench bench-ci bench-compare download-weights smoke-grpc-frontend smoke-rest modal-serve-frontend
 
 proto:
 	uv run python -m grpc_tools.protoc \
@@ -71,3 +71,6 @@ smoke-grpc-frontend:
 
 smoke-rest:
 	uv run --with modal modal run scripts/python/modal_vllm_rest.py
+
+modal-serve-frontend:
+	uv run --with modal modal run scripts/python/modal_frontend_serve.py
