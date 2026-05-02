@@ -71,7 +71,7 @@
 
 **Purpose**: End-to-end validation that the quickstart matches actual behavior.
 
-- [ ] T009 Run `specs/006-modal-grpc-tunnel/quickstart.md` Steps 1–4 in order on a clean terminal session; confirm each step's expected output matches actual output; fix any discrepancies between the quickstart and real behavior
+- [X] T009 Run `specs/006-modal-grpc-tunnel/quickstart.md` Steps 1–4 in order on a clean terminal session; confirm each step's expected output matches actual output; fix any discrepancies between the quickstart and real behavior
 
 ---
 

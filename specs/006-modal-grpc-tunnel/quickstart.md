@@ -21,8 +21,8 @@ You will see output similar to:
 
 ```
 [INFO] Deploying gRPC frontend to Modal A10G...
-[INFO] cold_start_s = 131.4
-[OK]   export FRONTEND_ADDR=tcp.modal.run:12345
+[INFO] cold_start_s = 130.1
+[OK]   export FRONTEND_ADDR=r435.modal.host:45419
 [INFO] Set FRONTEND_ADDR and run: make run-proxy
 [INFO] Press Ctrl+C to tear down.
 ```
@@ -38,7 +38,7 @@ You will see output similar to:
 Open a **second terminal**. Copy the `FRONTEND_ADDR` value from Step 1 and run:
 
 ```bash
-export FRONTEND_ADDR=tcp.modal.run:12345   # replace with your actual address
+export FRONTEND_ADDR=r435.modal.host:45419   # replace with your actual address
 make run-proxy
 ```
 
