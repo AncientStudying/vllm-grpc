@@ -36,7 +36,7 @@
 
 **Independent Test**: `FRONTEND_ADDR=<addr> make run-proxy` starts the proxy; `curl localhost:8000/healthz` returns 200.
 
-- [ ] T005 [US1] Run `make modal-serve-frontend` manually on a clean terminal; wait for `[OK]   export FRONTEND_ADDR=...` line; export the address; open a second terminal and run `FRONTEND_ADDR=<addr> make run-proxy`; confirm `GET http://localhost:8000/healthz` returns `{"status":"ok"}` (proxy reached cloud gRPC frontend via tunnel); note `cold_start_s` for use in T007 (ADR)
+- [X] T005 [US1] Run `make modal-serve-frontend` manually on a clean terminal; wait for `[OK]   export FRONTEND_ADDR=...` line; export the address; open a second terminal and run `FRONTEND_ADDR=<addr> make run-proxy`; confirm `GET http://localhost:8000/healthz` returns `{"status":"ok"}` (proxy reached cloud gRPC frontend via tunnel); note `cold_start_s` for use in T007 (ADR)
 
 **Checkpoint**: US1 complete — gRPC frontend on Modal A10G is reachable from the developer's local proxy via `modal.forward` TCP tunnel.
 
@@ -48,7 +48,7 @@
 
 **Independent Test**: With proxy running and `FRONTEND_ADDR` pointing at the tunnel, `bash scripts/curl/chat-nonstreaming-modal.sh` returns valid JSON with non-empty `choices[0].message.content`.
 
-- [ ] T006 [US2] With the tunnel and proxy still running from T005: run `bash scripts/curl/chat-nonstreaming-modal.sh` and confirm non-empty `content` in the response; run it a second time and confirm same `completion_text` (SC-002 determinism); note any connection errors or latency anomalies for use in T007; press Ctrl+C in the `make modal-serve-frontend` terminal and confirm teardown message prints
+- [X] T006 [US2] With the tunnel and proxy still running from T005: run `bash scripts/curl/chat-nonstreaming-modal.sh` and confirm non-empty `content` in the response; run it a second time and confirm same `completion_text` (SC-002 determinism); note any connection errors or latency anomalies for use in T007; press Ctrl+C in the `make modal-serve-frontend` terminal and confirm teardown message prints
 
 **Checkpoint**: US2 complete — first real protobuf/gRPC bytes traversed the network. SC-001 through SC-005 validated end-to-end.
 
@@ -60,7 +60,7 @@
 
 **Independent Test**: Following `docs/decisions/0002-modal-deployment.md` Phase 3.2 section on a machine with only Modal auth and pre-staged weights produces a working tunnel.
 
-- [ ] T007 [US3] Update `docs/decisions/0002-modal-deployment.md` with a new "## Phase 3.2: Local Proxy → Modal gRPC Tunnel" section covering: topology diagram (local proxy → modal.forward tunnel → gRPC frontend → vLLM), `modal.Dict` address-communication pattern and key schema, `spawn()` + stop-signal teardown mechanism, observed `cold_start_s` from T005, HTTP/2 tunnel stability observations from T006 (whether PING frames passed, any connection drops), runaway-cost guard (1-hour function timeout), and prerequisites (Modal token + `make download-weights` from Phase 3.1)
+- [X] T007 [US3] Update `docs/decisions/0002-modal-deployment.md` with a new "## Phase 3.2: Local Proxy → Modal gRPC Tunnel" section covering: topology diagram (local proxy → modal.forward tunnel → gRPC frontend → vLLM), `modal.Dict` address-communication pattern and key schema, `spawn()` + stop-signal teardown mechanism, observed `cold_start_s` from T005, HTTP/2 tunnel stability observations from T006 (whether PING frames passed, any connection drops), runaway-cost guard (1-hour function timeout), and prerequisites (Modal token + `make download-weights` from Phase 3.1)
 - [X] T008 [P] [US3] Run `uv run ruff check scripts/python/modal_frontend_serve.py && uv run ruff format --check scripts/python/modal_frontend_serve.py && uv run mypy --strict scripts/python/modal_frontend_serve.py`; fix all errors; note any `# type: ignore` suppressions added for `modal.Dict` dynamic API and confirm each has a justifying comment
 
 **Checkpoint**: US3 complete — ADR updated with real tunnel observations; new script is ruff-clean and mypy --strict clean.
