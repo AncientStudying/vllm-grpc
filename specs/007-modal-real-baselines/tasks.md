@@ -130,9 +130,9 @@
 
 - [X] T012 [P] Run `make check` against all files modified in this phase; confirm `ruff` and `mypy --strict` pass with zero errors for `scripts/python/bench_modal.py` and the three extended harness modules (`metrics.py`, `compare.py`, `reporter.py`, `__main__.py`)
 
-- [ ] T013 Manual gate — run `make bench-modal` on the developer machine with valid Modal credentials and pre-staged weights; verify all five output files are produced in `docs/benchmarks/` with non-zero metric values; review `phase-3-modal-comparison.md` to confirm no metric is missing and the report is honest
+- [X] T013 Manual gate — run `make bench-modal` on the developer machine with valid Modal credentials and pre-staged weights; verify all five output files are produced in `docs/benchmarks/` with non-zero metric values; review `phase-3-modal-comparison.md` to confirm no metric is missing and the report is honest
 
-- [ ] T014 [P] Commit the five baseline/report files to `docs/benchmarks/`: `phase-3-modal-rest-baseline.json`, `phase-3-modal-rest-baseline.md`, `phase-3-modal-grpc-baseline.json`, `phase-3-modal-grpc-baseline.md`, `phase-3-modal-comparison.md`
+- [X] T014 [P] Commit the five baseline/report files to `docs/benchmarks/`: `phase-3-modal-rest-baseline.json`, `phase-3-modal-rest-baseline.md`, `phase-3-modal-grpc-baseline.json`, `phase-3-modal-grpc-baseline.md`, `phase-3-modal-comparison.md`
 
 - [ ] T015 Manual gate — open a sample PR touching `packages/proxy/src/vllm_grpc_proxy/chat_router.py`; confirm CI benchmark job posts a comment that includes both the stub regression section and the Modal cross-run summary section populated from T014's committed files; confirm CI exits 0
 
