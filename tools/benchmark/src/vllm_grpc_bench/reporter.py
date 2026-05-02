@@ -5,7 +5,7 @@ import dataclasses
 import json
 from pathlib import Path
 
-from vllm_grpc_bench.metrics import BenchmarkRun, RunSummary
+from vllm_grpc_bench.metrics import BenchmarkRun, CrossRunReport, RunMeta, RunSummary
 
 
 def _to_dict(obj: object) -> object:
@@ -141,3 +141,77 @@ def write_summary_md(run: BenchmarkRun, output_dir: Path) -> Path:
 
     out.write_text("\n".join(lines))
     return out
+
+
+def _meta_section(label: str, meta: RunMeta) -> list[str]:
+    lines = [f"**{label}**:  "]
+    lines.append(f"- Timestamp: {meta.timestamp}  ")
+    lines.append(f"- Git SHA: {meta.git_sha}  ")
+    lines.append(f"- Host: {meta.hostname}  ")
+    if meta.gpu_type:
+        lines.append(f"- GPU: {meta.gpu_type}  ")
+    if meta.modal_function_id:
+        lines.append(f"- Modal function: {meta.modal_function_id}  ")
+    if meta.cold_start_s is not None:
+        lines.append(f"- Cold start: {meta.cold_start_s:.1f}s  ")
+    return lines
+
+
+_CROSS_METRIC_LABELS: dict[str, tuple[str, int]] = {
+    "latency_p50_ms": ("Latency P50 (ms)", 2),
+    "latency_p95_ms": ("Latency P95 (ms)", 2),
+    "latency_p99_ms": ("Latency P99 (ms)", 2),
+    "throughput_rps": ("Throughput (rps)", 2),
+    "request_bytes_mean": ("Request bytes (mean)", 0),
+    "response_bytes_mean": ("Response bytes (mean)", 0),
+}
+
+
+def write_cross_run_md(report: CrossRunReport, output_path: Path) -> Path:
+    """Render a CrossRunReport as a markdown head-to-head table."""
+    la = report.label_a
+    lb = report.label_b
+
+    lines: list[str] = [
+        f"# Benchmark Comparison: {la} vs {lb}",
+        "",
+        "## Run Metadata",
+        "",
+    ]
+    lines += _meta_section(la, report.meta_a)
+    lines.append("")
+    lines += _meta_section(lb, report.meta_b)
+    lines.append("")
+
+    # Group rows by concurrency
+    concurrencies: list[int] = sorted({r.concurrency for r in report.rows})
+    for conc in concurrencies:
+        conc_rows = [r for r in report.rows if r.concurrency == conc]
+        by_metric = {r.metric: r for r in conc_rows}
+
+        lines += [
+            f"## Concurrency = {conc}",
+            "",
+            f"| Metric | {la} | {lb} | Δ |",
+            "|--------|" + "-" * (len(la) + 2) + "|" + "-" * (len(lb) + 2) + "|---|",
+        ]
+
+        for field_name, (label, precision) in _CROSS_METRIC_LABELS.items():
+            row = by_metric.get(field_name)
+            if row is None:
+                lines.append(f"| {label} | — | — | — |")
+                continue
+            va = _fmt(row.value_a, precision)
+            vb = _fmt(row.value_b, precision)
+            if row.delta_pct is not None:
+                sign = "+" if row.delta_pct >= 0 else ""
+                dlt = f"{sign}{row.delta_pct * 100:.1f}%"
+            else:
+                dlt = "—"
+            lines.append(f"| {label} | {va} | {vb} | {dlt} |")
+
+        lines.append("")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines))
+    return output_path
