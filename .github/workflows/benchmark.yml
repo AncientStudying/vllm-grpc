@@ -56,13 +56,8 @@ jobs:
 
       - name: Modal baseline summary
         run: |
-          if [ -f docs/benchmarks/phase-3-modal-rest-baseline.json ] && \
-             [ -f docs/benchmarks/phase-3-modal-grpc-baseline.json ]; then
-            uv run python -m vllm_grpc_bench compare-cross \
-              --result-a docs/benchmarks/phase-3-modal-rest-baseline.json \
-              --result-b docs/benchmarks/phase-3-modal-grpc-baseline.json \
-              --label-a REST --label-b gRPC \
-              --output modal-cross-summary.md
+          if [ -f docs/benchmarks/phase-4.2-three-way-comparison.md ]; then
+            cp docs/benchmarks/phase-4.2-three-way-comparison.md modal-cross-summary.md
           else
             echo "_Modal baselines not yet committed — skipping Modal cross-run summary._" \
               > modal-cross-summary.md
@@ -80,7 +75,7 @@ jobs:
               ? fs.readFileSync('modal-cross-summary.md', 'utf8')
               : '';
             const modalSection = modalSummary
-              ? `\n\n## Modal GPU Baselines (REST vs gRPC)\n\n${modalSummary}`
+              ? `\n\n## Modal GPU Baselines (REST / gRPC-proxy / gRPC-direct)\n\n${modalSummary}`
               : '';
             const body = `## Benchmark CI (stub backend)\n\n${comparison}${modalSection}\n\n<!-- benchmark-ci-comment -->`;
             const sentinel = '<!-- benchmark-ci-comment -->';
