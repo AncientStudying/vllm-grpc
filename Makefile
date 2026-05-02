@@ -6,7 +6,7 @@ FRONTEND_ADDR ?= localhost:$(FRONTEND_PORT)
 BENCH_PROXY_PORT ?= 8900
 BENCH_NATIVE_PORT ?= 8901
 
-.PHONY: proto bootstrap lint typecheck test check run-proxy run-frontend bench bench-ci bench-compare download-weights smoke-grpc-frontend smoke-rest modal-serve-frontend bench-modal
+.PHONY: proto bootstrap lint typecheck test check run-proxy run-frontend bench bench-ci bench-compare download-weights smoke-grpc-frontend smoke-rest modal-serve-frontend bench-modal regen-bench-reports
 
 proto:
 	uv run python -m grpc_tools.protoc \
@@ -25,7 +25,7 @@ lint:
 	uv run ruff format --check .
 
 typecheck:
-	uv run mypy --strict packages/proxy/src packages/frontend/src tools/benchmark/src
+	uv run mypy --strict packages/proxy/src packages/frontend/src packages/client/src tools/benchmark/src
 
 test:
 	uv sync --all-packages
@@ -77,3 +77,6 @@ modal-serve-frontend:
 
 bench-modal:
 	uv run --with modal modal run scripts/python/bench_modal.py
+
+regen-bench-reports:
+	uv run python scripts/python/regen_bench_reports.py

@@ -5,7 +5,13 @@ import dataclasses
 import json
 from pathlib import Path
 
-from vllm_grpc_bench.metrics import BenchmarkRun, CrossRunReport, RunMeta, RunSummary
+from vllm_grpc_bench.metrics import (
+    BenchmarkRun,
+    CrossRunReport,
+    RunMeta,
+    RunSummary,
+    ThreeWayReport,
+)
 
 
 def _to_dict(obj: object) -> object:
@@ -82,11 +88,27 @@ def _row(
     return f"| {label} | {pf} | {nf} | {delta} |"
 
 
+# Metrics rendered for any single-target run (no comparison column).
+_SINGLE_TARGET_METRICS: list[tuple[str, str, int]] = [
+    ("latency_p50_ms", "Latency P50 (ms)", 2),
+    ("latency_p95_ms", "Latency P95 (ms)", 2),
+    ("latency_p99_ms", "Latency P99 (ms)", 2),
+    ("throughput_rps", "Throughput (rps)", 2),
+    ("request_bytes_mean", "Request bytes (mean)", 0),
+    ("response_bytes_mean", "Response bytes (mean)", 0),
+]
+
+# Human-readable display names for targets that aren't proxy/native.
+_TARGET_DISPLAY_NAMES: dict[str, str] = {
+    "grpc-direct": "gRPC-direct",
+}
+
+
 def write_summary_md(run: BenchmarkRun, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     out = output_dir / "summary.md"
 
-    by_concurrency: dict[int, dict[str, object]] = {}
+    by_concurrency: dict[int, dict[str, RunSummary]] = {}
     for s in run.summaries:
         by_concurrency.setdefault(s.concurrency, {})[s.target] = s
 
@@ -96,48 +118,55 @@ def write_summary_md(run: BenchmarkRun, output_dir: Path) -> Path:
         f"**Run**: {run.meta.timestamp}  ",
         f"**Commit**: {run.meta.git_sha}  ",
         f"**Host**: {run.meta.hostname}  ",
-        "",
     ]
+    if run.meta.gpu_type:
+        lines.append(f"**GPU**: {run.meta.gpu_type}  ")
+    if run.meta.cold_start_s is not None:
+        lines.append(f"**Cold start**: {run.meta.cold_start_s:.1f}s  ")
+    lines.append("")
 
     for conc in sorted(by_concurrency.keys()):
         targets = by_concurrency[conc]
-        proxy = targets.get("proxy")
-        native = targets.get("native")
+        p = targets.get("proxy")
+        n = targets.get("native")
 
-        p = proxy if isinstance(proxy, RunSummary) else None
-        n = native if isinstance(native, RunSummary) else None
+        lines += [f"## Concurrency = {conc}", ""]
 
-        pp50 = p.latency_p50_ms if p else None
-        pp95 = p.latency_p95_ms if p else None
-        pp99 = p.latency_p99_ms if p else None
-        pthr = p.throughput_rps if p else None
-        preq = p.request_bytes_mean if p else None
-        prsp = p.response_bytes_mean if p else None
-        ppm50 = p.proxy_ms_p50 if p else None
-        ppm95 = p.proxy_ms_p95 if p else None
-        ppm99 = p.proxy_ms_p99 if p else None
-        np50 = n.latency_p50_ms if n else None
-        np95 = n.latency_p95_ms if n else None
-        np99 = n.latency_p99_ms if n else None
-        nthr = n.throughput_rps if n else None
-        nreq = n.request_bytes_mean if n else None
-        nrsp = n.response_bytes_mean if n else None
-        lines += [
-            f"## Concurrency = {conc}",
-            "",
-            "| Metric | Proxy | Native | Δ |",
-            "|--------|-------|--------|---|",
-            _row("Latency P50 (ms)", pp50, np50),
-            _row("Latency P95 (ms)", pp95, np95),
-            _row("Latency P99 (ms)", pp99, np99),
-            _row("Throughput (rps)", pthr, nthr),
-            _row("Request bytes (mean)", preq, nreq, precision=0),
-            _row("Response bytes (mean)", prsp, nrsp, precision=0),
-            _row("Proxy ms P50", ppm50, None, precision=3, proxy_only=True),
-            _row("Proxy ms P95", ppm95, None, precision=3, proxy_only=True),
-            _row("Proxy ms P99", ppm99, None, precision=3, proxy_only=True),
-            "",
-        ]
+        if p is not None or n is not None:
+            lines += ["| Metric | Proxy | Native | Δ |", "|--------|-------|--------|---|"]
+            for field, label, prec in [
+                ("latency_p50_ms", "Latency P50 (ms)", 2),
+                ("latency_p95_ms", "Latency P95 (ms)", 2),
+                ("latency_p99_ms", "Latency P99 (ms)", 2),
+                ("throughput_rps", "Throughput (rps)", 2),
+                ("request_bytes_mean", "Request bytes (mean)", 0),
+                ("response_bytes_mean", "Response bytes (mean)", 0),
+            ]:
+                pval: float | None = getattr(p, field) if p else None
+                nval: float | None = getattr(n, field) if n else None
+                lines.append(_row(label, pval, nval, precision=prec))
+            for field, label, prec in [
+                ("proxy_ms_p50", "Proxy ms P50", 3),
+                ("proxy_ms_p95", "Proxy ms P95", 3),
+                ("proxy_ms_p99", "Proxy ms P99", 3),
+            ]:
+                pval = getattr(p, field) if p else None
+                lines.append(_row(label, pval, None, precision=prec, proxy_only=True))
+            lines.append("")
+
+        # Render a flat table for every target that isn't proxy or native.
+        for tgt in sorted(t for t in targets if t not in ("proxy", "native")):
+            s = targets[tgt]
+            label = _TARGET_DISPLAY_NAMES.get(tgt, tgt)
+            sep = "-" * (len(label) + 2)
+            lines += [
+                f"| Metric | {label} |",
+                f"|--------|{sep}|",
+            ]
+            for field_name, metric_label, precision in _SINGLE_TARGET_METRICS:
+                val: float | None = getattr(s, field_name)
+                lines.append(f"| {metric_label} | {_fmt(val, precision)} |")
+            lines.append("")
 
     out.write_text("\n".join(lines))
     return out
@@ -215,3 +244,65 @@ def write_cross_run_md(report: CrossRunReport, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines))
     return output_path
+
+
+def write_three_way_md(report: ThreeWayReport, path: Path) -> None:
+    if not report.rows:
+        return
+
+    la, lb, lc = report.label_a, report.label_b, report.label_c
+
+    lines: list[str] = [
+        f"# Three-Way Benchmark Comparison: {la} / {lb} / {lc}",
+        "",
+        "## Run Metadata",
+        "",
+    ]
+    lines += _meta_section(la, report.meta_a)
+    lines.append("")
+    lines += _meta_section(lb, report.meta_b)
+    lines.append("")
+    lines += _meta_section(lc, report.meta_c)
+    lines.append("")
+
+    concurrencies = sorted({r.concurrency for r in report.rows})
+    for conc in concurrencies:
+        conc_rows = [r for r in report.rows if r.concurrency == conc]
+        by_metric = {r.metric: r for r in conc_rows}
+
+        sep_a = "-" * (len(la) + 2)
+        sep_b = "-" * (len(lb) + 2)
+        sep_delta = "-" * (len(f"Δ vs {la}") + 2)
+        sep_c = "-" * (len(lc) + 2)
+
+        lines += [
+            f"## Concurrency = {conc}",
+            "",
+            f"| metric | concurrency | {la} | {lb} | Δ vs {la} | {lc} | Δ vs {la} |",
+            f"|--------|-------------|{sep_a}|{sep_b}|{sep_delta}|{sep_c}|{sep_delta}|",
+        ]
+
+        for field_name, (label, precision) in _CROSS_METRIC_LABELS.items():
+            row = by_metric.get(field_name)
+            if row is None:
+                lines.append(f"| {label} | {conc} | — | — | — | — | — |")
+                continue
+            va = _fmt(row.value_a, precision)
+            vb = _fmt(row.value_b, precision)
+            vc = _fmt(row.value_c, precision)
+
+            def _dpct(v: float | None) -> str:
+                if v is None:
+                    return "—"
+                sign = "+" if v >= 0 else ""
+                return f"{sign}{v:.1f}%"
+
+            lines.append(
+                f"| {label} | {conc} | {va} | {vb} | {_dpct(row.delta_pct_b)}"
+                f" | {vc} | {_dpct(row.delta_pct_c)} |"
+            )
+
+        lines.append("")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines))

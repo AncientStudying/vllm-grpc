@@ -4,24 +4,27 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
 from pathlib import Path
-from typing import Any
 
-from vllm_grpc_bench.compare import compare, compare_cross
+from vllm_grpc_bench.compare import compare, compare_cross, compare_three_way
 from vllm_grpc_bench.corpus import load_corpus
+from vllm_grpc_bench.io import load_run
 from vllm_grpc_bench.metrics import (
     BenchmarkConfig,
     BenchmarkRun,
     ComparisonReport,
     RequestResult,
-    RunMeta,
-    RunSummary,
     build_run_meta,
     compute_summaries,
 )
-from vllm_grpc_bench.reporter import write_cross_run_md, write_csv, write_json, write_summary_md
+from vllm_grpc_bench.reporter import (
+    write_cross_run_md,
+    write_csv,
+    write_json,
+    write_summary_md,
+    write_three_way_md,
+)
 from vllm_grpc_bench.runner import run_target
 
 _DEFAULT_CORPUS = Path(__file__).parent.parent.parent / "corpus" / "chat_nonstreaming.json"
@@ -50,6 +53,29 @@ def _build_parser() -> argparse.ArgumentParser:
     cmp_cross.add_argument("--label-a", default="run-a", metavar="LABEL", help="Label for run A")
     cmp_cross.add_argument("--label-b", default="run-b", metavar="LABEL", help="Label for run B")
     cmp_cross.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Write report to file (default: stdout)",
+    )
+
+    # ---- compare-three-way subcommand ----
+    cmp_three = sub.add_parser(
+        "compare-three-way",
+        help="Three-way comparison of REST / gRPC-proxy / gRPC-direct runs",
+    )
+    cmp_three.add_argument("--result-a", required=True, metavar="PATH", help="REST results.json")
+    cmp_three.add_argument(
+        "--result-b", required=True, metavar="PATH", help="gRPC-proxy results.json"
+    )
+    cmp_three.add_argument(
+        "--result-c", required=True, metavar="PATH", help="gRPC-direct results.json"
+    )
+    cmp_three.add_argument("--label-a", default="rest", metavar="LABEL")
+    cmp_three.add_argument("--label-b", default="grpc-proxy", metavar="LABEL")
+    cmp_three.add_argument("--label-c", default="grpc-direct", metavar="LABEL")
+    cmp_three.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -155,7 +181,7 @@ async def _run(args: argparse.Namespace) -> int:
             print(f"Warning: baseline file not found: {baseline_path}", file=sys.stderr)
             return 0
         try:
-            baseline_run = _deserialize_run(json.loads(baseline_path.read_text()))
+            baseline_run = load_run(baseline_path)
             report = compare(baseline_run, run, threshold=args.regression_threshold)
         except Exception as exc:
             print(f"Warning: comparison failed: {exc}", file=sys.stderr)
@@ -165,67 +191,6 @@ async def _run(args: argparse.Namespace) -> int:
             return 1
 
     return 0
-
-
-def _deserialize_run(data: Any) -> BenchmarkRun:
-    meta_d: Any = data["meta"]
-    _cs = meta_d.get("cold_start_s")
-    meta = RunMeta(
-        timestamp=str(meta_d["timestamp"]),
-        git_sha=str(meta_d["git_sha"]),
-        hostname=str(meta_d["hostname"]),
-        corpus_path=str(meta_d["corpus_path"]),
-        concurrency_levels=[int(v) for v in meta_d["concurrency_levels"]],
-        proxy_url=str(meta_d["proxy_url"]),
-        native_url=str(meta_d["native_url"]),
-        modal_function_id=str(meta_d["modal_function_id"])
-        if meta_d.get("modal_function_id")
-        else None,
-        gpu_type=str(meta_d["gpu_type"]) if meta_d.get("gpu_type") else None,
-        cold_start_s=float(_cs) if _cs is not None else None,
-    )
-
-    def _f(d: Any, key: str) -> float | None:
-        v = d.get(key)
-        return float(v) if v is not None else None
-
-    summaries_d: Any = data["summaries"]
-    summaries = [
-        RunSummary(
-            target=s["target"],
-            concurrency=int(s["concurrency"]),
-            n_requests=int(s["n_requests"]),
-            n_errors=int(s["n_errors"]),
-            latency_p50_ms=_f(s, "latency_p50_ms"),
-            latency_p95_ms=_f(s, "latency_p95_ms"),
-            latency_p99_ms=_f(s, "latency_p99_ms"),
-            throughput_rps=_f(s, "throughput_rps"),
-            request_bytes_mean=float(s["request_bytes_mean"]),
-            response_bytes_mean=_f(s, "response_bytes_mean"),
-            proxy_ms_p50=_f(s, "proxy_ms_p50"),
-            proxy_ms_p95=_f(s, "proxy_ms_p95"),
-            proxy_ms_p99=_f(s, "proxy_ms_p99"),
-        )
-        for s in summaries_d
-    ]
-    raw_d: Any = data.get("raw_results", [])
-    raw = [
-        RequestResult(
-            sample_id=str(r["sample_id"]),
-            target=r["target"],
-            concurrency=int(r["concurrency"]),
-            latency_ms=_f(r, "latency_ms"),
-            request_bytes=int(r["request_bytes"]),
-            response_bytes=int(r["response_bytes"])
-            if r.get("response_bytes") is not None
-            else None,
-            proxy_ms=_f(r, "proxy_ms"),
-            success=bool(r["success"]),
-            error=str(r["error"]) if r.get("error") is not None else None,
-        )
-        for r in raw_d
-    ]
-    return BenchmarkRun(meta=meta, summaries=summaries, raw_results=raw)
 
 
 def _print_comparison(report: ComparisonReport) -> None:
@@ -255,11 +220,44 @@ def main() -> None:
         if not new_path.exists():
             print(f"Error: {new_path} not found", file=sys.stderr)
             sys.exit(3)
-        baseline_run = _deserialize_run(json.loads(baseline_path.read_text()))
-        new_run = _deserialize_run(json.loads(new_path.read_text()))
+        baseline_run = load_run(baseline_path)
+        new_run = load_run(new_path)
         report = compare(baseline_run, new_run, threshold=args.threshold)
         _print_comparison(report)
         sys.exit(1 if report.has_regression else 0)
+
+    if args.subcommand == "compare-three-way":
+        path_a = Path(args.result_a)
+        path_b = Path(args.result_b)
+        path_c = Path(args.result_c)
+        for p in (path_a, path_b, path_c):
+            if not p.exists():
+                print(f"Error: {p} not found", file=sys.stderr)
+                sys.exit(2)
+        run_a = load_run(path_a)
+        run_b = load_run(path_b)
+        run_c = load_run(path_c)
+        three_report = compare_three_way(
+            run_a,
+            run_b,
+            run_c,
+            label_a=args.label_a,
+            label_b=args.label_b,
+            label_c=args.label_c,
+        )
+        output_path_three: Path | None = args.output
+        if output_path_three is not None:
+            write_three_way_md(three_report, output_path_three)
+            print(f"Report written to {output_path_three}")
+        else:
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as tf:
+                tmp_path = Path(tf.name)
+            write_three_way_md(three_report, tmp_path)
+            print(tmp_path.read_text())
+            tmp_path.unlink(missing_ok=True)
+        sys.exit(0)
 
     if args.subcommand == "compare-cross":
         path_a = Path(args.result_a)
@@ -270,8 +268,8 @@ def main() -> None:
         if not path_b.exists():
             print(f"Error: {path_b} not found", file=sys.stderr)
             sys.exit(2)
-        run_a = _deserialize_run(json.loads(path_a.read_text()))
-        run_b = _deserialize_run(json.loads(path_b.read_text()))
+        run_a = load_run(path_a)
+        run_b = load_run(path_b)
         cross_report = compare_cross(run_a, run_b, label_a=args.label_a, label_b=args.label_b)
         output_path: Path | None = args.output
         if output_path is not None:

@@ -1,7 +1,7 @@
 from unittest.mock import AsyncMock
 
 import pytest
-from vllm_grpc.v1 import health_pb2  # type: ignore[import-untyped]
+from vllm_grpc.v1 import health_pb2
 from vllm_grpc_frontend.health import HealthServicer
 
 

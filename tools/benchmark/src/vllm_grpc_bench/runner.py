@@ -6,6 +6,7 @@ import time
 from typing import Literal
 
 import httpx
+from vllm_grpc.v1 import chat_pb2
 
 from vllm_grpc_bench.corpus import RequestSample
 from vllm_grpc_bench.metrics import RequestResult
@@ -85,3 +86,85 @@ async def run_target(
                 return await _send_one(client, sample, target, concurrency)
 
         return list(await asyncio.gather(*[bounded(s) for s in samples]))
+
+
+def _build_request_proto(sample: RequestSample) -> chat_pb2.ChatCompleteRequest:
+    kwargs: dict[str, object] = {}
+    if sample.temperature is not None:
+        kwargs["temperature"] = sample.temperature
+    if sample.seed is not None:
+        kwargs["seed"] = sample.seed
+    return chat_pb2.ChatCompleteRequest(
+        messages=[
+            chat_pb2.ChatMessage(role=m["role"], content=m["content"]) for m in sample.messages
+        ],
+        model=sample.model,
+        max_tokens=sample.max_tokens,
+        **kwargs,
+    )
+
+
+async def run_grpc_target(
+    addr: str,
+    samples: list[RequestSample],
+    concurrency: int,
+    timeout: float,
+) -> list[RequestResult]:
+    from vllm_grpc_client import VllmGrpcClient
+
+    async with VllmGrpcClient(addr, timeout=timeout) as grpc_client:
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _send_one_grpc(sample: RequestSample) -> RequestResult:
+            req_proto = _build_request_proto(sample)
+            request_bytes = len(req_proto.SerializeToString())
+            t0 = time.perf_counter()
+            try:
+                result = await grpc_client.chat.complete(
+                    messages=sample.messages,
+                    model=sample.model,
+                    max_tokens=sample.max_tokens,
+                    temperature=sample.temperature,
+                    seed=sample.seed,
+                    timeout=timeout,
+                )
+                t1 = time.perf_counter()
+                response_proto = chat_pb2.ChatCompleteResponse(
+                    message=chat_pb2.ChatMessage(
+                        role=result.role,
+                        content=result.content,
+                    ),
+                    finish_reason=result.finish_reason,
+                    prompt_tokens=result.prompt_tokens,
+                    completion_tokens=result.completion_tokens,
+                )
+                return RequestResult(
+                    sample_id=sample.id,
+                    target="grpc-direct",
+                    concurrency=concurrency,
+                    latency_ms=(t1 - t0) * 1000,
+                    request_bytes=request_bytes,
+                    response_bytes=len(response_proto.SerializeToString()),
+                    proxy_ms=None,
+                    success=True,
+                    error=None,
+                )
+            except Exception as exc:
+                t1 = time.perf_counter()
+                return RequestResult(
+                    sample_id=sample.id,
+                    target="grpc-direct",
+                    concurrency=concurrency,
+                    latency_ms=(t1 - t0) * 1000,
+                    request_bytes=request_bytes,
+                    response_bytes=None,
+                    proxy_ms=None,
+                    success=False,
+                    error=str(exc),
+                )
+
+        async def bounded_grpc(sample: RequestSample) -> RequestResult:
+            async with sem:
+                return await _send_one_grpc(sample)
+
+        return list(await asyncio.gather(*[bounded_grpc(s) for s in samples]))

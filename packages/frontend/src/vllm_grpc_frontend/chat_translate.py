@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vllm_grpc.v1 import chat_pb2  # type: ignore[import-untyped]
+from vllm_grpc.v1 import chat_pb2
 
 
 def proto_to_sampling_params(req: Any) -> Any:

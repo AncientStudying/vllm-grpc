@@ -1,6 +1,6 @@
 # Project Plan: Protobuf/gRPC Frontend for vLLM
 
-**Status:** Draft v1 — generated from planning session, April 28, 2026
+**Status:** Draft v2 — updated 2026-05-02: added Phase 4.2 (direct gRPC client library), `packages/client` component, three-way benchmark
 **Repo:** Private GitHub repo (already provisioned), MIT license
 
 ---
@@ -27,7 +27,8 @@ The artifacts are:
 
 1. **OpenAI REST → gRPC proxy server.** Accepts OpenAI-compatible chat completions and completions requests on its REST endpoint, translates them to protobuf, and forwards them via gRPC to the vLLM-side frontend.
 2. **vLLM-side gRPC frontend.** Accepts protobuf/gRPC requests, translates them into `AsyncLLM` / `LLM` / `SamplingParams` calls, and returns protobuf responses. Effectively replaces the role of `vllm/entrypoints/openai/` for clients that come in via the proxy.
-3. **Test scripts and a benchmark harness** (curl + Python) that exercise the full pipeline end-to-end and measure wire-overhead claims against vLLM's native OpenAI server head-to-head.
+3. **Native gRPC Python client library** (`packages/client`). A standalone async Python library that sends protobuf/gRPC requests directly to the frontend, bypassing the REST proxy entirely. Demonstrates direct protocol access for Python-native consumers and provides the clean comparison baseline needed to isolate proxy overhead from protocol overhead in benchmarks.
+4. **Test scripts and a benchmark harness** (curl + Python) that exercise the full pipeline end-to-end and measure wire-overhead claims against vLLM's native OpenAI server head-to-head.
 
 The functional demonstration must show, end-to-end through the bridge:
 
@@ -67,11 +68,12 @@ Both server processes run locally for the demo. Wire-format changeover happens a
 
 vLLM's serving frontend lives inside `vllm-project/vllm` at `vllm/entrypoints/openai/`. Forking the whole repo to replace that subtree would entangle this project with every upstream entrypoints refactor. A sibling package that depends on `vllm` as an ordinary library has zero upstream code entanglement, picks up engine improvements automatically, and follows the same architectural pattern as AIBrix and other `vllm-project/`-org sibling repos.
 
-### Three Logical Components
+### Four Logical Components
 
-- **`proto/`** — the shared protobuf schema. Source of truth for both proxy and frontend. Generated Python stubs are produced at build time, not committed.
+- **`proto/`** — the shared protobuf schema. Source of truth for proxy, frontend, and client. Generated Python stubs are produced at build time, not committed.
 - **`proxy/`** — FastAPI app exposing OpenAI REST endpoints, translating to protobuf, forwarding via a gRPC client.
 - **`frontend/`** — gRPC server that imports `vllm` and translates protobuf RPCs into `AsyncLLM` / `LLM` / `SamplingParams` calls.
+- **`client/`** — standalone async Python library that sends protobuf/gRPC requests directly to the frontend. Enables Python-native consumers to bypass the REST proxy and provides the direct-gRPC benchmark target needed to isolate proxy overhead from protocol overhead.
 
 ---
 
@@ -115,7 +117,7 @@ vLLM's serving frontend lives inside `vllm-project/vllm` at `vllm/entrypoints/op
 | Final protobuf schema for streaming chunks | Phase 5 |
 | Backpressure & cancellation semantics | Phase 5 |
 | Whether to expose `/v1/models` or stub it | Phase 3 |
-| Final internal package names | Phase 1 (working names: `vllm_grpc_proxy`, `vllm_grpc_frontend`) |
+| Final internal package names | Phase 1 (working names: `vllm_grpc_proxy`, `vllm_grpc_frontend`, `vllm_grpc_client`) |
 
 ---
 
@@ -145,9 +147,13 @@ vLLM's serving frontend lives inside `vllm-project/vllm` at `vllm/entrypoints/op
 │   │   ├── pyproject.toml
 │   │   ├── src/vllm_grpc_proxy/
 │   │   └── tests/
-│   └── frontend/
+│   ├── frontend/
+│   │   ├── pyproject.toml
+│   │   ├── src/vllm_grpc_frontend/
+│   │   └── tests/
+│   └── client/                      # Phase 4.2+: direct gRPC Python client library
 │       ├── pyproject.toml
-│       ├── src/vllm_grpc_frontend/
+│       ├── src/vllm_grpc_client/
 │       └── tests/
 ├── scripts/
 │   ├── curl/                        # curl-based test scripts
@@ -362,11 +368,42 @@ Each phase begins with a spec-kit `/specify` invocation that turns the phase goa
 
 ---
 
+### Phase 4.2 — Direct gRPC Client Library and Three-Way Benchmark
+
+**Goal.** Create a standalone Python client library (`packages/client`) that sends protobuf/gRPC requests directly to the gRPC frontend, bypassing the REST proxy entirely. This is the first benchmark that isolates proxy overhead from protocol overhead: the three-way comparison (REST / gRPC-via-proxy / gRPC-direct) shows whether gRPC itself is faster than REST once the translation layer is removed.
+
+**Background.** Phase 4.1 revealed that the ~530% latency delta between REST and gRPC is driven by the proxy translation hop (local REST→gRPC) and the additional tunnel segment, not by the frontend itself. A native gRPC client connecting directly to the frontend is expected to show latency much closer to REST, with potential gains from protobuf serialization efficiency. Phase 4.2 proves or disproves this empirically.
+
+**Inputs.** Phase 4.1 baselines (REST and gRPC-via-proxy). Phase 3 working bridge (`packages/gen` stubs, `packages/frontend`).
+
+**Deliverables.**
+
+- `packages/gen`: add `py.typed` marker so the compiled stubs are fully typed. All consumers (proxy, frontend, client) must pass `mypy --strict` with no `# type: ignore[import-untyped]` for gen imports after this change.
+- `packages/client` — new workspace package `vllm_grpc_client` that:
+  - Manages a persistent gRPC channel (reused across requests; not opened/closed per call)
+  - Exposes `async with VllmGrpcClient("host:port") as client:` context manager
+  - `await client.chat.complete(messages, model, max_tokens, ...)` for non-streaming — returns a typed response object; does not require callers to construct protobuf messages directly
+  - Handles timeouts, connection errors, and channel teardown cleanly
+  - Ships with `py.typed`; passes `mypy --strict` with no suppressions
+- A `gRPC-direct` benchmark target in `tools/benchmark/` (new runner path in `runner.py` or a parallel module) that uses `vllm_grpc_client` instead of httpx to drive requests against the frontend
+- `make bench-modal-three-way`: extended `bench_modal.py` (or a new script) that runs REST, gRPC-via-proxy, and gRPC-direct sequentially on Modal A10G, then produces a three-way comparison report
+- `docs/benchmarks/phase-4.2-three-way-comparison.md` — the definitive comparison: REST vs gRPC-via-proxy vs gRPC-direct, at each concurrency level, on the same A10G hardware
+- `scripts/python/grpc_client_demo.py` — annotated demo showing the client library used end-to-end from a developer workstation against the Modal-deployed frontend
+
+**Exit criteria.**
+
+- `VllmGrpcClient` completes a chat request against the Modal-deployed frontend end-to-end with no proxy involved
+- `mypy --strict` passes on `packages/client` and on `packages/gen` with no `# type: ignore[import-untyped]` for gen imports
+- The three-way benchmark report is committed to `docs/benchmarks/`; it shows gRPC-direct latency compared honestly against both REST and gRPC-via-proxy
+- The gRPC-direct path demonstrates whether protocol-level efficiency is measurable once proxy overhead is eliminated
+
+---
+
 ### Phase 5 — Streaming Chat Completions
 
-**Goal.** Bridge OpenAI SSE chat completions through the proxy and a server-streaming gRPC RPC. This is where the project's wire-overhead thesis becomes most testable.
+**Goal.** Bridge OpenAI SSE chat completions through the proxy and a server-streaming gRPC RPC. This is where the project's wire-overhead thesis becomes most testable. The `packages/client` library gains a streaming method in this phase so direct-gRPC streaming can be benchmarked alongside proxy streaming.
 
-**Inputs.** Phase 4 metrics — so we can measure the streaming path against non-streaming and against vLLM-native.
+**Inputs.** Phase 4.2 client library and three-way benchmark baseline.
 
 **Deliverables.**
 
@@ -376,23 +413,25 @@ Each phase begins with a spec-kit `/specify` invocation that turns the phase goa
 - Backpressure: gRPC flow control propagates to the AsyncLLM iteration
 - Cancellation: client disconnect → cancel gRPC stream → cancel the generation task
 - Mid-stream error path documented and tested
-- Curl + Python streaming test scripts
-- TTFT and TPOT measurements added to the benchmark harness
+- `packages/client`: `await client.chat.complete_stream(...)` async generator yielding typed chunk objects — direct-gRPC streaming without the proxy
+- Curl + Python streaming test scripts (proxy path and direct-gRPC client path)
+- TTFT and TPOT measurements added to the benchmark harness for both the proxy path and the direct-gRPC client path
 - ADR in `docs/decisions/` documenting the streaming design choices (chunk granularity, error encoding, backpressure model)
 
 **Exit criteria.**
 
-- Streaming produces the same final completion as non-streaming for a deterministic seed
+- Streaming produces the same final completion as non-streaming for a deterministic seed, via both the proxy path and the direct `VllmGrpcClient` path
 - TTFT and TPOT numbers are within an explainable range of vLLM-native — equal or better preferred, but the goal is honesty, not winning
 - Cancellation actually stops generation server-side (verifiable in logs / metrics)
+- `mypy --strict` passes on the updated `packages/client` streaming methods
 
 ---
 
 ### Phase 6 — Completions API with Prompt Embeds (V0)
 
-**Goal.** Add the `/v1/completions` endpoint with `prompt_embeds` support, end-to-end, in the environment chosen in Phase 2.
+**Goal.** Add the `/v1/completions` endpoint with `prompt_embeds` support, end-to-end, in the environment chosen in Phase 2. The `packages/client` library gains a completions method so the prompt-embeds path can be exercised via direct gRPC as well as via the proxy.
 
-**Inputs.** Phase 2 environment decision; Phase 5 streaming infrastructure (reusable for streaming completions).
+**Inputs.** Phase 2 environment decision; Phase 5 streaming infrastructure (reusable for streaming completions); Phase 4.2 client library.
 
 **Deliverables.**
 
@@ -400,32 +439,40 @@ Each phase begins with a spec-kit `/specify` invocation that turns the phase goa
 - A `prompt_embeds` field carrying the base64-encoded torch tensor as `bytes` (decoded server-side; on the wire it's already binary)
 - Proxy `POST /v1/completions` handler that accepts both `prompt` (string) and `prompt_embeds` (in `extra_body`, matching vLLM's existing convention)
 - Frontend handler that decodes `prompt_embeds` and passes the tensor to `AsyncLLM.generate()` correctly under V0
-- Curl + Python test scripts demonstrating: client computes embeddings locally from chat-template-formatted token IDs, base64-encodes the tensor, sends via the proxy
+- `packages/client`: `await client.completions.complete(prompt_embeds=...)` method exposing the prompt-embeds path without the proxy; callers pass a tensor directly and the client handles binary encoding
+- Curl + Python test scripts demonstrating: client computes embeddings locally from chat-template-formatted token IDs, sends via the proxy (curl/openai-SDK path) and directly via `VllmGrpcClient` (Python-native path)
 - Benchmark harness extension comparing wire size of (a) text prompt and (b) prompt embeddings — this is one of the most interesting wire-overhead cases in the project, since prompt embeddings are pure binary tensors and JSON's base64 expansion is roughly 33% bloat that protobuf avoids entirely
 
 **Exit criteria.**
 
-- A client can drive completions end-to-end via prompt-embeds, going entirely through the proxy
+- A client can drive completions end-to-end via prompt-embeds, both through the proxy and via `VllmGrpcClient` directly
 - Outputs match outputs from the vLLM-native server with the same prompt-embeds input (token-level equivalence with deterministic seed)
 - Wire-size comparison numbers are recorded
+- `mypy --strict` passes on the updated `packages/client` completions methods
 
 ---
 
 ### Phase 7 — Demo Polish
 
-**Goal.** Turn the working system into a 10-minute demo plus a self-contained README walkthrough.
+**Goal.** Turn the working system into a 10-minute demo plus a self-contained README walkthrough. The demo covers all three access paths: REST via the proxy, gRPC via the proxy, and direct gRPC via `VllmGrpcClient`.
 
 **Deliverables.**
 
 - Polished README: what the project is, the wire-overhead thesis, how to run it locally in under five minutes, a one-paragraph summary of measured benefits
-- A `demo/` directory with one curl script, one Python script, and one streaming Python script — each annotated and runnable
-- A short benchmark write-up at `docs/benchmarks/summary.md` with the headline numbers
+- A `demo/` directory with:
+  - One curl script (OpenAI REST via proxy)
+  - One Python script using `openai` SDK (OpenAI REST via proxy)
+  - One Python script using `vllm_grpc_client` directly (native gRPC, no proxy)
+  - One streaming Python script (SSE via proxy)
+  - Each script annotated and runnable end-to-end
+- A short benchmark write-up at `docs/benchmarks/summary.md` covering the headline numbers for all three paths across non-streaming and streaming
 - Optional: a screen capture or asciinema of the demo
 
 **Exit criteria.**
 
 - A new viewer who has heard nothing about the project can read the README and run the demo locally on the M2 in under ten minutes
-- The benchmark summary is written so that a sympathetic but honest reviewer would call it fair
+- The benchmark summary covers REST / gRPC-via-proxy / gRPC-direct and is written so that a sympathetic but honest reviewer would call it fair
+- All three `demo/` scripts run without modification against a locally-deployed frontend
 
 ---
 

@@ -28,13 +28,10 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import httpx
 import modal
-
-if TYPE_CHECKING:
-    from vllm_grpc_bench.metrics import BenchmarkRun
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -62,6 +59,8 @@ _CONCURRENCY = "1,4,8"
 
 _BENCH_OUTPUT_DIR = Path("bench-results")
 _DOCS_BENCHMARKS = Path("docs/benchmarks")
+_RESULTS_DIR = _BENCH_OUTPUT_DIR
+_GRPC_DIRECT_RESULTS = _RESULTS_DIR / "results-grpc-direct.json"
 
 # ── Modal app + shared resources ──────────────────────────────────────────────
 
@@ -337,75 +336,17 @@ def _run_harness(proxy_url: str, native_url: str, output_dir: Path) -> Path:
     return results_path
 
 
-def _deserialize_run(path: Path) -> BenchmarkRun:
-    from vllm_grpc_bench.metrics import BenchmarkRun, RequestResult, RunMeta, RunSummary
-
-    data: dict[str, Any] = json.loads(path.read_text())
-    meta_d: dict[str, Any] = data["meta"]
-    _cs = meta_d.get("cold_start_s")
-    meta = RunMeta(
-        timestamp=str(meta_d["timestamp"]),
-        git_sha=str(meta_d["git_sha"]),
-        hostname=str(meta_d["hostname"]),
-        corpus_path=str(meta_d["corpus_path"]),
-        concurrency_levels=[int(v) for v in meta_d["concurrency_levels"]],
-        proxy_url=str(meta_d["proxy_url"]),
-        native_url=str(meta_d["native_url"]),
-        modal_function_id=str(meta_d["modal_function_id"])
-        if meta_d.get("modal_function_id")
-        else None,
-        gpu_type=str(meta_d["gpu_type"]) if meta_d.get("gpu_type") else None,
-        cold_start_s=float(_cs) if _cs is not None else None,
-    )
-
-    def _f(d: dict[str, Any], key: str) -> float | None:
-        v = d.get(key)
-        return float(v) if v is not None else None
-
-    summaries = [
-        RunSummary(
-            target=s["target"],
-            concurrency=int(s["concurrency"]),
-            n_requests=int(s["n_requests"]),
-            n_errors=int(s["n_errors"]),
-            latency_p50_ms=_f(s, "latency_p50_ms"),
-            latency_p95_ms=_f(s, "latency_p95_ms"),
-            latency_p99_ms=_f(s, "latency_p99_ms"),
-            throughput_rps=_f(s, "throughput_rps"),
-            request_bytes_mean=float(s["request_bytes_mean"]),
-            response_bytes_mean=_f(s, "response_bytes_mean"),
-            proxy_ms_p50=_f(s, "proxy_ms_p50"),
-            proxy_ms_p95=_f(s, "proxy_ms_p95"),
-            proxy_ms_p99=_f(s, "proxy_ms_p99"),
-        )
-        for s in data["summaries"]
-    ]
-    raw = [
-        RequestResult(
-            sample_id=str(r["sample_id"]),
-            target=r["target"],
-            concurrency=int(r["concurrency"]),
-            latency_ms=_f(r, "latency_ms"),
-            request_bytes=int(r["request_bytes"]),
-            response_bytes=int(r["response_bytes"])
-            if r.get("response_bytes") is not None
-            else None,
-            proxy_ms=_f(r, "proxy_ms"),
-            success=bool(r["success"]),
-            error=str(r["error"]) if r.get("error") is not None else None,
-        )
-        for r in data.get("raw_results", [])
-    ]
-    return BenchmarkRun(meta=meta, summaries=summaries, raw_results=raw)
-
-
 # ── Local entrypoint ──────────────────────────────────────────────────────────
 
 
 @app.local_entrypoint()
 def main() -> None:
-    from vllm_grpc_bench.compare import compare_cross
-    from vllm_grpc_bench.reporter import write_cross_run_md, write_summary_md
+    import asyncio
+
+    from vllm_grpc_bench.compare import compare_cross, compare_three_way
+    from vllm_grpc_bench.io import load_run
+    from vllm_grpc_bench.reporter import write_cross_run_md, write_summary_md, write_three_way_md
+    from vllm_grpc_bench.runner import run_grpc_target
 
     # modal.Dict API uses dynamic attribute access — suppress mypy warnings
     d = modal.Dict.from_name(_DICT_NAME, create_if_missing=True)
@@ -509,14 +450,67 @@ def main() -> None:
         except subprocess.TimeoutExpired:
             proxy_proc.kill()
 
-    print("[gRPC] Run complete. Sending stop signal.")
+    # ── gRPC-direct phase (Modal deployment still alive) ──────────────────────
+    import socket
+    import subprocess as _sub
+
+    from vllm_grpc_bench.corpus import load_corpus
+    from vllm_grpc_bench.metrics import (
+        BenchmarkRun,
+        RequestResult,
+        RunMeta,
+        compute_summaries,
+    )
+
+    corpus_samples = load_corpus(Path(_CORPUS_PATH))
+    concurrency_levels = [int(c) for c in _CONCURRENCY.split(",")]
+
+    print("[gRPC-direct] Running harness...")
+    all_direct: list[RequestResult] = []
+    for conc in concurrency_levels:
+        print(f"[gRPC-direct]   concurrency={conc} ...")
+        direct_results = asyncio.run(run_grpc_target(grpc_addr, corpus_samples, conc, 60.0))
+        all_direct.extend(direct_results)
+
+    try:
+        git_sha = (
+            _sub.check_output(["git", "rev-parse", "HEAD"], stderr=_sub.DEVNULL).decode().strip()
+        )
+    except Exception:
+        git_sha = "unknown"
+
+    from datetime import UTC
+    from datetime import datetime as _dt
+
+    grpc_direct_meta = RunMeta(
+        timestamp=_dt.now(tz=UTC).isoformat(),
+        git_sha=git_sha,
+        hostname=socket.gethostname(),
+        corpus_path=_CORPUS_PATH,
+        concurrency_levels=concurrency_levels,
+        proxy_url="N/A",
+        native_url=grpc_addr,
+        gpu_type="A10G",
+        cold_start_s=grpc_cold_start_s,
+    )
+    grpc_direct_summaries = compute_summaries(all_direct)
+    grpc_direct_run = BenchmarkRun(
+        meta=grpc_direct_meta,
+        summaries=grpc_direct_summaries,
+        raw_results=all_direct,
+    )
+    _GRPC_DIRECT_RESULTS.parent.mkdir(parents=True, exist_ok=True)
+    _GRPC_DIRECT_RESULTS.write_text(json.dumps(dataclasses.asdict(grpc_direct_run), indent=2))
+    print(f"[gRPC-direct] Results written to {_GRPC_DIRECT_RESULTS}")
+
+    print("[gRPC] All runs complete. Sending stop signal.")
     d.put("grpc_stop", True)
     print("[gRPC] Deployment tearing down.\n")
 
     # ── Comparison + output files ─────────────────────────────────────────────
     print("[COMPARE] Loading result files...")
-    rest_run = _deserialize_run(rest_results_path)
-    grpc_run = _deserialize_run(grpc_results_path)
+    rest_run = load_run(rest_results_path)
+    grpc_run = load_run(grpc_results_path)
 
     # Attach Modal traceability metadata gathered from modal.Dict
     rest_run.meta.cold_start_s = rest_cold_start_s
@@ -526,6 +520,16 @@ def main() -> None:
 
     print("[COMPARE] Computing cross-run comparison...")
     report = compare_cross(rest_run, grpc_run, label_a="REST", label_b="gRPC")
+
+    print("[COMPARE] Computing three-way comparison...")
+    three_way_report = compare_three_way(
+        rest_run,
+        grpc_run,
+        grpc_direct_run,
+        label_a="REST",
+        label_b="gRPC-proxy",
+        label_c="gRPC-direct",
+    )
 
     _DOCS_BENCHMARKS.mkdir(parents=True, exist_ok=True)
 
@@ -545,18 +549,42 @@ def main() -> None:
     grpc_baseline_md = _DOCS_BENCHMARKS / "phase-3-modal-grpc-baseline.md"
     shutil.copy(grpc_md_dir / "summary.md", grpc_baseline_md)
 
-    # Comparison report
+    # Comparison report (phase-3 two-way)
     comparison_path = _DOCS_BENCHMARKS / "phase-3-modal-comparison.md"
     write_cross_run_md(report, comparison_path)
+
+    # Phase 4.2 output files
+    rest_42_json = _DOCS_BENCHMARKS / "phase-4.2-rest-baseline.json"
+    rest_42_json.write_text(json.dumps(dataclasses.asdict(rest_run), indent=2))
+
+    grpc_proxy_42_json = _DOCS_BENCHMARKS / "phase-4.2-grpc-proxy-baseline.json"
+    grpc_proxy_42_json.write_text(json.dumps(dataclasses.asdict(grpc_run), indent=2))
+
+    grpc_direct_42_json = _DOCS_BENCHMARKS / "phase-4.2-grpc-direct-baseline.json"
+    grpc_direct_42_json.write_text(json.dumps(dataclasses.asdict(grpc_direct_run), indent=2))
+
+    grpc_direct_42_md = _DOCS_BENCHMARKS / "phase-4.2-grpc-direct-baseline.md"
+    write_summary_md(grpc_direct_run, _BENCH_OUTPUT_DIR / "grpc-direct")
+    grpc_direct_md_src = _BENCH_OUTPUT_DIR / "grpc-direct" / "summary.md"
+    shutil.copy(grpc_direct_md_src, grpc_direct_42_md)
+
+    three_way_path = _DOCS_BENCHMARKS / "phase-4.2-three-way-comparison.md"
+    write_three_way_md(three_way_report, three_way_path)
 
     print("Results written:")
     for p in [
         rest_results_path,
         grpc_results_path,
+        _GRPC_DIRECT_RESULTS,
         rest_baseline_json,
         rest_baseline_md,
         grpc_baseline_json,
         grpc_baseline_md,
         comparison_path,
+        rest_42_json,
+        grpc_proxy_42_json,
+        grpc_direct_42_json,
+        grpc_direct_42_md,
+        three_way_path,
     ]:
         print(f"  {p}")
