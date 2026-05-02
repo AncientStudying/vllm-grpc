@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import grpc
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
@@ -21,7 +23,10 @@ async def chat_completions(req: OpenAIChatRequest) -> Response:
         err = {"message": "Streaming not yet implemented", "type": "not_implemented_error"}
         return JSONResponse({"error": err}, status_code=501)
 
+    t0 = time.perf_counter()
     proto_req = openai_request_to_proto(req)
+    t1 = time.perf_counter()
+
     try:
         proto_resp = await _chat_client.complete(proto_req)
     except grpc.aio.AioRpcError as exc:
@@ -47,4 +52,9 @@ async def chat_completions(req: OpenAIChatRequest) -> Response:
             status_code=500,
         )
 
-    return JSONResponse(proto_response_to_openai_dict(proto_resp, req.model))
+    t2 = time.perf_counter()
+    body = proto_response_to_openai_dict(proto_resp, req.model)
+    t3 = time.perf_counter()
+
+    proxy_ms = (t1 - t0 + t3 - t2) * 1000
+    return JSONResponse(body, headers={"X-Bench-Proxy-Ms": f"{proxy_ms:.3f}"})

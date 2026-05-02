@@ -11,6 +11,7 @@ resolution-markers = [
 [manifest]
 members = [
     "vllm-grpc",
+    "vllm-grpc-bench",
     "vllm-grpc-frontend",
     "vllm-grpc-gen",
     "vllm-grpc-proxy",
@@ -1554,6 +1555,21 @@ dev = [
     { name = "ruff", specifier = ">=0.4" },
 ]
 investigation = [{ name = "vllm-metal", url = "https://github.com/vllm-project/vllm-metal/releases/download/v0.2.0-20260430-132616/vllm_metal-0.2.0-cp312-cp312-macosx_11_0_arm64.whl" }]
+
+[[package]]
+name = "vllm-grpc-bench"
+version = "0.0.0"
+source = { editable = "tools/benchmark" }
+dependencies = [
+    { name = "httpx" },
+    { name = "psutil" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "psutil", specifier = ">=5.9" },
+]
 
 [[package]]
 name = "vllm-grpc-frontend"

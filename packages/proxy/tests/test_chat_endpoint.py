@@ -42,6 +42,9 @@ async def test_happy_path_returns_200_with_openai_json(mock_chat_client: AsyncMo
     assert body["choices"][0]["finish_reason"] == "stop"
     assert body["usage"]["total_tokens"] == 13
     assert body["id"].startswith("chatcmpl-")
+    proxy_ms_header = response.headers.get("x-bench-proxy-ms")
+    assert proxy_ms_header is not None
+    assert float(proxy_ms_header) > 0
 
 
 @pytest.mark.asyncio

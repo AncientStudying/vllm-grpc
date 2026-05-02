@@ -52,6 +52,8 @@ make test           # pytest
 make check          # lint + typecheck + test
 make run-proxy      # Start REST proxy on :8000
 make run-frontend   # Start gRPC server on :50051
+make bench          # Head-to-head benchmark (requires proxy + native servers running)
+make bench-ci       # Benchmark smoke test with stub servers (no live model needed)
 ```
 
 ### Environment Variables
