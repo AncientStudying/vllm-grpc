@@ -27,13 +27,13 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import modal
-from vllm_grpc_bench.compare import compare_cross
-from vllm_grpc_bench.metrics import BenchmarkRun, RequestResult, RunMeta, RunSummary
-from vllm_grpc_bench.reporter import write_cross_run_md, write_summary_md
+
+if TYPE_CHECKING:
+    from vllm_grpc_bench.metrics import BenchmarkRun
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -334,6 +334,7 @@ def _run_harness(proxy_url: str, native_url: str, output_dir: Path) -> Path:
 
 
 def _deserialize_run(path: Path) -> BenchmarkRun:
+    from vllm_grpc_bench.metrics import BenchmarkRun, RequestResult, RunMeta, RunSummary
     data: dict[str, Any] = json.loads(path.read_text())
     meta_d: dict[str, Any] = data["meta"]
     _cs = meta_d.get("cold_start_s")
@@ -398,6 +399,9 @@ def _deserialize_run(path: Path) -> BenchmarkRun:
 
 @app.local_entrypoint()
 def main() -> None:
+    from vllm_grpc_bench.compare import compare_cross
+    from vllm_grpc_bench.reporter import write_cross_run_md, write_summary_md
+
     # modal.Dict API uses dynamic attribute access — suppress mypy warnings
     d = modal.Dict.from_name(_DICT_NAME, create_if_missing=True)
 
