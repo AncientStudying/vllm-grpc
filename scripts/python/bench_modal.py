@@ -19,6 +19,7 @@ See specs/007-modal-real-baselines/plan.md for architecture notes.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import shutil
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 _VLLM_VERSION = "0.20.0"
+_MODEL_NAME = "Qwen/Qwen3-0.6B"  # alias sent to vLLM via --served-model-name; must match corpus
 _MODEL_PATH = "/mnt/weights"
 _REST_PORT = 8000
 _GRPC_PORT = 50051
@@ -128,6 +130,8 @@ def serve_rest_for_bench() -> dict[str, object]:
             "vllm.entrypoints.openai.api_server",
             "--model",
             _MODEL_PATH,
+            "--served-model-name",
+            _MODEL_NAME,
             "--port",
             str(_REST_PORT),
         ],
@@ -335,6 +339,7 @@ def _run_harness(proxy_url: str, native_url: str, output_dir: Path) -> Path:
 
 def _deserialize_run(path: Path) -> BenchmarkRun:
     from vllm_grpc_bench.metrics import BenchmarkRun, RequestResult, RunMeta, RunSummary
+
     data: dict[str, Any] = json.loads(path.read_text())
     meta_d: dict[str, Any] = data["meta"]
     _cs = meta_d.get("cold_start_s")
@@ -524,17 +529,17 @@ def main() -> None:
 
     _DOCS_BENCHMARKS.mkdir(parents=True, exist_ok=True)
 
-    # REST baseline files
+    # REST baseline files — serialize in-memory run (has gpu_type/cold_start_s attached)
     rest_baseline_json = _DOCS_BENCHMARKS / "phase-3-modal-rest-baseline.json"
-    shutil.copy(rest_results_path, rest_baseline_json)
+    rest_baseline_json.write_text(json.dumps(dataclasses.asdict(rest_run), indent=2))
     rest_md_dir = _BENCH_OUTPUT_DIR / "rest"
     write_summary_md(rest_run, rest_md_dir)
     rest_baseline_md = _DOCS_BENCHMARKS / "phase-3-modal-rest-baseline.md"
     shutil.copy(rest_md_dir / "summary.md", rest_baseline_md)
 
-    # gRPC baseline files
+    # gRPC baseline files — serialize in-memory run (has gpu_type/cold_start_s attached)
     grpc_baseline_json = _DOCS_BENCHMARKS / "phase-3-modal-grpc-baseline.json"
-    shutil.copy(grpc_results_path, grpc_baseline_json)
+    grpc_baseline_json.write_text(json.dumps(dataclasses.asdict(grpc_run), indent=2))
     grpc_md_dir = _BENCH_OUTPUT_DIR / "grpc"
     write_summary_md(grpc_run, grpc_md_dir)
     grpc_baseline_md = _DOCS_BENCHMARKS / "phase-3-modal-grpc-baseline.md"
