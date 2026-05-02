@@ -134,7 +134,7 @@
 
 - [X] T014 [P] Commit the five baseline/report files to `docs/benchmarks/`: `phase-3-modal-rest-baseline.json`, `phase-3-modal-rest-baseline.md`, `phase-3-modal-grpc-baseline.json`, `phase-3-modal-grpc-baseline.md`, `phase-3-modal-comparison.md`
 
-- [ ] T015 Manual gate — open a sample PR touching `packages/proxy/src/vllm_grpc_proxy/chat_router.py`; confirm CI benchmark job posts a comment that includes both the stub regression section and the Modal cross-run summary section populated from T014's committed files; confirm CI exits 0
+- [X] T015 Manual gate — open a sample PR touching `packages/proxy/src/vllm_grpc_proxy/chat_router.py`; confirm CI benchmark job posts a comment that includes both the stub regression section and the Modal cross-run summary section populated from T014's committed files; confirm CI exits 0
 
 ---
 
