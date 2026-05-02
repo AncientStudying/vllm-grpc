@@ -1,3 +1,1 @@
-{
-  "feature_directory": "specs/008-grpc-client-library"
-}
+{"feature_directory": "specs/009-streaming-chat"}
