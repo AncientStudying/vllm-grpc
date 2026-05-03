@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 
 import grpc
 from vllm_grpc.v1 import (
@@ -40,3 +41,15 @@ class GrpcChatClient:
                 timeout=_CHAT_DEADLINE_SECONDS,
             )
         return response
+
+    async def stream_complete(
+        self, req: chat_pb2.ChatCompleteRequest
+    ) -> AsyncIterator[chat_pb2.ChatStreamChunk]:
+        async with grpc.aio.insecure_channel(self._addr) as channel:
+            stub = chat_pb2_grpc.ChatServiceStub(channel)
+            call = stub.CompleteStream(req, timeout=_CHAT_DEADLINE_SECONDS)
+            try:
+                async for chunk in call:
+                    yield chunk
+            finally:
+                call.cancel()

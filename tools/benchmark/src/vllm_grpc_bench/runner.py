@@ -168,3 +168,180 @@ async def run_grpc_target(
                 return await _send_one_grpc(sample)
 
         return list(await asyncio.gather(*[bounded_grpc(s) for s in samples]))
+
+
+async def _send_one_streaming(
+    client: httpx.AsyncClient,
+    sample: RequestSample,
+    target: Literal["proxy", "native"],
+    concurrency: int,
+) -> RequestResult:
+    body = {
+        "model": sample.model,
+        "messages": sample.messages,
+        "max_tokens": sample.max_tokens,
+        "temperature": sample.temperature,
+        "seed": sample.seed,
+        "stream": True,
+    }
+    body_bytes = json.dumps(body).encode()
+
+    t0 = time.perf_counter()
+    t_first: float | None = None
+    t_last: float | None = None
+    token_count = 0
+    try:
+        async with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            content=body_bytes,
+            headers={"Content-Type": "application/json"},
+        ) as response:
+            success = 200 <= response.status_code < 300
+            async for line in response.aiter_lines():
+                if not line.startswith("data: ") or line == "data: [DONE]":
+                    continue
+                t_now = time.perf_counter()
+                try:
+                    payload = json.loads(line[6:])
+                    delta = payload["choices"][0]["delta"]
+                    content = delta.get("content", "")
+                except (KeyError, json.JSONDecodeError):
+                    continue
+                if content:
+                    token_count += 1
+                    if t_first is None:
+                        t_first = t_now
+                    t_last = t_now
+        t1 = time.perf_counter()
+        latency_ms = (t1 - t0) * 1000
+        ttft_ms = (t_first - t0) * 1000 if t_first is not None else None
+        tpot_ms = (
+            (t_last - t_first) * 1000 / (token_count - 1)
+            if t_last is not None and t_first is not None and token_count > 1
+            else None
+        )
+        return RequestResult(
+            sample_id=sample.id,
+            target=target,
+            concurrency=concurrency,
+            latency_ms=latency_ms,
+            request_bytes=len(body_bytes),
+            response_bytes=None,
+            proxy_ms=None,
+            success=success,
+            error=None if success else f"HTTP {response.status_code}",
+            ttft_ms=ttft_ms,
+            tpot_ms=tpot_ms,
+            token_count=token_count if token_count > 0 else None,
+        )
+    except Exception as exc:
+        t1 = time.perf_counter()
+        return RequestResult(
+            sample_id=sample.id,
+            target=target,
+            concurrency=concurrency,
+            latency_ms=(t1 - t0) * 1000,
+            request_bytes=len(body_bytes),
+            response_bytes=None,
+            proxy_ms=None,
+            success=False,
+            error=str(exc),
+        )
+
+
+async def run_target_streaming(
+    target: Literal["proxy", "native"],
+    url: str,
+    samples: list[RequestSample],
+    concurrency: int,
+    timeout: float,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> list[RequestResult]:
+    kwargs: dict[str, object] = {"base_url": url, "timeout": timeout}
+    if transport is not None:
+        kwargs["transport"] = transport
+
+    async with httpx.AsyncClient(**kwargs) as client:  # type: ignore[arg-type]
+        sem = asyncio.Semaphore(concurrency)
+
+        async def bounded(sample: RequestSample) -> RequestResult:
+            async with sem:
+                return await _send_one_streaming(client, sample, target, concurrency)
+
+        return list(await asyncio.gather(*[bounded(s) for s in samples]))
+
+
+async def run_grpc_target_streaming(
+    addr: str,
+    samples: list[RequestSample],
+    concurrency: int,
+    timeout: float,
+) -> list[RequestResult]:
+    from vllm_grpc_client import VllmGrpcClient
+
+    async with VllmGrpcClient(addr, timeout=timeout) as grpc_client:
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _send_one_grpc_stream(sample: RequestSample) -> RequestResult:
+            req_proto = _build_request_proto(sample)
+            request_bytes = len(req_proto.SerializeToString())
+            t0 = time.perf_counter()
+            t_first: float | None = None
+            t_last: float | None = None
+            token_count = 0
+            try:
+                async for chunk in grpc_client.chat.complete_stream(
+                    messages=sample.messages,
+                    model=sample.model,
+                    max_tokens=sample.max_tokens,
+                    temperature=sample.temperature,
+                    seed=sample.seed,
+                    timeout=timeout,
+                ):
+                    if chunk.delta_content:
+                        t_now = time.perf_counter()
+                        token_count += 1
+                        if t_first is None:
+                            t_first = t_now
+                        t_last = t_now
+                t1 = time.perf_counter()
+                ttft_ms = (t_first - t0) * 1000 if t_first is not None else None
+                tpot_ms = (
+                    (t_last - t_first) * 1000 / (token_count - 1)
+                    if t_last is not None and t_first is not None and token_count > 1
+                    else None
+                )
+                return RequestResult(
+                    sample_id=sample.id,
+                    target="grpc-direct",
+                    concurrency=concurrency,
+                    latency_ms=(t1 - t0) * 1000,
+                    request_bytes=request_bytes,
+                    response_bytes=None,
+                    proxy_ms=None,
+                    success=True,
+                    error=None,
+                    ttft_ms=ttft_ms,
+                    tpot_ms=tpot_ms,
+                    token_count=token_count if token_count > 0 else None,
+                )
+            except Exception as exc:
+                t1 = time.perf_counter()
+                return RequestResult(
+                    sample_id=sample.id,
+                    target="grpc-direct",
+                    concurrency=concurrency,
+                    latency_ms=(t1 - t0) * 1000,
+                    request_bytes=request_bytes,
+                    response_bytes=None,
+                    proxy_ms=None,
+                    success=False,
+                    error=str(exc),
+                )
+
+        async def bounded_grpc_stream(sample: RequestSample) -> RequestResult:
+            async with sem:
+                return await _send_one_grpc_stream(sample)
+
+        return list(await asyncio.gather(*[bounded_grpc_stream(s) for s in samples]))

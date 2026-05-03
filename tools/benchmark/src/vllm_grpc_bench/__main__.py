@@ -25,7 +25,7 @@ from vllm_grpc_bench.reporter import (
     write_summary_md,
     write_three_way_md,
 )
-from vllm_grpc_bench.runner import run_target
+from vllm_grpc_bench.runner import run_grpc_target_streaming, run_target, run_target_streaming
 
 _DEFAULT_CORPUS = Path(__file__).parent.parent.parent / "corpus" / "chat_nonstreaming.json"
 
@@ -93,6 +93,17 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--compare-to", type=Path, default=None)
     parser.add_argument("--regression-threshold", type=float, default=0.10)
     parser.add_argument("--save-baseline", type=Path, default=None)
+    parser.add_argument(
+        "--streaming",
+        action="store_true",
+        help="Use streaming endpoints; also benchmarks gRPC-direct if --grpc-direct-addr is set",
+    )
+    parser.add_argument(
+        "--grpc-direct-addr",
+        default=None,
+        metavar="HOST:PORT",
+        help="gRPC-direct address for streaming benchmark (e.g. localhost:50051)",
+    )
 
     return parser
 
@@ -140,23 +151,50 @@ async def _run(args: argparse.Namespace) -> int:
     )
     meta = build_run_meta(cfg)
 
+    streaming: bool = getattr(args, "streaming", False)
+    grpc_direct_addr: str | None = getattr(args, "grpc_direct_addr", None)
+
     all_results: list[RequestResult] = []
     for conc in concurrency_levels:
         for target in ("proxy", "native"):
             url = proxy_url if target == "proxy" else native_url
-            print(f"Running {target} @ concurrency={conc} …", flush=True)
+            mode = "streaming" if streaming else "non-streaming"
+            print(f"Running {target} ({mode}) @ concurrency={conc} …", flush=True)
             try:
-                results = await run_target(
-                    target=target,
-                    url=url,
+                if streaming:
+                    results = await run_target_streaming(
+                        target=target,
+                        url=url,
+                        samples=samples,
+                        concurrency=conc,
+                        timeout=args.timeout,
+                    )
+                else:
+                    results = await run_target(
+                        target=target,
+                        url=url,
+                        samples=samples,
+                        concurrency=conc,
+                        timeout=args.timeout,
+                    )
+            except Exception as exc:
+                print(f"Error reaching {target} at {url}: {exc}", file=sys.stderr)
+                return 3
+            all_results.extend(results)
+
+        if streaming and grpc_direct_addr:
+            print(f"Running grpc-direct (streaming) @ concurrency={conc} …", flush=True)
+            try:
+                grpc_results = await run_grpc_target_streaming(
+                    addr=grpc_direct_addr,
                     samples=samples,
                     concurrency=conc,
                     timeout=args.timeout,
                 )
             except Exception as exc:
-                print(f"Error reaching {target} at {url}: {exc}", file=sys.stderr)
+                print(f"Error reaching grpc-direct at {grpc_direct_addr}: {exc}", file=sys.stderr)
                 return 3
-            all_results.extend(results)
+            all_results.extend(grpc_results)
 
     summaries = compute_summaries(all_results)
     run = BenchmarkRun(meta=meta, summaries=summaries, raw_results=all_results)

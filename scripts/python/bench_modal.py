@@ -346,7 +346,11 @@ def main() -> None:
     from vllm_grpc_bench.compare import compare_cross, compare_three_way
     from vllm_grpc_bench.io import load_run
     from vllm_grpc_bench.reporter import write_cross_run_md, write_summary_md, write_three_way_md
-    from vllm_grpc_bench.runner import run_grpc_target
+    from vllm_grpc_bench.runner import (
+        run_grpc_target,
+        run_grpc_target_streaming,
+        run_target_streaming,
+    )
 
     # modal.Dict API uses dynamic attribute access — suppress mypy warnings
     d = modal.Dict.from_name(_DICT_NAME, create_if_missing=True)
@@ -388,9 +392,7 @@ def main() -> None:
         rest_results_path = _BENCH_OUTPUT_DIR / "results-rest.json"
         shutil.copy(result_json, rest_results_path)
 
-    print("[REST] Run complete. Sending stop signal.")
-    d.put("rest_stop", True)
-    print("[REST] Deployment tearing down.\n")
+    print("[REST] Non-streaming run complete. Keeping REST alive for streaming phase.\n")
 
     # ── gRPC phase ────────────────────────────────────────────────────────────
     print("[gRPC] Spawning Modal gRPC serve function...")
@@ -436,23 +438,10 @@ def main() -> None:
         sys.exit(1)
 
     grpc_results_path: Path
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            print("[gRPC] Running harness...")
-            result_json = _run_harness(proxy_url, proxy_url, Path(tmp))
-            grpc_results_path = _BENCH_OUTPUT_DIR / "results-grpc.json"
-            shutil.copy(result_json, grpc_results_path)
-    finally:
-        print("[gRPC] Stopping local proxy.")
-        proxy_proc.terminate()
-        try:
-            proxy_proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proxy_proc.kill()
-
-    # ── gRPC-direct phase (Modal deployment still alive) ──────────────────────
     import socket
     import subprocess as _sub
+    from datetime import UTC
+    from datetime import datetime as _dt
 
     from vllm_grpc_bench.corpus import load_corpus
     from vllm_grpc_bench.metrics import (
@@ -465,13 +454,6 @@ def main() -> None:
     corpus_samples = load_corpus(Path(_CORPUS_PATH))
     concurrency_levels = [int(c) for c in _CONCURRENCY.split(",")]
 
-    print("[gRPC-direct] Running harness...")
-    all_direct: list[RequestResult] = []
-    for conc in concurrency_levels:
-        print(f"[gRPC-direct]   concurrency={conc} ...")
-        direct_results = asyncio.run(run_grpc_target(grpc_addr, corpus_samples, conc, 60.0))
-        all_direct.extend(direct_results)
-
     try:
         git_sha = (
             _sub.check_output(["git", "rev-parse", "HEAD"], stderr=_sub.DEVNULL).decode().strip()
@@ -479,29 +461,76 @@ def main() -> None:
     except Exception:
         git_sha = "unknown"
 
-    from datetime import UTC
-    from datetime import datetime as _dt
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            print("[gRPC] Running harness...")
+            result_json = _run_harness(proxy_url, proxy_url, Path(tmp))
+            grpc_results_path = _BENCH_OUTPUT_DIR / "results-grpc.json"
+            shutil.copy(result_json, grpc_results_path)
 
-    grpc_direct_meta = RunMeta(
-        timestamp=_dt.now(tz=UTC).isoformat(),
-        git_sha=git_sha,
-        hostname=socket.gethostname(),
-        corpus_path=_CORPUS_PATH,
-        concurrency_levels=concurrency_levels,
-        proxy_url="N/A",
-        native_url=grpc_addr,
-        gpu_type="A10G",
-        cold_start_s=grpc_cold_start_s,
-    )
-    grpc_direct_summaries = compute_summaries(all_direct)
-    grpc_direct_run = BenchmarkRun(
-        meta=grpc_direct_meta,
-        summaries=grpc_direct_summaries,
-        raw_results=all_direct,
-    )
-    _GRPC_DIRECT_RESULTS.parent.mkdir(parents=True, exist_ok=True)
-    _GRPC_DIRECT_RESULTS.write_text(json.dumps(dataclasses.asdict(grpc_direct_run), indent=2))
-    print(f"[gRPC-direct] Results written to {_GRPC_DIRECT_RESULTS}")
+        # ── gRPC-direct phase (proxy + Modal deployments still alive) ─────────
+        print("[gRPC-direct] Running harness...")
+        all_direct: list[RequestResult] = []
+        for conc in concurrency_levels:
+            print(f"[gRPC-direct]   concurrency={conc} ...")
+            direct_results = asyncio.run(run_grpc_target(grpc_addr, corpus_samples, conc, 60.0))
+            all_direct.extend(direct_results)
+
+        grpc_direct_meta = RunMeta(
+            timestamp=_dt.now(tz=UTC).isoformat(),
+            git_sha=git_sha,
+            hostname=socket.gethostname(),
+            corpus_path=_CORPUS_PATH,
+            concurrency_levels=concurrency_levels,
+            proxy_url="N/A",
+            native_url=grpc_addr,
+            gpu_type="A10G",
+            cold_start_s=grpc_cold_start_s,
+        )
+        grpc_direct_summaries = compute_summaries(all_direct)
+        grpc_direct_run = BenchmarkRun(
+            meta=grpc_direct_meta,
+            summaries=grpc_direct_summaries,
+            raw_results=all_direct,
+        )
+        _GRPC_DIRECT_RESULTS.parent.mkdir(parents=True, exist_ok=True)
+        _GRPC_DIRECT_RESULTS.write_text(json.dumps(dataclasses.asdict(grpc_direct_run), indent=2))
+        print(f"[gRPC-direct] Results written to {_GRPC_DIRECT_RESULTS}")
+
+        # ── Streaming phase (REST + gRPC proxy both still alive) ──────────────
+        print("[STREAM] Running streaming benchmark phase...")
+
+        all_stream_rest: list[RequestResult] = []
+        all_stream_proxy: list[RequestResult] = []
+        all_stream_direct: list[RequestResult] = []
+
+        for conc in concurrency_levels:
+            print(f"[STREAM]   REST streaming @ concurrency={conc} ...")
+            all_stream_rest.extend(
+                asyncio.run(run_target_streaming("native", rest_url, corpus_samples, conc, 60.0))
+            )
+            print(f"[STREAM]   gRPC-proxy streaming @ concurrency={conc} ...")
+            all_stream_proxy.extend(
+                asyncio.run(run_target_streaming("proxy", proxy_url, corpus_samples, conc, 60.0))
+            )
+            print(f"[STREAM]   gRPC-direct streaming @ concurrency={conc} ...")
+            all_stream_direct.extend(
+                asyncio.run(run_grpc_target_streaming(grpc_addr, corpus_samples, conc, 60.0))
+            )
+
+        print("[STREAM] Streaming benchmark complete.\n")
+
+    finally:
+        print("[gRPC] Stopping local proxy.")
+        proxy_proc.terminate()
+        try:
+            proxy_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proxy_proc.kill()
+
+    print("[REST] Sending stop signal.")
+    d.put("rest_stop", True)
+    print("[REST] Deployment tearing down.")
 
     print("[gRPC] All runs complete. Sending stop signal.")
     d.put("grpc_stop", True)
@@ -571,6 +600,48 @@ def main() -> None:
     three_way_path = _DOCS_BENCHMARKS / "phase-4.2-three-way-comparison.md"
     write_three_way_md(three_way_report, three_way_path)
 
+    # ── Phase 5 streaming report ──────────────────────────────────────────────
+    stream_ts = _dt.now(tz=UTC).isoformat()
+    stream_git_sha = git_sha
+
+    def _make_stream_run(results: list[RequestResult], url: str) -> BenchmarkRun:
+        meta = RunMeta(
+            timestamp=stream_ts,
+            git_sha=stream_git_sha,
+            hostname=socket.gethostname(),
+            corpus_path=_CORPUS_PATH,
+            concurrency_levels=concurrency_levels,
+            proxy_url=url,
+            native_url=url,
+            gpu_type="A10G",
+        )
+        return BenchmarkRun(meta=meta, summaries=compute_summaries(results), raw_results=results)
+
+    stream_rest_run = _make_stream_run(all_stream_rest, rest_url)
+    stream_proxy_run = _make_stream_run(all_stream_proxy, proxy_url)
+    stream_direct_run = _make_stream_run(all_stream_direct, grpc_addr)
+
+    stream_three_way = compare_three_way(
+        stream_rest_run,
+        stream_proxy_run,
+        stream_direct_run,
+        label_a="REST",
+        label_b="gRPC-proxy",
+        label_c="gRPC-direct",
+    )
+
+    phase5_comparison_path = _DOCS_BENCHMARKS / "phase-5-streaming-comparison.md"
+    write_three_way_md(stream_three_way, phase5_comparison_path)
+
+    phase5_rest_json = _DOCS_BENCHMARKS / "phase-5-rest-streaming.json"
+    phase5_rest_json.write_text(json.dumps(dataclasses.asdict(stream_rest_run), indent=2))
+
+    phase5_proxy_json = _DOCS_BENCHMARKS / "phase-5-grpc-proxy-streaming.json"
+    phase5_proxy_json.write_text(json.dumps(dataclasses.asdict(stream_proxy_run), indent=2))
+
+    phase5_direct_json = _DOCS_BENCHMARKS / "phase-5-grpc-direct-streaming.json"
+    phase5_direct_json.write_text(json.dumps(dataclasses.asdict(stream_direct_run), indent=2))
+
     print("Results written:")
     for p in [
         rest_results_path,
@@ -586,5 +657,9 @@ def main() -> None:
         grpc_direct_42_json,
         grpc_direct_42_md,
         three_way_path,
+        phase5_rest_json,
+        phase5_proxy_json,
+        phase5_direct_json,
+        phase5_comparison_path,
     ]:
         print(f"  {p}")

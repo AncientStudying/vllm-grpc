@@ -72,6 +72,12 @@ _CROSS_METRIC_FIELDS = [
     "latency_p95_ms",
     "latency_p99_ms",
     "throughput_rps",
+    "ttft_p50_ms",
+    "ttft_p95_ms",
+    "ttft_p99_ms",
+    "tpot_p50_ms",
+    "tpot_p95_ms",
+    "tpot_p99_ms",
     "request_bytes_mean",
     "response_bytes_mean",
 ]
