@@ -56,12 +56,26 @@ jobs:
 
       - name: Modal baseline summary
         run: |
-          if [ -f docs/benchmarks/phase-5-streaming-comparison.md ]; then
-            cp docs/benchmarks/phase-5-streaming-comparison.md modal-cross-summary.md
-          else
-            echo "_Modal baselines not yet committed — skipping Modal cross-run summary._" \
-              > modal-cross-summary.md
-          fi
+          {
+            if [ -f docs/benchmarks/phase-4.2-three-way-comparison.md ]; then
+              echo "## Phase 4.2 — REST vs gRPC-Proxy vs gRPC-Direct"
+              echo ""
+              cat docs/benchmarks/phase-4.2-three-way-comparison.md
+              echo ""
+            fi
+            if [ -f docs/benchmarks/phase-5-streaming-comparison.md ]; then
+              echo "## Phase 5 — Streaming Comparison"
+              echo ""
+              cat docs/benchmarks/phase-5-streaming-comparison.md
+              echo ""
+            fi
+            if [ -f docs/benchmarks/phase-6-completions-comparison.md ]; then
+              echo "## Phase 6 — Completions Wire-Size Comparison"
+              echo ""
+              cat docs/benchmarks/phase-6-completions-comparison.md
+              echo ""
+            fi
+          } > modal-cross-summary.md || echo "_Modal baselines not yet committed — skipping Modal cross-run summary._" > modal-cross-summary.md
 
       - name: Post PR comment
         uses: actions/github-script@v7
@@ -75,7 +89,7 @@ jobs:
               ? fs.readFileSync('modal-cross-summary.md', 'utf8')
               : '';
             const modalSection = modalSummary
-              ? `\n\n## Modal GPU Baselines — Streaming (REST / gRPC-proxy / gRPC-direct)\n\n${modalSummary}`
+              ? `\n\n## Modal GPU Baselines — All Phases\n\n${modalSummary}`
               : '';
             const body = `## Benchmark CI (stub backend)\n\n${comparison}${modalSection}\n\n<!-- benchmark-ci-comment -->`;
             const sentinel = '<!-- benchmark-ci-comment -->';

@@ -7,6 +7,8 @@ import grpc
 from vllm_grpc.v1 import (
     chat_pb2,
     chat_pb2_grpc,
+    completions_pb2,
+    completions_pb2_grpc,
     health_pb2,
     health_pb2_grpc,
 )
@@ -47,6 +49,34 @@ class GrpcChatClient:
     ) -> AsyncIterator[chat_pb2.ChatStreamChunk]:
         async with grpc.aio.insecure_channel(self._addr) as channel:
             stub = chat_pb2_grpc.ChatServiceStub(channel)
+            call = stub.CompleteStream(req, timeout=_CHAT_DEADLINE_SECONDS)
+            try:
+                async for chunk in call:
+                    yield chunk
+            finally:
+                call.cancel()
+
+
+class GrpcCompletionsClient:
+    def __init__(self, addr: str | None = None) -> None:
+        self._addr = addr or os.environ.get("FRONTEND_ADDR", "localhost:50051")
+
+    async def complete(
+        self, req: completions_pb2.CompletionRequest
+    ) -> completions_pb2.CompletionResponse:
+        async with grpc.aio.insecure_channel(self._addr) as channel:
+            stub = completions_pb2_grpc.CompletionsServiceStub(channel)
+            response: completions_pb2.CompletionResponse = await stub.Complete(
+                req,
+                timeout=_CHAT_DEADLINE_SECONDS,
+            )
+        return response
+
+    async def stream_complete(
+        self, req: completions_pb2.CompletionRequest
+    ) -> AsyncIterator[completions_pb2.CompletionStreamChunk]:
+        async with grpc.aio.insecure_channel(self._addr) as channel:
+            stub = completions_pb2_grpc.CompletionsServiceStub(channel)
             call = stub.CompleteStream(req, timeout=_CHAT_DEADLINE_SECONDS)
             try:
                 async for chunk in call:

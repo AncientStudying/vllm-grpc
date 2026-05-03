@@ -4,9 +4,10 @@ import asyncio
 import os
 
 import grpc
-from vllm_grpc.v1 import chat_pb2_grpc, health_pb2_grpc
+from vllm_grpc.v1 import chat_pb2_grpc, completions_pb2_grpc, health_pb2_grpc
 
 from vllm_grpc_frontend.chat import ChatServicer
+from vllm_grpc_frontend.completions import CompletionsServicer
 from vllm_grpc_frontend.health import HealthServicer
 
 
@@ -23,6 +24,9 @@ async def serve() -> None:
     server = grpc.aio.server()
     health_pb2_grpc.add_HealthServicer_to_server(HealthServicer(), server)
     chat_pb2_grpc.add_ChatServiceServicer_to_server(ChatServicer(engine, tokenizer), server)
+    completions_pb2_grpc.add_CompletionsServiceServicer_to_server(
+        CompletionsServicer(engine), server
+    )
     server.add_insecure_port(f"{host}:{port}")
     await server.start()
     print(f"Frontend gRPC server listening on {host}:{port}", flush=True)

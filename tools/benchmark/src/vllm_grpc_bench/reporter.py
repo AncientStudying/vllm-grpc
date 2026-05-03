@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import dataclasses
 import json
+from collections import defaultdict
 from pathlib import Path
 
 from vllm_grpc_bench.metrics import (
@@ -265,6 +266,114 @@ def write_cross_run_md(report: CrossRunReport, output_path: Path) -> Path:
 
         lines.append("")
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines))
+    return output_path
+
+
+def write_wire_size_comparison_md(
+    summaries: list[RunSummary],
+    output_path: Path,
+) -> Path:
+    """Render Phase 6 completions report: wire-size + latency/throughput by path and input type."""
+    completion_summaries = [
+        s for s in summaries if s.request_type in ("completion-text", "completion-embeds")
+    ]
+
+    lines: list[str] = [
+        "# Phase 6 Completions Benchmark: Wire-Size and Latency",
+        "",
+        "## Methodology",
+        "",
+        "- **Native REST**: vLLM's own OpenAI-compatible REST endpoint; text prompts only",
+        "- **Proxy REST**: gRPC proxy REST facade; base64-encodes `torch.save()` bytes for embeds",
+        "- **gRPC-direct**: raw proto `bytes` field, no base64 encoding",
+        "- Baseline for text completions is native REST (the conventional approach).",
+        "- Baseline for embed completions is proxy REST (no native REST path exists).",
+        "",
+        "## Wire-Size by Path and Input Type",
+        "",
+        "| path | input_type | req_bytes_mean | resp_bytes_mean | Δ vs baseline |",
+        "|------|------------|----------------|-----------------|---------------|",
+    ]
+
+    # Group by (target, request_type), average across concurrency levels
+    groups: dict[tuple[str, str], list[RunSummary]] = defaultdict(list)
+    for s in completion_summaries:
+        groups[(s.target, s.request_type)].append(s)
+
+    group_req_bytes: dict[tuple[str, str], float] = {}
+    group_resp_bytes: dict[tuple[str, str], float | None] = {}
+    for key, group in groups.items():
+        req_vals = [s.request_bytes_mean for s in group if s.request_bytes_mean is not None]
+        group_req_bytes[key] = sum(req_vals) / len(req_vals) if req_vals else 0.0
+        resp_vals = [s.response_bytes_mean for s in group if s.response_bytes_mean is not None]
+        group_resp_bytes[key] = sum(resp_vals) / len(resp_vals) if resp_vals else None
+
+    # Text completions: baseline = native REST; all three paths shown
+    native_text_bytes = group_req_bytes.get(("native", "completion-text"))
+    for target in ("native", "proxy", "grpc-direct"):
+        key = (target, "completion-text")
+        if key not in group_req_bytes:
+            continue
+        req_bytes = group_req_bytes[key]
+        resp_bytes = group_resp_bytes.get(key)
+        resp_str = f"{resp_bytes:.0f}" if resp_bytes is not None else "N/A"
+        if target == "native" or native_text_bytes is None:
+            delta_str = "baseline"
+        else:
+            pct = (req_bytes / native_text_bytes - 1) * 100
+            sign = "+" if pct >= 0 else ""
+            delta_str = f"{sign}{pct:.1f}% vs native-REST"
+        lines.append(f"| {target} | completion-text | {req_bytes:.0f} | {resp_str} | {delta_str} |")
+
+    # Embed completions: baseline = proxy REST; two paths shown
+    proxy_embed_bytes = group_req_bytes.get(("proxy", "completion-embeds"))
+    for target in ("proxy", "grpc-direct"):
+        key = (target, "completion-embeds")
+        if key not in group_req_bytes:
+            continue
+        req_bytes = group_req_bytes[key]
+        resp_bytes = group_resp_bytes.get(key)
+        resp_str = f"{resp_bytes:.0f}" if resp_bytes is not None else "N/A"
+        if target == "proxy" or proxy_embed_bytes is None:
+            delta_str = "baseline"
+        else:
+            pct = (req_bytes / proxy_embed_bytes - 1) * 100
+            sign = "+" if pct >= 0 else ""
+            delta_str = f"{sign}{pct:.1f}% vs proxy-REST"
+        lines.append(
+            f"| {target} | completion-embeds | {req_bytes:.0f} | {resp_str} | {delta_str} |"
+        )
+
+    # Latency and throughput section (data already in summaries from timed runners)
+    lines += [
+        "",
+        "## Latency and Throughput by Path, Input Type, and Concurrency",
+        "",
+        "| path | input_type | concurrency | latency_p50_ms | latency_p95_ms | latency_p99_ms"
+        " | throughput_rps |",
+        "|------|------------|-------------|----------------|----------------|----------------"
+        "|----------------|",
+    ]
+
+    sort_key_target = {"native": 0, "proxy": 1, "grpc-direct": 2}
+    sort_key_type = {"completion-text": 0, "completion-embeds": 1}
+    for s in sorted(
+        completion_summaries,
+        key=lambda x: (
+            sort_key_type.get(x.request_type, 9),
+            sort_key_target.get(x.target, 9),
+            x.concurrency,
+        ),
+    ):
+        lines.append(
+            f"| {s.target} | {s.request_type} | {s.concurrency}"
+            f" | {_fmt(s.latency_p50_ms)} | {_fmt(s.latency_p95_ms)}"
+            f" | {_fmt(s.latency_p99_ms)} | {_fmt(s.throughput_rps)} |"
+        )
+
+    lines.append("")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines))
     return output_path

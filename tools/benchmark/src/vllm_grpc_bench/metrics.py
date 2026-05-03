@@ -36,6 +36,7 @@ class RequestResult:
     ttft_ms: float | None = None
     tpot_ms: float | None = None
     token_count: int | None = None
+    request_type: Literal["chat", "completion-text", "completion-embeds"] = "chat"
 
 
 @dataclass
@@ -59,6 +60,7 @@ class RunSummary:
     tpot_p50_ms: float | None = None
     tpot_p95_ms: float | None = None
     tpot_p99_ms: float | None = None
+    request_type: Literal["chat", "completion-text", "completion-embeds"] = "chat"
 
 
 @dataclass
@@ -155,13 +157,22 @@ def _percentile(values: list[float], p: float) -> float | None:
 
 
 def compute_summaries(results: list[RequestResult]) -> list[RunSummary]:
-    groups: dict[tuple[Literal["proxy", "native", "grpc-direct"], int], list[RequestResult]] = {}
+    groups: dict[
+        tuple[
+            Literal["proxy", "native", "grpc-direct"],
+            int,
+            Literal["chat", "completion-text", "completion-embeds"],
+        ],
+        list[RequestResult],
+    ] = {}
     for r in results:
-        key = (r.target, r.concurrency)
+        key = (r.target, r.concurrency, r.request_type)
         groups.setdefault(key, []).append(r)
 
     summaries: list[RunSummary] = []
-    for (target, concurrency), group in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+    for (target, concurrency, _request_type), group in sorted(
+        groups.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2])
+    ):
         successful = [r for r in group if r.success]
         latencies = [r.latency_ms for r in successful if r.latency_ms is not None]
         proxy_times = [r.proxy_ms for r in successful if r.proxy_ms is not None]
@@ -194,6 +205,7 @@ def compute_summaries(results: list[RequestResult]) -> list[RunSummary]:
                 tpot_p50_ms=_percentile(tpot_times, 50),
                 tpot_p95_ms=_percentile(tpot_times, 95),
                 tpot_p99_ms=_percentile(tpot_times, 99),
+                request_type=group[0].request_type,
             )
         )
     return summaries

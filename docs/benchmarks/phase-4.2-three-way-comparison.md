@@ -3,34 +3,40 @@
 ## Run Metadata
 
 **REST**:  
-- Timestamp: 2026-05-03T00:35:23.330227+00:00  
-- Git SHA: 14eccd46c01c4583f3b865fd1459c769cc2c3a6a  
+- Timestamp: 2026-05-03T17:08:14.941882+00:00  
+- Git SHA: 6c90747592147f4cfe4ae4a35f7bd4d2d2741db3  
 - Host: Mac  
 - GPU: A10G  
-- Cold start: 150.2s  
+- Cold start: 151.3s  
 
 **gRPC-proxy**:  
-- Timestamp: 2026-05-03T00:38:12.013260+00:00  
-- Git SHA: 14eccd46c01c4583f3b865fd1459c769cc2c3a6a  
+- Timestamp: 2026-05-03T17:10:11.239216+00:00  
+- Git SHA: 6c90747592147f4cfe4ae4a35f7bd4d2d2741db3  
 - Host: Mac  
 - GPU: A10G  
-- Cold start: 155.2s  
+- Cold start: 95.1s  
 
 **gRPC-direct**:  
-- Timestamp: 2026-05-03T00:38:24.150203+00:00  
-- Git SHA: 14eccd46c01c4583f3b865fd1459c769cc2c3a6a  
+- Timestamp: 2026-05-03T17:10:22.700958+00:00  
+- Git SHA: 6c90747592147f4cfe4ae4a35f7bd4d2d2741db3  
 - Host: Mac  
 - GPU: A10G  
-- Cold start: 155.2s  
+- Cold start: 95.1s  
 
 ## Concurrency = 1
 
 | metric | concurrency | REST | gRPC-proxy | Δ vs REST | gRPC-direct | Δ vs REST |
 |--------|-------------|------|------------|-----------|-------------|-----------|
-| Latency P50 (ms) | 1 | 112.97 | 274.09 | +142.6% | 115.03 | +1.8% |
-| Latency P95 (ms) | 1 | 167.11 | 1034.72 | +519.2% | 216.08 | +29.3% |
-| Latency P99 (ms) | 1 | 197.27 | 1529.18 | +675.2% | 252.48 | +28.0% |
-| Throughput (rps) | 1 | 8.14 | 2.44 | -70.0% | 7.49 | -8.0% |
+| Latency P50 (ms) | 1 | 110.55 | 275.33 | +149.1% | 117.80 | +6.6% |
+| Latency P95 (ms) | 1 | 188.17 | 893.49 | +374.8% | 218.90 | +16.3% |
+| Latency P99 (ms) | 1 | 193.65 | 1293.27 | +567.8% | 259.81 | +34.2% |
+| Throughput (rps) | 1 | 8.00 | 2.59 | -67.7% | 7.51 | -6.0% |
+| TTFT P50 (ms) | 1 | N/A | N/A | — | N/A | — |
+| TTFT P95 (ms) | 1 | N/A | N/A | — | N/A | — |
+| TTFT P99 (ms) | 1 | N/A | N/A | — | N/A | — |
+| TPOT P50 (ms) | 1 | N/A | N/A | — | N/A | — |
+| TPOT P95 (ms) | 1 | N/A | N/A | — | N/A | — |
+| TPOT P99 (ms) | 1 | N/A | N/A | — | N/A | — |
 | Request bytes (mean) | 1 | 506 | 506 | +0.0% | 419 | -17.3% |
 | Response bytes (mean) | 1 | 611 | 330 | -46.0% | 65 | -89.4% |
 
@@ -38,10 +44,16 @@
 
 | metric | concurrency | REST | gRPC-proxy | Δ vs REST | gRPC-direct | Δ vs REST |
 |--------|-------------|------|------------|-----------|-------------|-----------|
-| Latency P50 (ms) | 4 | 123.27 | 193.63 | +57.1% | 197.72 | +60.4% |
-| Latency P95 (ms) | 4 | 226.75 | 369.06 | +62.8% | 312.36 | +37.8% |
-| Latency P99 (ms) | 4 | 227.04 | 369.32 | +62.7% | 312.43 | +37.6% |
-| Throughput (rps) | 4 | 6.28 | 4.10 | -34.7% | 4.58 | -27.1% |
+| Latency P50 (ms) | 4 | 120.63 | 175.67 | +45.6% | 153.82 | +27.5% |
+| Latency P95 (ms) | 4 | 214.83 | 346.22 | +61.2% | 325.91 | +51.7% |
+| Latency P99 (ms) | 4 | 215.43 | 346.43 | +60.8% | 325.96 | +51.3% |
+| Throughput (rps) | 4 | 6.50 | 4.42 | -32.0% | 4.77 | -26.7% |
+| TTFT P50 (ms) | 4 | N/A | N/A | — | N/A | — |
+| TTFT P95 (ms) | 4 | N/A | N/A | — | N/A | — |
+| TTFT P99 (ms) | 4 | N/A | N/A | — | N/A | — |
+| TPOT P50 (ms) | 4 | N/A | N/A | — | N/A | — |
+| TPOT P95 (ms) | 4 | N/A | N/A | — | N/A | — |
+| TPOT P99 (ms) | 4 | N/A | N/A | — | N/A | — |
 | Request bytes (mean) | 4 | 506 | 506 | +0.0% | 419 | -17.3% |
 | Response bytes (mean) | 4 | 611 | 330 | -46.0% | 65 | -89.4% |
 
@@ -49,9 +61,15 @@
 
 | metric | concurrency | REST | gRPC-proxy | Δ vs REST | gRPC-direct | Δ vs REST |
 |--------|-------------|------|------------|-----------|-------------|-----------|
-| Latency P50 (ms) | 8 | 228.87 | 631.39 | +175.9% | 377.88 | +65.1% |
-| Latency P95 (ms) | 8 | 231.11 | 632.01 | +173.5% | 378.04 | +63.6% |
-| Latency P99 (ms) | 8 | 231.76 | 632.09 | +172.7% | 378.08 | +63.1% |
-| Throughput (rps) | 8 | 4.80 | 1.89 | -60.7% | 3.05 | -36.5% |
+| Latency P50 (ms) | 8 | 402.42 | 510.49 | +26.9% | 321.96 | -20.0% |
+| Latency P95 (ms) | 8 | 403.79 | 511.22 | +26.6% | 322.32 | -20.2% |
+| Latency P99 (ms) | 8 | 403.86 | 511.24 | +26.6% | 322.33 | -20.2% |
+| Throughput (rps) | 8 | 2.89 | 2.32 | -19.7% | 3.52 | +21.6% |
+| TTFT P50 (ms) | 8 | N/A | N/A | — | N/A | — |
+| TTFT P95 (ms) | 8 | N/A | N/A | — | N/A | — |
+| TTFT P99 (ms) | 8 | N/A | N/A | — | N/A | — |
+| TPOT P50 (ms) | 8 | N/A | N/A | — | N/A | — |
+| TPOT P95 (ms) | 8 | N/A | N/A | — | N/A | — |
+| TPOT P99 (ms) | 8 | N/A | N/A | — | N/A | — |
 | Request bytes (mean) | 8 | 506 | 506 | +0.0% | 419 | -17.3% |
 | Response bytes (mean) | 8 | 611 | 330 | -46.0% | 65 | -89.4% |

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import httpx
 import pytest
@@ -173,3 +174,75 @@ class TestRunTargetStreaming:
             transport=fake_streaming_server,
         )
         assert results[0].target == "native"
+
+
+def _make_completion_text_sample(n: int = 1) -> list[Any]:
+    from dataclasses import dataclass
+
+    @dataclass
+    class FakeSample:
+        id: int
+        prompt: str
+        model: str
+        max_tokens: int
+        seed: int
+        bucket: str = "short"
+
+    return [
+        FakeSample(id=i, prompt="hello", model="Qwen/Qwen3-0.6B", max_tokens=10, seed=42)
+        for i in range(n)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_completions_proxy_text_request_type(
+    fake_http_server: httpx.MockTransport,
+) -> None:
+    from vllm_grpc_bench.runner import run_completions_proxy_text
+
+    samples = _make_completion_text_sample(2)
+    results = await run_completions_proxy_text(
+        url="http://fake",
+        samples=samples,
+        concurrency=1,
+        timeout=10.0,
+        transport=fake_http_server,
+    )
+    assert len(results) == 2
+    for r in results:
+        assert r.request_type == "completion-text"
+        assert r.request_bytes > 0
+
+
+@pytest.mark.asyncio
+async def test_run_completions_proxy_embeds_request_type(
+    fake_http_server: httpx.MockTransport,
+) -> None:
+    from dataclasses import dataclass
+
+    from vllm_grpc_bench.runner import run_completions_proxy_embeds
+
+    @dataclass
+    class FakeEmbedSample:
+        id: int
+        tensor_bytes: bytes
+        max_tokens: int
+        seed: int
+        seq_len: int
+        bucket: str
+
+    samples = [
+        FakeEmbedSample(
+            id=0, tensor_bytes=b"fake", max_tokens=10, seed=42, seq_len=8, bucket="short"
+        )
+    ]
+    results = await run_completions_proxy_embeds(
+        url="http://fake",
+        samples=samples,
+        concurrency=1,
+        timeout=10.0,
+        transport=fake_http_server,
+    )
+    assert len(results) == 1
+    assert results[0].request_type == "completion-embeds"
+    assert results[0].request_bytes > 0
