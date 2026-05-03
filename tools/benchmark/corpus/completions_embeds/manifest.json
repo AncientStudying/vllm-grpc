@@ -1,0 +1,302 @@
+[
+  {
+    "id": 0,
+    "source_prompt": "Reply with one word: yes or no.",
+    "seq_len": 9,
+    "shape": [
+      9,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/00.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "short",
+    "source": "chat_corpus"
+  },
+  {
+    "id": 1,
+    "source_prompt": "Python is a programming language known for its readability and simplicity. It supports multiple paradigms including procedural, object-oriented, and functional programming. Summarize in one sentence.",
+    "seq_len": 16,
+    "shape": [
+      16,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/01.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "short",
+    "source": "chat_corpus"
+  },
+  {
+    "id": 2,
+    "source_prompt": "Machine learning is a subset of artificial intelligence that enables systems to learn from data. Models are trained on examples and can generalize to unseen inputs. What is the key advantage of machine learning over rule-based systems?",
+    "seq_len": 16,
+    "shape": [
+      16,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/02.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "short",
+    "source": "chat_corpus"
+  },
+  {
+    "id": 3,
+    "source_prompt": "REST APIs use HTTP methods such as GET, POST, PUT, and DELETE to perform operations on resources. Each resource is identified by a URL. Resources can be represented in formats like JSON or XML. What HTTP method is used to create a new resource?",
+    "seq_len": 16,
+    "shape": [
+      16,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/03.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "short",
+    "source": "chat_corpus"
+  },
+  {
+    "id": 4,
+    "source_prompt": "Docker is a platform for developing, shipping, and running applications in isolated containers. Containers package an application and its dependencies together, ensuring consistent behavior across different environments. Unlike virtual machines, containers share the host OS kernel, making them lightweight and fast to start. Give one benefit of using Docker containers over traditional deployment.",
+    "seq_len": 16,
+    "shape": [
+      16,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/04.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "short",
+    "source": "chat_corpus"
+  },
+  {
+    "id": 5,
+    "source_prompt": "Python is a programming language known for its readability and simplicity. It supports multiple paradigms including procedural, object-oriented, and functional programming. Summarize in one sentence.",
+    "seq_len": 35,
+    "shape": [
+      35,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/05.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "medium",
+    "source": "chat_corpus"
+  },
+  {
+    "id": 6,
+    "source_prompt": "Machine learning is a subset of artificial intelligence that enables systems to learn from data. Models are trained on examples and can generalize to unseen inputs. What is the key advantage of machine learning over rule-based systems?",
+    "seq_len": 41,
+    "shape": [
+      41,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/06.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "medium",
+    "source": "chat_corpus"
+  },
+  {
+    "id": 7,
+    "source_prompt": "REST APIs use HTTP methods such as GET, POST, PUT, and DELETE to perform operations on resources. Each resource is identified by a URL. Resources can be represented in formats like JSON or XML. What HTTP method is used to create a new resource?",
+    "seq_len": 48,
+    "shape": [
+      48,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/07.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "medium",
+    "source": "chat_corpus"
+  },
+  {
+    "id": 8,
+    "source_prompt": "Docker is a platform for developing, shipping, and running applications in isolated containers. Containers package an application and its dependencies together, ensuring consistent behavior across different environments. Unlike virtual machines, containers share the host OS kernel, making them lightweight and fast to start. Give one benefit of using Docker containers over traditional deployment.",
+    "seq_len": 48,
+    "shape": [
+      48,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/08.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "medium",
+    "source": "chat_corpus"
+  },
+  {
+    "id": 9,
+    "source_prompt": "gRPC is a high-performance remote procedure call framework developed by Google. It uses Protocol Buffers as its interface definition language and supports bidirectional streaming. gRPC works over HTTP/2, which enables multiplexing multiple streams over a single connection. It provides features like authentication, load balancing, and health checking. gRPC is commonly used in microservices architectures where low latency and high throughput are required. The protocol buffer format is more compact",
+    "seq_len": 48,
+    "shape": [
+      48,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/09.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "medium",
+    "source": "chat_corpus"
+  },
+  {
+    "id": 10,
+    "source_prompt": "Docker is a platform for developing, shipping, and running applications in isolated containers. Containers package an application and its dependencies together, ensuring consistent behavior across different environments. Unlike virtual machines, containers share the host OS kernel, making them lightweight and fast to start. Give one benefit of using Docker containers over traditional deployment. gRPC is a high-performance remote procedure call framework developed by Google. It uses Protocol Buff",
+    "seq_len": 128,
+    "shape": [
+      128,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/10.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "long",
+    "source": "concatenated"
+  },
+  {
+    "id": 11,
+    "source_prompt": "Kubernetes is an open-source container orchestration platform originally developed by Google and now maintained by the Cloud Native Computing Foundation. It automates the deployment, scaling, and management of containerized applications. Kubernetes organizes containers into logical units called pods, which can be replicated across nodes in a cluster. A scheduler assigns pods to nodes based on resource availability. Services provide stable network endpoints for pods, while ingress controllers man",
+    "seq_len": 128,
+    "shape": [
+      128,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/11.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "long",
+    "source": "concatenated"
+  },
+  {
+    "id": 12,
+    "source_prompt": "Docker is a platform for developing, shipping, and running applications in isolated containers. Containers package an application and its dependencies together, ensuring consistent behavior across different environments. Unlike virtual machines, containers share the host OS kernel, making them lightweight and fast to start. Give one benefit of using Docker containers over traditional deployment. gRPC is a high-performance remote procedure call framework developed by Google. It uses Protocol Buff",
+    "seq_len": 128,
+    "shape": [
+      128,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/12.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "long",
+    "source": "concatenated"
+  },
+  {
+    "id": 13,
+    "source_prompt": "Kubernetes is an open-source container orchestration platform originally developed by Google and now maintained by the Cloud Native Computing Foundation. It automates the deployment, scaling, and management of containerized applications. Kubernetes organizes containers into logical units called pods, which can be replicated across nodes in a cluster. A scheduler assigns pods to nodes based on resource availability. Services provide stable network endpoints for pods, while ingress controllers man",
+    "seq_len": 128,
+    "shape": [
+      128,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/13.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "long",
+    "source": "concatenated"
+  },
+  {
+    "id": 14,
+    "source_prompt": "Docker is a platform for developing, shipping, and running applications in isolated containers. Containers package an application and its dependencies together, ensuring consistent behavior across different environments. Unlike virtual machines, containers share the host OS kernel, making them lightweight and fast to start. Give one benefit of using Docker containers over traditional deployment. gRPC is a high-performance remote procedure call framework developed by Google. It uses Protocol Buff",
+    "seq_len": 128,
+    "shape": [
+      128,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/14.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "long",
+    "source": "concatenated"
+  },
+  {
+    "id": 15,
+    "source_prompt": "Machine learning is a subset of artificial intelligence that enables systems to learn from data. Models are trained on examples and can generalize to unseen inputs. What is the key advantage of machine learning over rule-based systems? REST APIs use HTTP methods such as GET, POST, PUT, and DELETE to perform operations on resources. Each resource is identified by a URL. Resources can be represented in formats like JSON or XML. What HTTP method is used to create a new resource? Docker is a platfor",
+    "seq_len": 256,
+    "shape": [
+      256,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/15.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "full",
+    "source": "concatenated"
+  },
+  {
+    "id": 16,
+    "source_prompt": "Kubernetes is an open-source container orchestration platform originally developed by Google and now maintained by the Cloud Native Computing Foundation. It automates the deployment, scaling, and management of containerized applications. Kubernetes organizes containers into logical units called pods, which can be replicated across nodes in a cluster. A scheduler assigns pods to nodes based on resource availability. Services provide stable network endpoints for pods, while ingress controllers man",
+    "seq_len": 256,
+    "shape": [
+      256,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/16.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "full",
+    "source": "concatenated"
+  },
+  {
+    "id": 17,
+    "source_prompt": "Docker is a platform for developing, shipping, and running applications in isolated containers. Containers package an application and its dependencies together, ensuring consistent behavior across different environments. Unlike virtual machines, containers share the host OS kernel, making them lightweight and fast to start. Give one benefit of using Docker containers over traditional deployment. gRPC is a high-performance remote procedure call framework developed by Google. It uses Protocol Buff",
+    "seq_len": 256,
+    "shape": [
+      256,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/17.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "full",
+    "source": "concatenated"
+  },
+  {
+    "id": 18,
+    "source_prompt": "Machine learning is a subset of artificial intelligence that enables systems to learn from data. Models are trained on examples and can generalize to unseen inputs. What is the key advantage of machine learning over rule-based systems? REST APIs use HTTP methods such as GET, POST, PUT, and DELETE to perform operations on resources. Each resource is identified by a URL. Resources can be represented in formats like JSON or XML. What HTTP method is used to create a new resource? Docker is a platfor",
+    "seq_len": 256,
+    "shape": [
+      256,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/18.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "full",
+    "source": "concatenated"
+  },
+  {
+    "id": 19,
+    "source_prompt": "Kubernetes is an open-source container orchestration platform originally developed by Google and now maintained by the Cloud Native Computing Foundation. It automates the deployment, scaling, and management of containerized applications. Kubernetes organizes containers into logical units called pods, which can be replicated across nodes in a cluster. A scheduler assigns pods to nodes based on resource availability. Services provide stable network endpoints for pods, while ingress controllers man",
+    "seq_len": 256,
+    "shape": [
+      256,
+      1024
+    ],
+    "dtype": "float32",
+    "embed_file": "corpus/completions_embeds/19.pt",
+    "max_tokens": 50,
+    "seed": 42,
+    "bucket": "full",
+    "source": "concatenated"
+  }
+]
