@@ -127,7 +127,8 @@ def test_write_wire_size_comparison_md(tmp_path: Path) -> None:
         _make_summary("native", "completion-text", req_bytes=37500.0),
         _make_summary("proxy", "completion-text", req_bytes=37500.0),
         _make_summary("grpc-direct", "completion-text", req_bytes=30000.0),
-        # Embed path: proxy is baseline; grpc-direct shows delta
+        # Embed path: native is baseline; proxy and grpc-direct show delta
+        _make_summary("native", "completion-embeds", req_bytes=50000.0, resp_bytes=None),
         _make_summary("proxy", "completion-embeds", req_bytes=50000.0, resp_bytes=None),
         _make_summary("grpc-direct", "completion-embeds", req_bytes=37500.0, resp_bytes=None),
     ]
@@ -148,10 +149,9 @@ def test_write_wire_size_comparison_md(tmp_path: Path) -> None:
     assert "proxy" in content
     assert "grpc-direct" in content
 
-    # Native REST is the baseline for text; delta computed for proxy and grpc-direct
+    # Native REST is the baseline for both text and embed paths
     assert "baseline" in content
     assert "vs native-REST" in content
-    assert "vs proxy-REST" in content
 
     # Latency table present with expected headers
     assert "latency_p50_ms" in content

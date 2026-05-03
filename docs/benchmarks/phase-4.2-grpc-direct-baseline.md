@@ -1,19 +1,19 @@
 # Benchmark Summary
 
-**Run**: 2026-05-03T17:10:22.700958+00:00  
-**Commit**: 6c90747592147f4cfe4ae4a35f7bd4d2d2741db3  
+**Run**: 2026-05-03T19:31:09.785940+00:00  
+**Commit**: 720a95a579bfb23e8c3b1177a94624e0c0a8c4cb  
 **Host**: Mac  
 **GPU**: A10G  
-**Cold start**: 95.1s  
+**Cold start**: 175.3s  
 
 ## Concurrency = 1
 
 | Metric | gRPC-direct |
 |--------|-------------|
-| Latency P50 (ms) | 117.80 |
-| Latency P95 (ms) | 218.90 |
-| Latency P99 (ms) | 259.81 |
-| Throughput (rps) | 7.51 |
+| Latency P50 (ms) | 143.60 |
+| Latency P95 (ms) | 271.69 |
+| Latency P99 (ms) | 318.04 |
+| Throughput (rps) | 5.98 |
 | Request bytes (mean) | 419 |
 | Response bytes (mean) | 65 |
 | TTFT P50 (ms) | N/A |
@@ -27,10 +27,10 @@
 
 | Metric | gRPC-direct |
 |--------|-------------|
-| Latency P50 (ms) | 153.82 |
-| Latency P95 (ms) | 325.91 |
-| Latency P99 (ms) | 325.96 |
-| Throughput (rps) | 4.77 |
+| Latency P50 (ms) | 221.45 |
+| Latency P95 (ms) | 338.75 |
+| Latency P99 (ms) | 338.77 |
+| Throughput (rps) | 3.90 |
 | Request bytes (mean) | 419 |
 | Response bytes (mean) | 65 |
 | TTFT P50 (ms) | N/A |
@@ -44,10 +44,10 @@
 
 | Metric | gRPC-direct |
 |--------|-------------|
-| Latency P50 (ms) | 321.96 |
-| Latency P95 (ms) | 322.32 |
-| Latency P99 (ms) | 322.33 |
-| Throughput (rps) | 3.52 |
+| Latency P50 (ms) | 424.14 |
+| Latency P95 (ms) | 424.53 |
+| Latency P99 (ms) | 424.54 |
+| Throughput (rps) | 2.66 |
 | Request bytes (mean) | 419 |
 | Response bytes (mean) | 65 |
 | TTFT P50 (ms) | N/A |

@@ -285,11 +285,11 @@ def write_wire_size_comparison_md(
         "",
         "## Methodology",
         "",
-        "- **Native REST**: vLLM's own OpenAI-compatible REST endpoint; text prompts only",
+        "- **Native REST**: vLLM's own OpenAI-compatible REST endpoint (text and embeds)",
         "- **Proxy REST**: gRPC proxy REST facade; base64-encodes `torch.save()` bytes for embeds",
         "- **gRPC-direct**: raw proto `bytes` field, no base64 encoding",
         "- Baseline for text completions is native REST (the conventional approach).",
-        "- Baseline for embed completions is proxy REST (no native REST path exists).",
+        "- Baseline for embed completions is native REST (isolates protocol from proxy overhead).",
         "",
         "## Wire-Size by Path and Input Type",
         "",
@@ -327,21 +327,21 @@ def write_wire_size_comparison_md(
             delta_str = f"{sign}{pct:.1f}% vs native-REST"
         lines.append(f"| {target} | completion-text | {req_bytes:.0f} | {resp_str} | {delta_str} |")
 
-    # Embed completions: baseline = proxy REST; two paths shown
-    proxy_embed_bytes = group_req_bytes.get(("proxy", "completion-embeds"))
-    for target in ("proxy", "grpc-direct"):
+    # Embed completions: baseline = native REST; all three paths shown
+    native_embed_bytes = group_req_bytes.get(("native", "completion-embeds"))
+    for target in ("native", "proxy", "grpc-direct"):
         key = (target, "completion-embeds")
         if key not in group_req_bytes:
             continue
         req_bytes = group_req_bytes[key]
         resp_bytes = group_resp_bytes.get(key)
         resp_str = f"{resp_bytes:.0f}" if resp_bytes is not None else "N/A"
-        if target == "proxy" or proxy_embed_bytes is None:
+        if target == "native" or native_embed_bytes is None:
             delta_str = "baseline"
         else:
-            pct = (req_bytes / proxy_embed_bytes - 1) * 100
+            pct = (req_bytes / native_embed_bytes - 1) * 100
             sign = "+" if pct >= 0 else ""
-            delta_str = f"{sign}{pct:.1f}% vs proxy-REST"
+            delta_str = f"{sign}{pct:.1f}% vs native-REST"
         lines.append(
             f"| {target} | completion-embeds | {req_bytes:.0f} | {resp_str} | {delta_str} |"
         )

@@ -548,6 +548,75 @@ async def run_completions_proxy_embeds(
         return list(await asyncio.gather(*[bounded_embeds(s) for s in samples]))
 
 
+async def run_completions_native_embeds(
+    url: str,
+    samples: list[Any],  # list[CompletionEmbedSample]
+    concurrency: int,
+    timeout: float,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> list[RequestResult]:
+    """Measure wire size for embedding-prompt completions via native REST (base64, no proxy hop)."""
+    import base64
+
+    kwargs: dict[str, object] = {"base_url": url, "timeout": timeout}
+    if transport is not None:
+        kwargs["transport"] = transport
+
+    async with httpx.AsyncClient(**kwargs) as client:  # type: ignore[arg-type]
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _send_one_embeds(sample: Any) -> RequestResult:
+            b64_embeds = base64.b64encode(sample.tensor_bytes).decode()
+            body = {
+                "model": "Qwen/Qwen3-0.6B",
+                "prompt_embeds": b64_embeds,
+                "max_tokens": sample.max_tokens,
+                "seed": sample.seed,
+            }
+            body_bytes = json.dumps(body).encode()
+            t0 = time.perf_counter()
+            try:
+                response = await client.post(
+                    "/v1/completions",
+                    content=body_bytes,
+                    headers={"Content-Type": "application/json"},
+                )
+                t1 = time.perf_counter()
+                success = 200 <= response.status_code < 300
+                return RequestResult(
+                    sample_id=str(sample.id),
+                    target="native",
+                    concurrency=concurrency,
+                    latency_ms=(t1 - t0) * 1000,
+                    request_bytes=len(body_bytes),
+                    response_bytes=len(response.content),
+                    proxy_ms=None,
+                    success=success,
+                    error=None if success else f"HTTP {response.status_code}",
+                    request_type="completion-embeds",
+                )
+            except Exception as exc:
+                t1 = time.perf_counter()
+                return RequestResult(
+                    sample_id=str(sample.id),
+                    target="native",
+                    concurrency=concurrency,
+                    latency_ms=(t1 - t0) * 1000,
+                    request_bytes=len(body_bytes),
+                    response_bytes=None,
+                    proxy_ms=None,
+                    success=False,
+                    error=str(exc),
+                    request_type="completion-embeds",
+                )
+
+        async def bounded_embeds(sample: Any) -> RequestResult:
+            async with sem:
+                return await _send_one_embeds(sample)
+
+        return list(await asyncio.gather(*[bounded_embeds(s) for s in samples]))
+
+
 async def run_completions_grpc_direct(
     addr: str,
     samples: list[Any],  # list[CompletionTextSample] — text prompt path
