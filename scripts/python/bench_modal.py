@@ -133,6 +133,7 @@ def serve_rest_for_bench() -> dict[str, object]:
             _MODEL_NAME,
             "--port",
             str(_REST_PORT),
+            "--enable-prompt-embeds",
         ],
         stdout=_sub.DEVNULL,
         stderr=_sub.DEVNULL,
@@ -529,6 +530,7 @@ def main() -> None:
         from vllm_grpc_bench.runner import (
             run_completions_grpc_direct,
             run_completions_grpc_direct_embeds,
+            run_completions_native_embeds,
             run_completions_native_text,
             run_completions_proxy_embeds,
             run_completions_proxy_text,
@@ -558,10 +560,15 @@ def main() -> None:
         except FileNotFoundError as exc:
             print(f"[COMPLETIONS] Skipping text corpus: {exc}", file=sys.stderr)
 
-        # Embed-prompt path: proxy REST + gRPC-direct (skipped if manifest not present)
+        # Embed-prompt path: native REST + proxy REST + gRPC-direct (skipped if no manifest)
         try:
             embed_samples = load_completions_corpus("embeds")
             print(f"[COMPLETIONS] Loaded {len(embed_samples)} embed samples.")
+            for conc in concurrency_levels:
+                print(f"[COMPLETIONS]   native-REST embeds @ concurrency={conc} ...")
+                all_completions.extend(
+                    asyncio.run(run_completions_native_embeds(rest_url, embed_samples, conc, 60.0))
+                )
             for conc in concurrency_levels:
                 print(f"[COMPLETIONS]   proxy-REST embeds @ concurrency={conc} ...")
                 all_completions.extend(

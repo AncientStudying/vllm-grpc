@@ -16,7 +16,9 @@ async def serve() -> None:
     from vllm import AsyncEngineArgs, AsyncLLMEngine
 
     model_name = os.environ.get("MODEL_NAME", "Qwen/Qwen3-0.6B")
-    engine = AsyncLLMEngine.from_engine_args(AsyncEngineArgs(model=model_name))
+    engine = AsyncLLMEngine.from_engine_args(
+        AsyncEngineArgs(model=model_name, enable_prompt_embeds=True)
+    )
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     host = os.environ.get("FRONTEND_HOST", "0.0.0.0")

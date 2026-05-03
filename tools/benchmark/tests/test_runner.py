@@ -246,3 +246,38 @@ async def test_run_completions_proxy_embeds_request_type(
     assert len(results) == 1
     assert results[0].request_type == "completion-embeds"
     assert results[0].request_bytes > 0
+
+
+@pytest.mark.asyncio
+async def test_run_completions_native_embeds_request_type(
+    fake_http_server: httpx.MockTransport,
+) -> None:
+    from dataclasses import dataclass
+
+    from vllm_grpc_bench.runner import run_completions_native_embeds
+
+    @dataclass
+    class FakeEmbedSample:
+        id: int
+        tensor_bytes: bytes
+        max_tokens: int
+        seed: int
+        seq_len: int
+        bucket: str
+
+    samples = [
+        FakeEmbedSample(
+            id=0, tensor_bytes=b"fake", max_tokens=10, seed=42, seq_len=8, bucket="short"
+        )
+    ]
+    results = await run_completions_native_embeds(
+        url="http://fake",
+        samples=samples,
+        concurrency=1,
+        timeout=10.0,
+        transport=fake_http_server,
+    )
+    assert len(results) == 1
+    assert results[0].target == "native"
+    assert results[0].request_type == "completion-embeds"
+    assert results[0].request_bytes > 0

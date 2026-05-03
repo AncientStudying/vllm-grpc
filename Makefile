@@ -77,7 +77,7 @@ modal-serve-frontend:
 	uv run --with modal modal run scripts/python/modal_frontend_serve.py
 
 bench-modal:
-	uv run --with modal modal run scripts/python/bench_modal.py
+	uv run --with modal --with torch modal run scripts/python/bench_modal.py
 
 regen-bench-reports:
 	uv run python scripts/python/regen_bench_reports.py

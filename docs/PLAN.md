@@ -452,6 +452,26 @@ Each phase begins with a spec-kit `/specify` invocation that turns the phase goa
 
 ---
 
+### Phase 6.1 — Prompt Embedding Engine Flag
+
+**Goal.** Enable the `completion-embeds` paths (proxy and gRPC-direct) to produce real latency/throughput numbers by passing `enable_prompt_embeds=True` to `AsyncEngineArgs` in the gRPC frontend.
+
+**Inputs.** Phase 6 infrastructure (completions proto, servicer, proxy router, client methods). Finding documented in `docs/notes/vllm-embedding-input-limitation.md` corrected: root cause is a missing engine flag, not a missing vLLM API. `AsyncLLMEngine` in vLLM 0.19/0.20 is an alias for `AsyncLLM` (the v1 engine), which supports `prompt_embeds` input but only when the flag is set.
+
+**Deliverables.**
+
+- `packages/frontend/src/vllm_grpc_frontend/main.py` — `enable_prompt_embeds=True` added to `AsyncEngineArgs`
+- `docs/notes/vllm-embedding-input-limitation.md` — root cause corrected; status updated to fixed
+- `docs/PLAN.md` — this phase entry
+- Modal benchmark re-run confirming `completion-embeds` paths produce real `resp_bytes_mean` / `success=True` results
+
+**Exit criteria.**
+
+- `make check` passes (mypy --strict, ruff, pytest)
+- Modal benchmark shows `success=True` for both gRPC-direct and proxy `completion-embeds` rows with real latency and wire-size numbers committed to `docs/benchmarks/`
+
+---
+
 ### Phase 7 — Demo Polish
 
 **Goal.** Turn the working system into a 10-minute demo plus a self-contained README walkthrough. The demo covers all three access paths: REST via the proxy, gRPC via the proxy, and direct gRPC via `VllmGrpcClient`.

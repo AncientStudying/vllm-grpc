@@ -11,13 +11,8 @@ engine_input = {"prompt_embeds": tensor}
 async for output in self._engine.generate(engine_input, params, request_id=request_id):
 ```
 
-vLLM 0.20.0 does not accept a `prompt_embeds` key in the inputs dict.  It accepts:
-- `str` — raw text prompt (tokenized internally)
-- `dict` with `prompt_token_ids: list[int]` — pre-tokenized token IDs
-
-Passing a floating-point embedding tensor directly is not part of the stable vLLM API at
-this version.  The engine raises an internal error, which the frontend catches and propagates
-as a gRPC `INTERNAL` status.
+The engine raises an internal error, which the frontend catches and propagates as a gRPC
+`INTERNAL` status.
 
 ## Impact
 
@@ -31,23 +26,34 @@ as a gRPC `INTERNAL` status.
 
 ## Root Cause
 
-vLLM's embedding-as-input API is not stable in 0.20.0.  Some experimental builds expose a
-`prompt_embeds` or `multi_modal_data` path, but it is not part of the public `AsyncLLMEngine`
-interface at this version.
+**Original diagnosis (incorrect):** vLLM's embedding-as-input API was assumed to be unstable
+in 0.20.0 and not part of the public `AsyncLLMEngine` interface.
+
+**Actual root cause:** In vLLM 0.19+, `AsyncLLMEngine` is a direct alias for `AsyncLLM`
+(the v1 engine). The v1 engine supports `{"prompt_embeds": tensor}` input, but only when
+`enable_prompt_embeds=True` is passed to `AsyncEngineArgs`. Without this flag,
+`vllm/renderers/embed_utils.py` raises a hard error on any request that carries
+`prompt_embeds`. The proto encoding, proxy base64-decode, tensor deserialization in
+`completions_translate.py`, and the `{"prompt_embeds": tensor}` dict format in
+`completions.py` are all correct as written.
 
 ## Required Fix
 
-Upgrade to a vLLM release that supports direct embedding input, or add a workaround in the
-frontend that maps the embedding tensor to nearest-neighbor token IDs (lossy approximation).
-Neither approach is trivial.
+Add `enable_prompt_embeds=True` to `AsyncEngineArgs` in
+`packages/frontend/src/vllm_grpc_frontend/main.py`. No other files need to change.
 
-Alternatively, if the primary goal is only wire-size measurement (req_bytes), the current data
-is sufficient: the 33.3% overhead is computable from the known tensor sizes regardless of
-whether the downstream inference succeeds.
+```python
+# Before
+engine = AsyncLLMEngine.from_engine_args(AsyncEngineArgs(model=model_name))
+
+# After
+engine = AsyncLLMEngine.from_engine_args(
+    AsyncEngineArgs(model=model_name, enable_prompt_embeds=True)
+)
+```
 
 ## Status
 
-Noted 2026-05-03.  No fix applied.  The `run_completions_grpc_direct_embeds()` runner and the
-proxy embed path remain in the codebase; they will produce accurate wire-size measurements and
-will automatically start reporting latency/throughput once a vLLM version with embedding input
-support is in use.
+Fixed 2026-05-03 via Phase 6.1.  See
+`packages/frontend/src/vllm_grpc_frontend/main.py` and
+`specs/011-phase-6.1/` for the speckit artifacts.
