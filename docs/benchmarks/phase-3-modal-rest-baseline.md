@@ -1,19 +1,19 @@
 # Benchmark Summary
 
-**Run**: 2026-05-03T16:11:37.977528+00:00  
-**Commit**: 5deae6c26db531cdd00efbd1c3c294e58f3be125  
+**Run**: 2026-05-03T17:08:14.941882+00:00  
+**Commit**: 6c90747592147f4cfe4ae4a35f7bd4d2d2741db3  
 **Host**: Mac  
 **GPU**: A10G  
-**Cold start**: 161.0s  
+**Cold start**: 151.3s  
 
 ## Concurrency = 1
 
 | Metric | Proxy | Native | Δ |
 |--------|-------|--------|---|
-| Latency P50 (ms) | 352.51 | 316.73 | +11.3% |
-| Latency P95 (ms) | 1199.27 | 630.01 | +90.4% |
-| Latency P99 (ms) | 1716.16 | 772.75 | +122.1% |
-| Throughput (rps) | 2.00 | 2.57 | -22.1% |
+| Latency P50 (ms) | 114.16 | 110.55 | +3.3% |
+| Latency P95 (ms) | 811.52 | 188.17 | +331.3% |
+| Latency P99 (ms) | 1265.18 | 193.65 | +553.3% |
+| Throughput (rps) | 4.16 | 8.00 | -48.0% |
 | Request bytes (mean) | 506 | 506 | +0.0% |
 | Response bytes (mean) | 611 | 611 | +0.0% |
 | TTFT P50 (ms) | N/A | N/A | N/A |
@@ -30,10 +30,10 @@
 
 | Metric | Proxy | Native | Δ |
 |--------|-------|--------|---|
-| Latency P50 (ms) | 407.88 | 411.48 | -0.9% |
-| Latency P95 (ms) | 999.40 | 818.12 | +22.2% |
-| Latency P99 (ms) | 999.63 | 826.04 | +21.0% |
-| Throughput (rps) | 1.60 | 1.82 | -11.9% |
+| Latency P50 (ms) | 124.86 | 120.63 | +3.5% |
+| Latency P95 (ms) | 233.25 | 214.83 | +8.6% |
+| Latency P99 (ms) | 234.08 | 215.43 | +8.7% |
+| Throughput (rps) | 6.04 | 6.50 | -7.1% |
 | Request bytes (mean) | 506 | 506 | +0.0% |
 | Response bytes (mean) | 611 | 611 | +0.0% |
 | TTFT P50 (ms) | N/A | N/A | N/A |
@@ -50,10 +50,10 @@
 
 | Metric | Proxy | Native | Δ |
 |--------|-------|--------|---|
-| Latency P50 (ms) | 776.84 | 805.07 | -3.5% |
-| Latency P95 (ms) | 819.82 | 815.13 | +0.6% |
-| Latency P99 (ms) | 827.62 | 816.50 | +1.4% |
-| Throughput (rps) | 1.43 | 1.41 | +1.5% |
+| Latency P50 (ms) | 216.82 | 402.42 | -46.1% |
+| Latency P95 (ms) | 218.72 | 403.79 | -45.8% |
+| Latency P99 (ms) | 218.86 | 403.86 | -45.8% |
+| Throughput (rps) | 4.97 | 2.89 | +71.9% |
 | Request bytes (mean) | 506 | 506 | +0.0% |
 | Response bytes (mean) | 611 | 611 | +0.0% |
 | TTFT P50 (ms) | N/A | N/A | N/A |

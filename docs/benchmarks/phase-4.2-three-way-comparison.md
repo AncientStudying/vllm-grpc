@@ -3,34 +3,34 @@
 ## Run Metadata
 
 **REST**:  
-- Timestamp: 2026-05-03T16:11:37.977528+00:00  
-- Git SHA: 5deae6c26db531cdd00efbd1c3c294e58f3be125  
+- Timestamp: 2026-05-03T17:08:14.941882+00:00  
+- Git SHA: 6c90747592147f4cfe4ae4a35f7bd4d2d2741db3  
 - Host: Mac  
 - GPU: A10G  
-- Cold start: 161.0s  
+- Cold start: 151.3s  
 
 **gRPC-proxy**:  
-- Timestamp: 2026-05-03T16:13:57.971581+00:00  
-- Git SHA: 5deae6c26db531cdd00efbd1c3c294e58f3be125  
+- Timestamp: 2026-05-03T17:10:11.239216+00:00  
+- Git SHA: 6c90747592147f4cfe4ae4a35f7bd4d2d2741db3  
 - Host: Mac  
 - GPU: A10G  
-- Cold start: 105.3s  
+- Cold start: 95.1s  
 
 **gRPC-direct**:  
-- Timestamp: 2026-05-03T16:14:09.589516+00:00  
-- Git SHA: 5deae6c26db531cdd00efbd1c3c294e58f3be125  
+- Timestamp: 2026-05-03T17:10:22.700958+00:00  
+- Git SHA: 6c90747592147f4cfe4ae4a35f7bd4d2d2741db3  
 - Host: Mac  
 - GPU: A10G  
-- Cold start: 105.3s  
+- Cold start: 95.1s  
 
 ## Concurrency = 1
 
 | metric | concurrency | REST | gRPC-proxy | Δ vs REST | gRPC-direct | Δ vs REST |
 |--------|-------------|------|------------|-----------|-------------|-----------|
-| Latency P50 (ms) | 1 | 316.73 | 255.79 | -19.2% | 116.81 | -63.1% |
-| Latency P95 (ms) | 1 | 630.01 | 1092.25 | +73.4% | 212.26 | -66.3% |
-| Latency P99 (ms) | 1 | 772.75 | 1628.29 | +110.7% | 250.08 | -67.6% |
-| Throughput (rps) | 1 | 2.57 | 2.48 | -3.5% | 7.43 | +189.6% |
+| Latency P50 (ms) | 1 | 110.55 | 275.33 | +149.1% | 117.80 | +6.6% |
+| Latency P95 (ms) | 1 | 188.17 | 893.49 | +374.8% | 218.90 | +16.3% |
+| Latency P99 (ms) | 1 | 193.65 | 1293.27 | +567.8% | 259.81 | +34.2% |
+| Throughput (rps) | 1 | 8.00 | 2.59 | -67.7% | 7.51 | -6.0% |
 | TTFT P50 (ms) | 1 | N/A | N/A | — | N/A | — |
 | TTFT P95 (ms) | 1 | N/A | N/A | — | N/A | — |
 | TTFT P99 (ms) | 1 | N/A | N/A | — | N/A | — |
@@ -44,10 +44,10 @@
 
 | metric | concurrency | REST | gRPC-proxy | Δ vs REST | gRPC-direct | Δ vs REST |
 |--------|-------------|------|------------|-----------|-------------|-----------|
-| Latency P50 (ms) | 4 | 411.48 | 190.07 | -53.8% | 184.59 | -55.1% |
-| Latency P95 (ms) | 4 | 818.12 | 330.31 | -59.6% | 300.16 | -63.3% |
-| Latency P99 (ms) | 4 | 826.04 | 330.86 | -59.9% | 300.26 | -63.7% |
-| Throughput (rps) | 4 | 1.82 | 4.52 | +149.1% | 4.45 | +144.9% |
+| Latency P50 (ms) | 4 | 120.63 | 175.67 | +45.6% | 153.82 | +27.5% |
+| Latency P95 (ms) | 4 | 214.83 | 346.22 | +61.2% | 325.91 | +51.7% |
+| Latency P99 (ms) | 4 | 215.43 | 346.43 | +60.8% | 325.96 | +51.3% |
+| Throughput (rps) | 4 | 6.50 | 4.42 | -32.0% | 4.77 | -26.7% |
 | TTFT P50 (ms) | 4 | N/A | N/A | — | N/A | — |
 | TTFT P95 (ms) | 4 | N/A | N/A | — | N/A | — |
 | TTFT P99 (ms) | 4 | N/A | N/A | — | N/A | — |
@@ -61,10 +61,10 @@
 
 | metric | concurrency | REST | gRPC-proxy | Δ vs REST | gRPC-direct | Δ vs REST |
 |--------|-------------|------|------------|-----------|-------------|-----------|
-| Latency P50 (ms) | 8 | 805.07 | 520.95 | -35.3% | 304.90 | -62.1% |
-| Latency P95 (ms) | 8 | 815.13 | 521.92 | -36.0% | 305.26 | -62.6% |
-| Latency P99 (ms) | 8 | 816.50 | 522.12 | -36.1% | 305.29 | -62.6% |
-| Throughput (rps) | 8 | 1.41 | 2.27 | +61.1% | 3.73 | +164.0% |
+| Latency P50 (ms) | 8 | 402.42 | 510.49 | +26.9% | 321.96 | -20.0% |
+| Latency P95 (ms) | 8 | 403.79 | 511.22 | +26.6% | 322.32 | -20.2% |
+| Latency P99 (ms) | 8 | 403.86 | 511.24 | +26.6% | 322.33 | -20.2% |
+| Throughput (rps) | 8 | 2.89 | 2.32 | -19.7% | 3.52 | +21.6% |
 | TTFT P50 (ms) | 8 | N/A | N/A | — | N/A | — |
 | TTFT P95 (ms) | 8 | N/A | N/A | — | N/A | — |
 | TTFT P99 (ms) | 8 | N/A | N/A | — | N/A | — |
