@@ -142,7 +142,7 @@ See [`research.md`](research.md) for full decision log. Key resolutions:
 | 3 | Proxy prompt_embeds handling | base64 decode → proto `bytes` field; frontend does `torch.load()` |
 | 4 | SSE format for streaming completions | `object: text_completion`, `choices[0].text` (not `delta.content`), no initial role-delta event |
 | 5 | CI multi-phase comment aggregation | Shell block concatenates all phase markdown files with section headers |
-| 6 | Benchmark embedding corpus | Pre-computed `.pt` files from tokenizer + embed_tokens; same tensors used across all paths |
+| 6 | Benchmark embedding corpus | 20 pre-computed `.pt` tensors across 4 seq-len buckets; prompts extracted from existing `chat_nonstreaming.json` (same corpus as Phase 3/4), with adjacent entries concatenated for longer buckets; source provenance recorded per-entry in manifest |
 
 ## Phase 1 Design — Complete
 
