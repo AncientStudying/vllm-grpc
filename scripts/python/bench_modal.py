@@ -642,8 +642,65 @@ def main() -> None:
     phase5_direct_json = _DOCS_BENCHMARKS / "phase-5-grpc-direct-streaming.json"
     phase5_direct_json.write_text(json.dumps(dataclasses.asdict(stream_direct_run), indent=2))
 
+    # ── Phase 6 completions wire-size benchmark ───────────────────────────────
+    print("[COMPLETIONS] Running Phase 6 completions wire-size benchmark...")
+
+    from vllm_grpc_bench.corpus import load_completions_corpus
+    from vllm_grpc_bench.reporter import write_wire_size_comparison_md
+    from vllm_grpc_bench.runner import (
+        run_completions_grpc_direct,
+        run_completions_proxy_embeds,
+        run_completions_proxy_text,
+    )
+
+    all_completions: list[RequestResult] = []
+
+    # Text-prompt path: REST proxy
+    try:
+        text_samples = load_completions_corpus("text")
+        print(f"[COMPLETIONS] Loaded {len(text_samples)} text samples.")
+        for conc in concurrency_levels:
+            print(f"[COMPLETIONS]   REST text @ concurrency={conc} ...")
+            all_completions.extend(
+                asyncio.run(run_completions_proxy_text(proxy_url, text_samples, conc, 60.0))
+            )
+        # Text-prompt path: gRPC-direct
+        for conc in concurrency_levels:
+            print(f"[COMPLETIONS]   gRPC-direct text @ concurrency={conc} ...")
+            all_completions.extend(
+                asyncio.run(run_completions_grpc_direct(grpc_addr, text_samples, conc, 60.0))
+            )
+    except FileNotFoundError as exc:
+        print(f"[COMPLETIONS] Skipping text corpus: {exc}", file=sys.stderr)
+
+    # Embed-prompt path: REST proxy (skipped if manifest not present)
+    try:
+        embed_samples = load_completions_corpus("embeds")
+        print(f"[COMPLETIONS] Loaded {len(embed_samples)} embed samples.")
+        for conc in concurrency_levels:
+            print(f"[COMPLETIONS]   REST embeds @ concurrency={conc} ...")
+            all_completions.extend(
+                asyncio.run(run_completions_proxy_embeds(proxy_url, embed_samples, conc, 60.0))
+            )
+    except FileNotFoundError as exc:
+        print(
+            f"[COMPLETIONS] Skipping embed corpus (run gen_embed_corpus.py first): {exc}",
+            file=sys.stderr,
+        )
+    except ImportError as exc:
+        print(f"[COMPLETIONS] Skipping embed corpus (torch not available): {exc}", file=sys.stderr)
+
+    if all_completions:
+        completions_summaries = compute_summaries(all_completions)
+        phase6_comparison_path = _DOCS_BENCHMARKS / "phase-6-completions-comparison.md"
+        write_wire_size_comparison_md(completions_summaries, phase6_comparison_path)
+        print(f"[COMPLETIONS] Wire-size report written to {phase6_comparison_path}")
+    else:
+        print("[COMPLETIONS] No completions results collected — skipping wire-size report.")
+        phase6_comparison_path = None
+
     print("Results written:")
-    for p in [
+    output_paths = [
         rest_results_path,
         grpc_results_path,
         _GRPC_DIRECT_RESULTS,
@@ -661,5 +718,8 @@ def main() -> None:
         phase5_proxy_json,
         phase5_direct_json,
         phase5_comparison_path,
-    ]:
+    ]
+    if phase6_comparison_path is not None:
+        output_paths.append(phase6_comparison_path)
+    for p in output_paths:
         print(f"  {p}")

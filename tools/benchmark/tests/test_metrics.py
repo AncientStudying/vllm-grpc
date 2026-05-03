@@ -162,6 +162,50 @@ class TestComputeSummariesStreaming:
         assert s.n_errors == 2
 
 
+class TestRequestType:
+    def test_request_result_default_is_chat(self) -> None:
+        r = _make_result()
+        assert r.request_type == "chat"
+
+    def test_request_result_completion_text(self) -> None:
+        r2 = RequestResult(
+            sample_id="s1",
+            target="proxy",
+            concurrency=1,
+            latency_ms=100.0,
+            request_bytes=50,
+            response_bytes=200,
+            proxy_ms=None,
+            success=True,
+            request_type="completion-text",
+        )
+        assert r2.request_type == "completion-text"
+
+    def test_run_summary_request_type_propagated(self) -> None:
+        results = [
+            RequestResult(
+                sample_id=f"s{i}",
+                target="proxy",
+                concurrency=1,
+                latency_ms=100.0,
+                request_bytes=50,
+                response_bytes=200,
+                proxy_ms=None,
+                success=True,
+                request_type="completion-embeds",
+            )
+            for i in range(3)
+        ]
+        summaries = compute_summaries(results)
+        assert len(summaries) == 1
+        assert summaries[0].request_type == "completion-embeds"
+
+    def test_run_summary_default_is_chat(self) -> None:
+        results = [_make_result()]
+        summaries = compute_summaries(results)
+        assert summaries[0].request_type == "chat"
+
+
 class TestBuildRunMeta:
     def test_populates_all_fields(self) -> None:
         cfg = BenchmarkConfig(

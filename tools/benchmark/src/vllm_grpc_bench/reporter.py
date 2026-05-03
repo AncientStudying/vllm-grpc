@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import dataclasses
 import json
+from collections import defaultdict
 from pathlib import Path
 
 from vllm_grpc_bench.metrics import (
@@ -265,6 +266,79 @@ def write_cross_run_md(report: CrossRunReport, output_path: Path) -> Path:
 
         lines.append("")
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines))
+    return output_path
+
+
+def write_wire_size_comparison_md(
+    summaries: list[RunSummary],
+    output_path: Path,
+) -> Path:
+    """Render wire-size comparison table for completions benchmark."""
+    # Filter to completion request types
+    completion_summaries = [
+        s for s in summaries if s.request_type in ("completion-text", "completion-embeds")
+    ]
+
+    lines: list[str] = [
+        "# Wire-Size Comparison: REST vs gRPC-Direct",
+        "",
+        "## Methodology",
+        "",
+        "- REST path: JSON body with base64-encoded `torch.save()` bytes (~33% overhead)",
+        "- gRPC-direct path: raw `bytes` field, no base64 encoding",
+        "- All paths use identical tensor content; overhead is encoding only",
+        "",
+        "## Wire-Size by Path and Input Type",
+        "",
+        "| path | input_type | req_bytes_mean | resp_bytes_mean | base64_overhead_pct |",
+        "|------|------------|---------------|-----------------|---------------------|",
+    ]
+
+    # Group by (target, request_type)
+    groups: dict[tuple[str, str], list[RunSummary]] = defaultdict(list)
+    for s in completion_summaries:
+        groups[(s.target, s.request_type)].append(s)
+
+    # Compute mean request bytes per group (averaged across concurrency levels)
+    group_req_bytes: dict[tuple[str, str], float] = {}
+    for key, group in groups.items():
+        req_bytes_vals = [s.request_bytes_mean for s in group if s.request_bytes_mean is not None]
+        group_req_bytes[key] = sum(req_bytes_vals) / len(req_bytes_vals) if req_bytes_vals else 0.0
+
+    group_resp_bytes: dict[tuple[str, str], float | None] = {}
+    for key, group in groups.items():
+        resp_vals = [s.response_bytes_mean for s in group if s.response_bytes_mean is not None]
+        group_resp_bytes[key] = sum(resp_vals) / len(resp_vals) if resp_vals else None
+
+    # Find REST (proxy) and gRPC-direct bytes for each input_type to compute overhead
+    for input_type in ("completion-text", "completion-embeds"):
+        for target in ("proxy", "grpc-direct"):
+            key = (target, input_type)
+            if key not in group_req_bytes:
+                continue
+            req_bytes = group_req_bytes[key]
+            resp_bytes = group_resp_bytes.get(key)
+
+            # Compute base64 overhead vs grpc-direct for same input type
+            grpc_key = ("grpc-direct", input_type)
+            rest_key = ("proxy", input_type)
+            if target == "proxy" and grpc_key in group_req_bytes and group_req_bytes[grpc_key] > 0:
+                overhead_pct = (req_bytes / group_req_bytes[grpc_key] - 1) * 100
+                overhead_str = f"{overhead_pct:.1f}%"
+            elif target == "grpc-direct" and rest_key in group_req_bytes and req_bytes > 0:
+                overhead_pct = (group_req_bytes[rest_key] / req_bytes - 1) * 100
+                overhead_str = f"baseline (REST is +{overhead_pct:.1f}%)"
+            else:
+                overhead_str = "N/A"
+
+            resp_str = f"{resp_bytes:.0f}" if resp_bytes is not None else "N/A"
+            lines.append(
+                f"| {target} | {input_type} | {req_bytes:.0f} | {resp_str} | {overhead_str} |"
+            )
+
+    lines.append("")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines))
     return output_path

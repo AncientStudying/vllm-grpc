@@ -5,6 +5,7 @@ from types import TracebackType
 import grpc.aio
 
 from vllm_grpc_client.chat import ChatClient
+from vllm_grpc_client.completions import CompletionsClient
 
 
 class VllmGrpcClient:
@@ -32,3 +33,9 @@ class VllmGrpcClient:
         if self._channel is None:
             raise RuntimeError("VllmGrpcClient must be used as an async context manager")
         return ChatClient(self._channel)
+
+    @property
+    def completions(self) -> CompletionsClient:
+        if self._channel is None:
+            raise RuntimeError("VllmGrpcClient must be used as an async context manager")
+        return CompletionsClient(self._channel)

@@ -89,3 +89,68 @@ def test_write_summary_md_contains_proxy_and_native(tmp_path: Path) -> None:
     assert "proxy" in content.lower()
     assert "native" in content.lower()
     assert "Δ" in content or "delta" in content.lower() or "|" in content
+
+
+def test_write_wire_size_comparison_md(tmp_path: Path) -> None:
+    from vllm_grpc_bench.metrics import RunSummary
+    from vllm_grpc_bench.reporter import write_wire_size_comparison_md
+
+    summaries = [
+        RunSummary(
+            target="proxy",
+            concurrency=1,
+            n_requests=5,
+            n_errors=0,
+            latency_p50_ms=50.0,
+            latency_p95_ms=80.0,
+            latency_p99_ms=100.0,
+            throughput_rps=10.0,
+            request_bytes_mean=50000.0,
+            response_bytes_mean=200.0,
+            proxy_ms_p50=None,
+            proxy_ms_p95=None,
+            proxy_ms_p99=None,
+            request_type="completion-text",
+        ),
+        RunSummary(
+            target="grpc-direct",
+            concurrency=1,
+            n_requests=5,
+            n_errors=0,
+            latency_p50_ms=30.0,
+            latency_p95_ms=50.0,
+            latency_p99_ms=70.0,
+            throughput_rps=15.0,
+            request_bytes_mean=37500.0,
+            response_bytes_mean=150.0,
+            proxy_ms_p50=None,
+            proxy_ms_p95=None,
+            proxy_ms_p99=None,
+            request_type="completion-text",
+        ),
+        RunSummary(
+            target="proxy",
+            concurrency=1,
+            n_requests=5,
+            n_errors=0,
+            latency_p50_ms=50.0,
+            latency_p95_ms=80.0,
+            latency_p99_ms=100.0,
+            throughput_rps=10.0,
+            request_bytes_mean=50000.0,
+            response_bytes_mean=200.0,
+            proxy_ms_p50=None,
+            proxy_ms_p95=None,
+            proxy_ms_p99=None,
+            request_type="completion-embeds",
+        ),
+    ]
+
+    out = tmp_path / "wire-size.md"
+    write_wire_size_comparison_md(summaries, out)
+    assert out.exists()
+    content = out.read_text()
+    assert "| path |" in content
+    assert "base64_overhead_pct" in content
+    assert "completion-text" in content
+    assert "proxy" in content

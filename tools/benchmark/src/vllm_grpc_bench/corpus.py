@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 
 @dataclass
@@ -13,6 +14,94 @@ class RequestSample:
     max_tokens: int
     temperature: float
     seed: int
+
+
+@dataclass
+class CompletionTextSample:
+    id: int | str
+    prompt: str
+    model: str
+    max_tokens: int
+    seed: int
+    bucket: str = "short"
+
+
+@dataclass
+class CompletionEmbedSample:
+    id: int
+    tensor_bytes: bytes
+    max_tokens: int
+    seed: int
+    seq_len: int
+    bucket: str
+
+
+def load_completions_corpus(
+    corpus_type: Literal["text", "embeds"],
+    corpus_dir: Path | None = None,
+) -> list[CompletionTextSample] | list[CompletionEmbedSample]:
+    if corpus_dir is None:
+        corpus_dir = Path(__file__).parent.parent.parent / "corpus"
+
+    if corpus_type == "text":
+        path = corpus_dir / "completions_text.json"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Completions text corpus not found: {path}. "
+                "Create tools/benchmark/corpus/completions_text.json first."
+            )
+        raw = json.loads(path.read_text())
+        return [
+            CompletionTextSample(
+                id=item["id"],
+                prompt=item["prompt"],
+                model=item["model"],
+                max_tokens=item["max_tokens"],
+                seed=item["seed"],
+                bucket=item.get("bucket", "short"),
+            )
+            for item in raw
+        ]
+
+    # corpus_type == "embeds"
+    manifest_path = corpus_dir / "completions_embeds" / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(
+            f"Completions embeds manifest not found: {manifest_path}. "
+            "Run scripts/python/gen_embed_corpus.py first."
+        )
+    try:
+        import io
+
+        import torch
+    except ImportError as exc:
+        raise ImportError(
+            "torch is required to load embedding corpus. Install it with: uv sync --all-packages"
+        ) from exc
+
+    manifest = json.loads(manifest_path.read_text())
+    samples: list[CompletionEmbedSample] = []
+    for entry in manifest:
+        pt_path = corpus_dir.parent / entry["embed_file"]
+        if not pt_path.exists():
+            raise FileNotFoundError(
+                f"Embedding file not found: {pt_path}. "
+                "Run scripts/python/gen_embed_corpus.py first."
+            )
+        tensor: object = torch.load(str(pt_path), weights_only=True)
+        buf = io.BytesIO()
+        torch.save(tensor, buf)
+        samples.append(
+            CompletionEmbedSample(
+                id=entry["id"],
+                tensor_bytes=buf.getvalue(),
+                max_tokens=entry["max_tokens"],
+                seed=entry["seed"],
+                seq_len=entry["seq_len"],
+                bucket=entry["bucket"],
+            )
+        )
+    return samples
 
 
 def load_corpus(path: Path) -> list[RequestSample]:

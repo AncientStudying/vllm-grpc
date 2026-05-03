@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -48,3 +49,40 @@ def test_load_corpus_ids_sequential() -> None:
     samples = load_corpus(_FIXTURE_PATH)
     ids = [s.id for s in samples]
     assert ids == [f"sample-{i:03d}" for i in range(1, 11)]
+
+
+class TestLoadCompletionsCorpus:
+    def test_text_loads_list(self, tmp_path: Path) -> None:
+        corpus_dir = tmp_path
+        (corpus_dir / "completions_text.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "id": 0,
+                        "prompt": "hello",
+                        "model": "m",
+                        "max_tokens": 10,
+                        "seed": 42,
+                        "bucket": "short",
+                    }
+                ]
+            )
+        )
+        from vllm_grpc_bench.corpus import CompletionTextSample, load_completions_corpus
+
+        result = load_completions_corpus("text", corpus_dir=corpus_dir)
+        assert len(result) == 1
+        assert isinstance(result[0], CompletionTextSample)
+        assert result[0].prompt == "hello"
+
+    def test_text_missing_file_raises(self, tmp_path: Path) -> None:
+        from vllm_grpc_bench.corpus import load_completions_corpus
+
+        with pytest.raises(FileNotFoundError, match="completions_text"):
+            load_completions_corpus("text", corpus_dir=tmp_path)
+
+    def test_embeds_missing_manifest_raises(self, tmp_path: Path) -> None:
+        from vllm_grpc_bench.corpus import load_completions_corpus
+
+        with pytest.raises(FileNotFoundError, match="manifest"):
+            load_completions_corpus("embeds", corpus_dir=tmp_path)

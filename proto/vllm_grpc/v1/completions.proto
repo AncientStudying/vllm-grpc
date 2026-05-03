@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package vllm_grpc.v1;
+
+service CompletionsService {
+  rpc Complete       (CompletionRequest) returns (CompletionResponse);
+  rpc CompleteStream (CompletionRequest) returns (stream CompletionStreamChunk);
+}
+
+message CompletionRequest {
+  string model      = 1;
+  int32  max_tokens = 2;
+  optional float temperature = 3;
+  optional float top_p       = 4;
+  optional int64 seed        = 5;
+  oneof input {
+    string prompt        = 6;
+    bytes  prompt_embeds = 7;
+  }
+}
+
+message CompletionResponse {
+  string generated_text    = 1;
+  string finish_reason     = 2;
+  int32  prompt_tokens     = 3;
+  int32  completion_tokens = 4;
+}
+
+// One message per output token in a streaming response.
+// finish_reason is "" on non-final chunks; "stop" or "length" on the final chunk.
+message CompletionStreamChunk {
+  string delta_text    = 1;
+  string finish_reason = 2;
+  int32  token_index   = 3;
+}
