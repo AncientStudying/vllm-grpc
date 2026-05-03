@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncIterator
 
 import grpc
-from fastapi import APIRouter
-from fastapi.responses import JSONResponse, Response
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from vllm_grpc_proxy.chat_translate import (
     OpenAIChatRequest,
+    format_sse_done,
+    format_sse_error,
+    format_sse_role_delta,
     openai_request_to_proto,
+    proto_chunk_to_sse_event,
     proto_response_to_openai_dict,
 )
 from vllm_grpc_proxy.grpc_client import GrpcChatClient
@@ -17,11 +22,31 @@ router = APIRouter()
 _chat_client = GrpcChatClient()
 
 
+async def _stream_sse(req: OpenAIChatRequest, http_request: Request) -> AsyncIterator[str]:
+    import uuid
+
+    completion_id = f"chatcmpl-{uuid.uuid4()}"
+    created = int(time.time())
+    proto_req = openai_request_to_proto(req)
+    yield format_sse_role_delta(completion_id, created, req.model)
+    try:
+        async for chunk in _chat_client.stream_complete(proto_req):
+            if await http_request.is_disconnected():
+                return
+            yield proto_chunk_to_sse_event(chunk, completion_id, created, req.model)
+        yield format_sse_done()
+    except grpc.aio.AioRpcError as exc:
+        yield format_sse_error(exc.details() or "Internal error")
+
+
 @router.post("/v1/chat/completions")
-async def chat_completions(req: OpenAIChatRequest) -> Response:
+async def chat_completions(req: OpenAIChatRequest, request: Request) -> Response:
     if req.stream:
-        err = {"message": "Streaming not yet implemented", "type": "not_implemented_error"}
-        return JSONResponse({"error": err}, status_code=501)
+        return StreamingResponse(
+            _stream_sse(req, request),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     t0 = time.perf_counter()
     proto_req = openai_request_to_proto(req)

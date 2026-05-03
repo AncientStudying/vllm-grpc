@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from typing import Any
@@ -36,6 +37,51 @@ def openai_request_to_proto(req: OpenAIChatRequest) -> chat_pb2.ChatCompleteRequ
     if req.seed is not None:
         kwargs["seed"] = req.seed
     return chat_pb2.ChatCompleteRequest(**kwargs)
+
+
+def _sse_chunk_payload(
+    completion_id: str, created: int, model: str, delta: dict[str, Any], finish_reason: Any
+) -> str:
+    payload = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+    }
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+def format_sse_role_delta(completion_id: str, created: int, model: str) -> str:
+    """First SSE event: role delta with empty content."""
+    return _sse_chunk_payload(
+        completion_id, created, model, {"role": "assistant", "content": ""}, None
+    )
+
+
+def proto_chunk_to_sse_event(
+    chunk: chat_pb2.ChatStreamChunk,
+    completion_id: str,
+    created: int,
+    model: str,
+) -> str:
+    """Format one ChatStreamChunk as an OpenAI-compatible SSE data line."""
+    if chunk.finish_reason:
+        delta: dict[str, Any] = {}
+        finish_reason: Any = chunk.finish_reason
+    else:
+        delta = {"content": chunk.delta_content}
+        finish_reason = None
+    return _sse_chunk_payload(completion_id, created, model, delta, finish_reason)
+
+
+def format_sse_done() -> str:
+    return "data: [DONE]\n\n"
+
+
+def format_sse_error(message: str) -> str:
+    payload = {"error": {"message": message, "type": "internal_error"}}
+    return f"data: {json.dumps(payload)}\n\n"
 
 
 def proto_response_to_openai_dict(

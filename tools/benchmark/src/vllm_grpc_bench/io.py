@@ -47,6 +47,12 @@ def load_run(path: Path) -> BenchmarkRun:
             proxy_ms_p50=_f(s, "proxy_ms_p50"),
             proxy_ms_p95=_f(s, "proxy_ms_p95"),
             proxy_ms_p99=_f(s, "proxy_ms_p99"),
+            ttft_p50_ms=_f(s, "ttft_p50_ms"),
+            ttft_p95_ms=_f(s, "ttft_p95_ms"),
+            ttft_p99_ms=_f(s, "ttft_p99_ms"),
+            tpot_p50_ms=_f(s, "tpot_p50_ms"),
+            tpot_p95_ms=_f(s, "tpot_p95_ms"),
+            tpot_p99_ms=_f(s, "tpot_p99_ms"),
         )
         for s in data["summaries"]
     ]
@@ -63,6 +69,9 @@ def load_run(path: Path) -> BenchmarkRun:
             proxy_ms=_f(r, "proxy_ms"),
             success=bool(r["success"]),
             error=str(r["error"]) if r.get("error") is not None else None,
+            ttft_ms=_f(r, "ttft_ms"),
+            tpot_ms=_f(r, "tpot_ms"),
+            token_count=int(r["token_count"]) if r.get("token_count") is not None else None,
         )
         for r in data.get("raw_results", [])
     ]

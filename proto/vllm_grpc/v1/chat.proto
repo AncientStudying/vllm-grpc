@@ -3,7 +3,8 @@ syntax = "proto3";
 package vllm_grpc.v1;
 
 service ChatService {
-  rpc Complete (ChatCompleteRequest) returns (ChatCompleteResponse);
+  rpc Complete       (ChatCompleteRequest) returns (ChatCompleteResponse);
+  rpc CompleteStream (ChatCompleteRequest) returns (stream ChatStreamChunk);
 }
 
 message ChatMessage {
@@ -25,4 +26,12 @@ message ChatCompleteResponse {
   string      finish_reason      = 2;
   int32       prompt_tokens      = 3;
   int32       completion_tokens  = 4;
+}
+
+// One message per output token in a streaming response.
+// finish_reason is "" on non-final chunks; "stop" or "length" on the final chunk.
+message ChatStreamChunk {
+  string delta_content = 1;
+  string finish_reason = 2;
+  int32  token_index   = 3;
 }

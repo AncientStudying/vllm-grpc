@@ -22,6 +22,9 @@ def _make_result(
     proxy_ms: float | None = None,
     success: bool = True,
     error: str | None = None,
+    ttft_ms: float | None = None,
+    tpot_ms: float | None = None,
+    token_count: int | None = None,
 ) -> RequestResult:
     return RequestResult(
         sample_id=sample_id,
@@ -33,6 +36,9 @@ def _make_result(
         proxy_ms=proxy_ms,
         success=success,
         error=error,
+        ttft_ms=ttft_ms,
+        tpot_ms=tpot_ms,
+        token_count=token_count,
     )
 
 
@@ -109,6 +115,51 @@ class TestComputeSummaries:
         results = [_make_result(request_bytes=100), _make_result(request_bytes=200)]
         summaries = compute_summaries(results)
         assert summaries[0].request_bytes_mean == pytest.approx(150.0)
+
+
+class TestComputeSummariesStreaming:
+    def test_ttft_none_when_not_provided(self) -> None:
+        results = [_make_result() for _ in range(3)]
+        summaries = compute_summaries(results)
+        s = summaries[0]
+        assert s.ttft_p50_ms is None
+        assert s.ttft_p95_ms is None
+        assert s.ttft_p99_ms is None
+        assert s.tpot_p50_ms is None
+        assert s.tpot_p95_ms is None
+        assert s.tpot_p99_ms is None
+
+    def test_ttft_computed_from_results(self) -> None:
+        results = [_make_result(ttft_ms=10.0 + i * 2) for i in range(5)]
+        summaries = compute_summaries(results)
+        s = summaries[0]
+        assert s.ttft_p50_ms is not None
+        assert s.ttft_p95_ms is not None
+        assert s.ttft_p99_ms is not None
+
+    def test_tpot_computed_from_results(self) -> None:
+        results = [_make_result(tpot_ms=5.0 + i * 1.0) for i in range(5)]
+        summaries = compute_summaries(results)
+        s = summaries[0]
+        assert s.tpot_p50_ms is not None
+        assert s.tpot_p95_ms is not None
+        assert s.tpot_p99_ms is not None
+
+    def test_ttft_values_are_monotone_p50_le_p99(self) -> None:
+        results = [_make_result(ttft_ms=float(i)) for i in range(1, 11)]
+        summaries = compute_summaries(results)
+        s = summaries[0]
+        assert s.ttft_p50_ms is not None
+        assert s.ttft_p99_ms is not None
+        assert s.ttft_p50_ms <= s.ttft_p99_ms
+
+    def test_failed_results_excluded_from_ttft(self) -> None:
+        good = [_make_result(success=True, ttft_ms=10.0) for _ in range(3)]
+        bad = [_make_result(success=False, ttft_ms=None, latency_ms=None) for _ in range(2)]
+        summaries = compute_summaries(good + bad)
+        s = summaries[0]
+        assert s.ttft_p50_ms is not None
+        assert s.n_errors == 2
 
 
 class TestBuildRunMeta:

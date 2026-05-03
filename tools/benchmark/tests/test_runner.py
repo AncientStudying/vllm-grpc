@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 from vllm_grpc_bench.corpus import RequestSample
-from vllm_grpc_bench.runner import run_target
+from vllm_grpc_bench.runner import run_target, run_target_streaming
 
 
 def _make_sample(n: int = 1) -> list[RequestSample]:
@@ -107,3 +107,69 @@ async def test_run_target_request_bytes_matches_body(
         }
     ).encode()
     assert results[0].request_bytes == len(expected_body)
+
+
+class TestRunTargetStreaming:
+    @pytest.mark.asyncio
+    async def test_returns_ttft_and_tpot(self, fake_streaming_server: httpx.MockTransport) -> None:
+        samples = _make_sample(1)
+        results = await run_target_streaming(
+            target="proxy",
+            url="http://fake",
+            samples=samples,
+            concurrency=1,
+            timeout=10.0,
+            transport=fake_streaming_server,
+        )
+        assert len(results) == 1
+        r = results[0]
+        assert r.success is True
+        assert r.ttft_ms is not None
+        assert r.ttft_ms >= 0
+        assert r.tpot_ms is not None
+        assert r.tpot_ms >= 0
+
+    @pytest.mark.asyncio
+    async def test_token_count_matches_streamed_tokens(
+        self, fake_streaming_server: httpx.MockTransport
+    ) -> None:
+        samples = _make_sample(1)
+        results = await run_target_streaming(
+            target="native",
+            url="http://fake",
+            samples=samples,
+            concurrency=1,
+            timeout=10.0,
+            transport=fake_streaming_server,
+        )
+        r = results[0]
+        # fake server emits 3 content tokens: "Hello", " world", "!"
+        assert r.token_count == 3
+
+    @pytest.mark.asyncio
+    async def test_latency_ms_positive(self, fake_streaming_server: httpx.MockTransport) -> None:
+        samples = _make_sample(2)
+        results = await run_target_streaming(
+            target="proxy",
+            url="http://fake",
+            samples=samples,
+            concurrency=1,
+            timeout=10.0,
+            transport=fake_streaming_server,
+        )
+        for r in results:
+            assert r.latency_ms is not None
+            assert r.latency_ms > 0
+
+    @pytest.mark.asyncio
+    async def test_target_label_preserved(self, fake_streaming_server: httpx.MockTransport) -> None:
+        samples = _make_sample(1)
+        results = await run_target_streaming(
+            target="native",
+            url="http://fake",
+            samples=samples,
+            concurrency=1,
+            timeout=10.0,
+            transport=fake_streaming_server,
+        )
+        assert results[0].target == "native"

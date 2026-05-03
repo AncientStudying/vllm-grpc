@@ -41,6 +41,9 @@ def write_csv(run: BenchmarkRun, output_dir: Path) -> Path:
         "response_bytes",
         "proxy_ms",
         "success",
+        "ttft_ms",
+        "tpot_ms",
+        "token_count",
     ]
     with out.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -56,6 +59,9 @@ def write_csv(run: BenchmarkRun, output_dir: Path) -> Path:
                     "response_bytes": r.response_bytes,
                     "proxy_ms": r.proxy_ms,
                     "success": r.success,
+                    "ttft_ms": r.ttft_ms,
+                    "tpot_ms": r.tpot_ms,
+                    "token_count": r.token_count,
                 }
             )
     return out
@@ -96,6 +102,12 @@ _SINGLE_TARGET_METRICS: list[tuple[str, str, int]] = [
     ("throughput_rps", "Throughput (rps)", 2),
     ("request_bytes_mean", "Request bytes (mean)", 0),
     ("response_bytes_mean", "Response bytes (mean)", 0),
+    ("ttft_p50_ms", "TTFT P50 (ms)", 2),
+    ("ttft_p95_ms", "TTFT P95 (ms)", 2),
+    ("ttft_p99_ms", "TTFT P99 (ms)", 2),
+    ("tpot_p50_ms", "TPOT P50 (ms)", 2),
+    ("tpot_p95_ms", "TPOT P95 (ms)", 2),
+    ("tpot_p99_ms", "TPOT P99 (ms)", 2),
 ]
 
 # Human-readable display names for targets that aren't proxy/native.
@@ -141,6 +153,12 @@ def write_summary_md(run: BenchmarkRun, output_dir: Path) -> Path:
                 ("throughput_rps", "Throughput (rps)", 2),
                 ("request_bytes_mean", "Request bytes (mean)", 0),
                 ("response_bytes_mean", "Response bytes (mean)", 0),
+                ("ttft_p50_ms", "TTFT P50 (ms)", 2),
+                ("ttft_p95_ms", "TTFT P95 (ms)", 2),
+                ("ttft_p99_ms", "TTFT P99 (ms)", 2),
+                ("tpot_p50_ms", "TPOT P50 (ms)", 2),
+                ("tpot_p95_ms", "TPOT P95 (ms)", 2),
+                ("tpot_p99_ms", "TPOT P99 (ms)", 2),
             ]:
                 pval: float | None = getattr(p, field) if p else None
                 nval: float | None = getattr(n, field) if n else None
@@ -191,6 +209,12 @@ _CROSS_METRIC_LABELS: dict[str, tuple[str, int]] = {
     "latency_p95_ms": ("Latency P95 (ms)", 2),
     "latency_p99_ms": ("Latency P99 (ms)", 2),
     "throughput_rps": ("Throughput (rps)", 2),
+    "ttft_p50_ms": ("TTFT P50 (ms)", 2),
+    "ttft_p95_ms": ("TTFT P95 (ms)", 2),
+    "ttft_p99_ms": ("TTFT P99 (ms)", 2),
+    "tpot_p50_ms": ("TPOT P50 (ms)", 2),
+    "tpot_p95_ms": ("TPOT P95 (ms)", 2),
+    "tpot_p99_ms": ("TPOT P99 (ms)", 2),
     "request_bytes_mean": ("Request bytes (mean)", 0),
     "response_bytes_mean": ("Response bytes (mean)", 0),
 }

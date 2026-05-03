@@ -33,6 +33,9 @@ class RequestResult:
     proxy_ms: float | None
     success: bool
     error: str | None = None
+    ttft_ms: float | None = None
+    tpot_ms: float | None = None
+    token_count: int | None = None
 
 
 @dataclass
@@ -50,6 +53,12 @@ class RunSummary:
     proxy_ms_p50: float | None
     proxy_ms_p95: float | None
     proxy_ms_p99: float | None
+    ttft_p50_ms: float | None = None
+    ttft_p95_ms: float | None = None
+    ttft_p99_ms: float | None = None
+    tpot_p50_ms: float | None = None
+    tpot_p95_ms: float | None = None
+    tpot_p99_ms: float | None = None
 
 
 @dataclass
@@ -161,6 +170,9 @@ def compute_summaries(results: list[RequestResult]) -> list[RunSummary]:
         total_latency = sum(latencies) if latencies else None
         throughput = (len(successful) / (total_latency / 1000)) if total_latency else None
 
+        ttft_times = [r.ttft_ms for r in successful if r.ttft_ms is not None]
+        tpot_times = [r.tpot_ms for r in successful if r.tpot_ms is not None]
+
         summaries.append(
             RunSummary(
                 target=target,
@@ -176,6 +188,12 @@ def compute_summaries(results: list[RequestResult]) -> list[RunSummary]:
                 proxy_ms_p50=_percentile(proxy_times, 50),
                 proxy_ms_p95=_percentile(proxy_times, 95),
                 proxy_ms_p99=_percentile(proxy_times, 99),
+                ttft_p50_ms=_percentile(ttft_times, 50),
+                ttft_p95_ms=_percentile(ttft_times, 95),
+                ttft_p99_ms=_percentile(ttft_times, 99),
+                tpot_p50_ms=_percentile(tpot_times, 50),
+                tpot_p95_ms=_percentile(tpot_times, 95),
+                tpot_p99_ms=_percentile(tpot_times, 99),
             )
         )
     return summaries

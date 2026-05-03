@@ -109,6 +109,32 @@ class TestRequestOutputToProto:
         assert resp.message.role == "assistant"
 
 
+class TestOutputToStreamChunk:
+    def test_delta_is_new_text_only(self) -> None:
+        from vllm_grpc_frontend.chat_translate import output_to_stream_chunk
+
+        output = _make_output(text="Hello world", finish_reason="stop")
+        chunk = output_to_stream_chunk(output, token_index=1, prev_text="Hello")
+        assert chunk.delta_content == " world"
+        assert chunk.token_index == 1
+        assert chunk.finish_reason == ""
+
+    def test_empty_prev_text_gives_full_text(self) -> None:
+        from vllm_grpc_frontend.chat_translate import output_to_stream_chunk
+
+        output = _make_output(text="Hi", finish_reason=None)
+        chunk = output_to_stream_chunk(output, token_index=0, prev_text="")
+        assert chunk.delta_content == "Hi"
+        assert chunk.token_index == 0
+
+    def test_finish_reason_is_always_empty(self) -> None:
+        from vllm_grpc_frontend.chat_translate import output_to_stream_chunk
+
+        output = _make_output(text="done", finish_reason="stop")
+        chunk = output_to_stream_chunk(output, token_index=5, prev_text="don")
+        assert chunk.finish_reason == ""
+
+
 class TestMessagesToPrompt:
     def test_apply_chat_template_called(self) -> None:
         tokenizer = MagicMock()

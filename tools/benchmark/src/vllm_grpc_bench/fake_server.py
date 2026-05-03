@@ -29,7 +29,26 @@ _CANNED_BODY = json.dumps(
     }
 ).encode()
 
+_STREAMING_TOKENS = ["Hello", " world", "!"]
+
 _DELAY_MS = float(os.environ.get("FAKE_DELAY_MS", "5"))
+
+
+def _sse_chunk(token: str, finish_reason: str | None = None) -> bytes:
+    payload = {
+        "id": "chatcmpl-fake",
+        "object": "chat.completion.chunk",
+        "created": 1700000000,
+        "model": "Qwen/Qwen3-0.6B",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {} if finish_reason else {"content": token},
+                "finish_reason": finish_reason,
+            }
+        ],
+    }
+    return f"data: {json.dumps(payload)}\n\n".encode()
 
 
 async def _handle(
@@ -38,6 +57,7 @@ async def _handle(
     include_proxy_header: bool,
 ) -> None:
     content_length = 0
+    is_streaming = False
     while True:
         line = await reader.readline()
         if line in (b"\r\n", b"\n", b""):
@@ -46,24 +66,52 @@ async def _handle(
         if lower.startswith(b"content-length:"):
             content_length = int(line.split(b":", 1)[1].strip())
 
+    body_bytes = b""
     if content_length:
-        await reader.readexactly(content_length)
+        body_bytes = await reader.readexactly(content_length)
+    try:
+        body_obj = json.loads(body_bytes)
+        is_streaming = bool(body_obj.get("stream", False))
+    except (json.JSONDecodeError, AttributeError):
+        pass
 
     await asyncio.sleep(_DELAY_MS / 1000)
 
-    extra_headers = "X-Bench-Proxy-Ms: 1.500\r\n" if include_proxy_header else ""
+    if is_streaming:
+        header = (
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: text/event-stream\r\n"
+            b"Cache-Control: no-cache\r\n"
+            b"Connection: close\r\n"
+            b"\r\n"
+        )
+        writer.write(header)
+        await writer.drain()
+        # role delta
+        writer.write(_sse_chunk("", None))
+        await writer.drain()
+        for token in _STREAMING_TOKENS:
+            await asyncio.sleep(0.001)
+            writer.write(_sse_chunk(token, None))
+            await writer.drain()
+        # finish
+        writer.write(_sse_chunk("", "stop"))
+        await writer.drain()
+        writer.write(b"data: [DONE]\n\n")
+        await writer.drain()
+    else:
+        extra_headers = "X-Bench-Proxy-Ms: 1.500\r\n" if include_proxy_header else ""
+        response = (
+            f"HTTP/1.1 200 OK\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(_CANNED_BODY)}\r\n"
+            f"Connection: close\r\n"
+            f"{extra_headers}"
+            f"\r\n"
+        ).encode() + _CANNED_BODY
+        writer.write(response)
+        await writer.drain()
 
-    response = (
-        f"HTTP/1.1 200 OK\r\n"
-        f"Content-Type: application/json\r\n"
-        f"Content-Length: {len(_CANNED_BODY)}\r\n"
-        f"Connection: close\r\n"
-        f"{extra_headers}"
-        f"\r\n"
-    ).encode() + _CANNED_BODY
-
-    writer.write(response)
-    await writer.drain()
     writer.close()
 
 

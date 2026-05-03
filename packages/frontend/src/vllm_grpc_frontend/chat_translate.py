@@ -29,6 +29,18 @@ def messages_to_prompt(
     return result
 
 
+def output_to_stream_chunk(
+    output: Any, token_index: int, prev_text: str
+) -> chat_pb2.ChatStreamChunk:
+    completion = output.outputs[0]
+    delta = completion.text[len(prev_text) :]
+    return chat_pb2.ChatStreamChunk(
+        delta_content=delta,
+        finish_reason="",
+        token_index=token_index,
+    )
+
+
 def request_output_to_proto(output: Any) -> Any:
     completion = output.outputs[0]
     return chat_pb2.ChatCompleteResponse(

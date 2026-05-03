@@ -21,6 +21,15 @@ class FakeChatServicer(chat_pb2_grpc.ChatServiceServicer):  # type: ignore[misc]
             completion_tokens=3,
         )
 
+    async def CompleteStream(
+        self,
+        request: chat_pb2.ChatCompleteRequest,
+        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
+    ) -> AsyncIterator[chat_pb2.ChatStreamChunk]:
+        yield chat_pb2.ChatStreamChunk(delta_content="Hello", finish_reason="", token_index=0)
+        yield chat_pb2.ChatStreamChunk(delta_content=" world", finish_reason="", token_index=1)
+        yield chat_pb2.ChatStreamChunk(delta_content="", finish_reason="stop", token_index=2)
+
 
 @asynccontextmanager
 async def fake_frontend_server(port: int) -> AsyncIterator[None]:
