@@ -646,6 +646,7 @@ async def run_completions_grpc_direct_embeds(
             t0 = time.perf_counter()
             try:
                 result = await grpc_client.completions.complete(
+                    model="",
                     prompt_embeds=tensor,
                     max_tokens=sample.max_tokens,
                     seed=sample.seed,
