@@ -67,8 +67,8 @@
 - [ ] T014 [US2] Verify `docs/benchmarks/phase-6-completions-{native,proxy,grpc-direct}.json` all exist and each contains a non-empty `summaries` array covering both `completion-text` and `completion-embeds` request types — `docs/benchmarks/`
 - [ ] T015 [US2] Verify `docs/benchmarks/phase-6-completions-comparison.md` contains `## Concurrency = 1`, `### Text Prompt Completions`, `### Prompt-Embed Completions`, and `Δ vs native` column headers — confirms the new reporter format is live — `docs/benchmarks/`
 - [ ] T016 [US2] Run `make regen-bench-reports` (or `uv run python scripts/python/regen_bench_reports.py`) and confirm it regenerates `phase-3-modal-*.md`, `phase-4.2-*.md`, `phase-5-streaming-comparison.md`, and `phase-6-completions-comparison.md` without errors; confirm Phase 5 and Phase 6 output matches Phase 4.2 layout — `scripts/python/regen_bench_reports.py`
-- [ ] T017 [US2] Create `docs/benchmarks/summary.md` — three sections: (1) Non-Streaming Chat (Phase 4.2 A10G numbers: P50 latency and response bytes for REST / gRPC-proxy / gRPC-direct at c=1 and c=8); (2) Streaming Chat (Phase 5 A10G numbers: TTFT P50 and request bytes at c=1); (3) Completions (Phase 6 A10G numbers: request bytes for text and embed paths across all three targets); one honest interpretation paragraph per section; all numbers traced to their source JSON file — `docs/benchmarks/summary.md`
-- [ ] T018 [P] [US2] Commit `docs/benchmarks/phase-6-completions-{native,proxy,grpc-direct}.json` and `docs/benchmarks/phase-6-completions-comparison.md` — `docs/benchmarks/`
+- [ ] T017 [US2] Create `docs/benchmarks/summary.md` — three sections: (1) Non-Streaming Chat (Phase 4.2 A10G numbers: P50/P95/P99 latency, request bytes, and response bytes for REST / gRPC-proxy / gRPC-direct at c=1 and c=8); (2) Streaming Chat (Phase 5 A10G numbers: TTFT P50/P95/P99 and TPOT P50/P95/P99 and request bytes at c=1 and c=8); (3) Completions (Phase 6 A10G numbers: request bytes and response bytes for text and embed paths across all three targets); each section includes a methodology block (corpus path, concurrency levels, GPU type A10G, vLLM version 0.20.0, model Qwen/Qwen3-0.6B); one honest interpretation paragraph per section; every number cited traces to its source JSON file by name — `docs/benchmarks/summary.md`
+- [ ] T018 [US2] Commit `docs/benchmarks/phase-6-completions-{native,proxy,grpc-direct}.json` and `docs/benchmarks/phase-6-completions-comparison.md` (run after T014 confirms JSON is valid) — `docs/benchmarks/`
 
 **Checkpoint**: User Story 2 verified — Phase 6 JSON committed, comparison document reformatted, regen covers all phases, summary.md complete.
 
@@ -120,6 +120,7 @@
 - T014, T015 can run in parallel after T013
 - T016 can run after T014 (needs JSON files to exist)
 - T017 depends on T015 (confirms Phase 6 numbers in new format) and T016 (confirms regen works)
+- T018 depends on T014 (JSON must be verified before committing)
 
 ### Parallel Opportunities
 
