@@ -347,6 +347,72 @@ async def run_grpc_target_streaming(
         return list(await asyncio.gather(*[bounded_grpc_stream(s) for s in samples]))
 
 
+async def run_completions_native_text(
+    url: str,
+    samples: list[Any],  # list[CompletionTextSample]
+    concurrency: int,
+    timeout: float,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> list[RequestResult]:
+    """Measure wire size for text-prompt completions via native vLLM REST endpoint."""
+    kwargs: dict[str, object] = {"base_url": url, "timeout": timeout}
+    if transport is not None:
+        kwargs["transport"] = transport
+
+    async with httpx.AsyncClient(**kwargs) as client:  # type: ignore[arg-type]
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _send_one_native(sample: Any) -> RequestResult:
+            body = {
+                "model": sample.model,
+                "prompt": sample.prompt,
+                "max_tokens": sample.max_tokens,
+                "seed": sample.seed,
+            }
+            body_bytes = json.dumps(body).encode()
+            t0 = time.perf_counter()
+            try:
+                response = await client.post(
+                    "/v1/completions",
+                    content=body_bytes,
+                    headers={"Content-Type": "application/json"},
+                )
+                t1 = time.perf_counter()
+                success = 200 <= response.status_code < 300
+                return RequestResult(
+                    sample_id=str(sample.id),
+                    target="native",
+                    concurrency=concurrency,
+                    latency_ms=(t1 - t0) * 1000,
+                    request_bytes=len(body_bytes),
+                    response_bytes=len(response.content),
+                    proxy_ms=None,
+                    success=success,
+                    error=None if success else f"HTTP {response.status_code}",
+                    request_type="completion-text",
+                )
+            except Exception as exc:
+                t1 = time.perf_counter()
+                return RequestResult(
+                    sample_id=str(sample.id),
+                    target="native",
+                    concurrency=concurrency,
+                    latency_ms=(t1 - t0) * 1000,
+                    request_bytes=len(body_bytes),
+                    response_bytes=None,
+                    proxy_ms=None,
+                    success=False,
+                    error=str(exc),
+                    request_type="completion-text",
+                )
+
+        async def bounded_native(sample: Any) -> RequestResult:
+            async with sem:
+                return await _send_one_native(sample)
+
+        return list(await asyncio.gather(*[bounded_native(s) for s in samples]))
+
+
 async def run_completions_proxy_text(
     url: str,
     samples: list[Any],  # list[CompletionTextSample]
@@ -551,3 +617,76 @@ async def run_completions_grpc_direct(
                 return await _send_one_grpc_completion(sample)
 
         return list(await asyncio.gather(*[bounded_grpc_completion(s) for s in samples]))
+
+
+async def run_completions_grpc_direct_embeds(
+    addr: str,
+    samples: list[Any],  # list[CompletionEmbedSample] — raw bytes, no base64
+    concurrency: int,
+    timeout: float,
+) -> list[RequestResult]:
+    """Measure wire size for embedding-prompt completions via gRPC direct path."""
+    import io
+
+    import torch
+    from vllm_grpc.v1 import completions_pb2
+    from vllm_grpc_client import VllmGrpcClient
+
+    async with VllmGrpcClient(addr, timeout=timeout) as grpc_client:
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _send_one_grpc_embeds(sample: Any) -> RequestResult:
+            tensor = torch.load(io.BytesIO(sample.tensor_bytes), weights_only=True)
+            proto_req = completions_pb2.CompletionRequest(
+                max_tokens=sample.max_tokens,
+                seed=sample.seed,
+                prompt_embeds=sample.tensor_bytes,
+            )
+            request_bytes = len(proto_req.SerializeToString())
+            t0 = time.perf_counter()
+            try:
+                result = await grpc_client.completions.complete(
+                    prompt_embeds=tensor,
+                    max_tokens=sample.max_tokens,
+                    seed=sample.seed,
+                    timeout=timeout,
+                )
+                t1 = time.perf_counter()
+                response_proto = completions_pb2.CompletionResponse(
+                    generated_text=result.generated_text,
+                    finish_reason=result.finish_reason,
+                    prompt_tokens=result.prompt_tokens,
+                    completion_tokens=result.completion_tokens,
+                )
+                return RequestResult(
+                    sample_id=str(sample.id),
+                    target="grpc-direct",
+                    concurrency=concurrency,
+                    latency_ms=(t1 - t0) * 1000,
+                    request_bytes=request_bytes,
+                    response_bytes=len(response_proto.SerializeToString()),
+                    proxy_ms=None,
+                    success=True,
+                    error=None,
+                    request_type="completion-embeds",
+                )
+            except Exception as exc:
+                t1 = time.perf_counter()
+                return RequestResult(
+                    sample_id=str(sample.id),
+                    target="grpc-direct",
+                    concurrency=concurrency,
+                    latency_ms=(t1 - t0) * 1000,
+                    request_bytes=request_bytes,
+                    response_bytes=None,
+                    proxy_ms=None,
+                    success=False,
+                    error=str(exc),
+                    request_type="completion-embeds",
+                )
+
+        async def bounded_grpc_embeds(sample: Any) -> RequestResult:
+            async with sem:
+                return await _send_one_grpc_embeds(sample)
+
+        return list(await asyncio.gather(*[bounded_grpc_embeds(s) for s in samples]))

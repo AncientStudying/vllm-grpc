@@ -1,7 +1,7 @@
 {
   "meta": {
-    "timestamp": "2026-05-03T00:35:23.330227+00:00",
-    "git_sha": "14eccd46c01c4583f3b865fd1459c769cc2c3a6a",
+    "timestamp": "2026-05-03T16:11:37.977528+00:00",
+    "git_sha": "5deae6c26db531cdd00efbd1c3c294e58f3be125",
     "hostname": "Mac",
     "corpus_path": "tools/benchmark/corpus/chat_nonstreaming.json",
     "concurrency_levels": [
@@ -9,11 +9,11 @@
       4,
       8
     ],
-    "proxy_url": "http://r444.modal.host:37335",
-    "native_url": "http://r444.modal.host:37335",
+    "proxy_url": "http://r441.modal.host:37793",
+    "native_url": "http://r441.modal.host:37793",
     "modal_function_id": null,
     "gpu_type": "A10G",
-    "cold_start_s": 150.19334517800002
+    "cold_start_s": 160.988393379
   },
   "summaries": [
     {
@@ -21,10 +21,10 @@
       "concurrency": 1,
       "n_requests": 10,
       "n_errors": 0,
-      "latency_p50_ms": 112.97272900264943,
-      "latency_p95_ms": 167.10818545034263,
-      "latency_p99_ms": 197.26537069203914,
-      "throughput_rps": 8.143362821026686,
+      "latency_p50_ms": 316.7299374999857,
+      "latency_p95_ms": 630.0097062490745,
+      "latency_p99_ms": 772.7480412491059,
+      "throughput_rps": 2.565094730247841,
       "request_bytes_mean": 506.4,
       "response_bytes_mean": 611.4,
       "proxy_ms_p50": null,
@@ -35,17 +35,18 @@
       "ttft_p99_ms": null,
       "tpot_p50_ms": null,
       "tpot_p95_ms": null,
-      "tpot_p99_ms": null
+      "tpot_p99_ms": null,
+      "request_type": "chat"
     },
     {
       "target": "native",
       "concurrency": 4,
       "n_requests": 10,
       "n_errors": 0,
-      "latency_p50_ms": 123.27133350117947,
-      "latency_p95_ms": 226.74759999863454,
-      "latency_p99_ms": 227.0426199976646,
-      "throughput_rps": 6.275641545711546,
+      "latency_p50_ms": 411.4812919997348,
+      "latency_p95_ms": 818.1198458001745,
+      "latency_p99_ms": 826.0423355596868,
+      "throughput_rps": 1.8162590461098969,
       "request_bytes_mean": 506.4,
       "response_bytes_mean": 611.4,
       "proxy_ms_p50": null,
@@ -56,17 +57,18 @@
       "ttft_p99_ms": null,
       "tpot_p50_ms": null,
       "tpot_p95_ms": null,
-      "tpot_p99_ms": null
+      "tpot_p99_ms": null,
+      "request_type": "chat"
     },
     {
       "target": "native",
       "concurrency": 8,
       "n_requests": 10,
       "n_errors": 0,
-      "latency_p50_ms": 228.86529200332006,
-      "latency_p95_ms": 231.1138831475546,
-      "latency_p99_ms": 231.75534302812594,
-      "throughput_rps": 4.797683481859807,
+      "latency_p50_ms": 805.0714579994747,
+      "latency_p95_ms": 815.1307356004509,
+      "latency_p99_ms": 816.504780720843,
+      "throughput_rps": 1.4118098753610318,
       "request_bytes_mean": 506.4,
       "response_bytes_mean": 611.4,
       "proxy_ms_p50": null,
@@ -77,17 +79,18 @@
       "ttft_p99_ms": null,
       "tpot_p50_ms": null,
       "tpot_p95_ms": null,
-      "tpot_p99_ms": null
+      "tpot_p99_ms": null,
+      "request_type": "chat"
     },
     {
       "target": "proxy",
       "concurrency": 1,
       "n_requests": 10,
       "n_errors": 0,
-      "latency_p50_ms": 120.82631250086706,
-      "latency_p95_ms": 924.2678540496842,
-      "latency_p99_ms": 1339.4797044113513,
-      "throughput_rps": 3.649091893141292,
+      "latency_p50_ms": 352.51193749991216,
+      "latency_p95_ms": 1199.2728268997764,
+      "latency_p99_ms": 1716.164231779858,
+      "throughput_rps": 1.99765397155741,
       "request_bytes_mean": 506.4,
       "response_bytes_mean": 611.4,
       "proxy_ms_p50": null,
@@ -98,38 +101,18 @@
       "ttft_p99_ms": null,
       "tpot_p50_ms": null,
       "tpot_p95_ms": null,
-      "tpot_p99_ms": null
+      "tpot_p99_ms": null,
+      "request_type": "chat"
     },
     {
       "target": "proxy",
       "concurrency": 4,
       "n_requests": 10,
       "n_errors": 0,
-      "latency_p50_ms": 123.296271001891,
-      "latency_p95_ms": 235.0325871982932,
-      "latency_p99_ms": 235.25581744084775,
-      "throughput_rps": 6.070525081501693,
-      "request_bytes_mean": 506.4,
-      "response_bytes_mean": 611.0,
-      "proxy_ms_p50": null,
-      "proxy_ms_p95": null,
-      "proxy_ms_p99": null,
-      "ttft_p50_ms": null,
-      "ttft_p95_ms": null,
-      "ttft_p99_ms": null,
-      "tpot_p50_ms": null,
-      "tpot_p95_ms": null,
-      "tpot_p99_ms": null
-    },
-    {
-      "target": "proxy",
-      "concurrency": 8,
-      "n_requests": 10,
-      "n_errors": 0,
-      "latency_p50_ms": 222.2217290000117,
-      "latency_p95_ms": 229.32704824852408,
-      "latency_p99_ms": 229.78024324707803,
-      "throughput_rps": 4.9087589534813,
+      "latency_p50_ms": 407.87735450066975,
+      "latency_p95_ms": 999.4024482507484,
+      "latency_p99_ms": 999.6290232505089,
+      "throughput_rps": 1.6008923053516866,
       "request_bytes_mean": 506.4,
       "response_bytes_mean": 611.4,
       "proxy_ms_p50": null,
@@ -140,7 +123,30 @@
       "ttft_p99_ms": null,
       "tpot_p50_ms": null,
       "tpot_p95_ms": null,
-      "tpot_p99_ms": null
+      "tpot_p99_ms": null,
+      "request_type": "chat"
+    },
+    {
+      "target": "proxy",
+      "concurrency": 8,
+      "n_requests": 10,
+      "n_errors": 0,
+      "latency_p50_ms": 776.8423125007757,
+      "latency_p95_ms": 819.8207873499996,
+      "latency_p99_ms": 827.6201574699007,
+      "throughput_rps": 1.4330907484206143,
+      "request_bytes_mean": 506.4,
+      "response_bytes_mean": 611.4,
+      "proxy_ms_p50": null,
+      "proxy_ms_p95": null,
+      "proxy_ms_p99": null,
+      "ttft_p50_ms": null,
+      "ttft_p95_ms": null,
+      "ttft_p99_ms": null,
+      "tpot_p50_ms": null,
+      "tpot_p95_ms": null,
+      "tpot_p99_ms": null,
+      "request_type": "chat"
     }
   ],
   "raw_results": [
@@ -148,7 +154,7 @@
       "sample_id": "sample-001",
       "target": "proxy",
       "concurrency": 1,
-      "latency_ms": 1443.2826670017675,
+      "latency_ms": 1845.3870829998777,
       "request_bytes": 135,
       "response_bytes": 612,
       "proxy_ms": null,
@@ -156,13 +162,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-002",
       "target": "proxy",
       "concurrency": 1,
-      "latency_ms": 118.80166600167286,
+      "latency_ms": 395.71425000031013,
       "request_bytes": 137,
       "response_bytes": 609,
       "proxy_ms": null,
@@ -170,13 +177,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-003",
       "target": "proxy",
       "concurrency": 1,
-      "latency_ms": 289.9164159971406,
+      "latency_ms": 305.88212499969814,
       "request_bytes": 156,
       "response_bytes": 613,
       "proxy_ms": null,
@@ -184,13 +192,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-004",
       "target": "proxy",
       "concurrency": 1,
-      "latency_ms": 116.71491599554429,
+      "latency_ms": 306.48841699985496,
       "request_bytes": 324,
       "response_bytes": 609,
       "proxy_ms": null,
@@ -198,13 +207,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-005",
       "target": "proxy",
       "concurrency": 1,
-      "latency_ms": 112.6594160014065,
+      "latency_ms": 308.62558400076523,
       "request_bytes": 360,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -212,13 +222,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-006",
       "target": "proxy",
       "concurrency": 1,
-      "latency_ms": 116.48691699519986,
+      "latency_ms": 409.4114579984307,
       "request_bytes": 369,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -226,13 +237,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-007",
       "target": "proxy",
       "concurrency": 1,
-      "latency_ms": 163.50612500536954,
+      "latency_ms": 409.5776249996561,
       "request_bytes": 523,
       "response_bytes": 613,
       "proxy_ms": null,
@@ -240,13 +252,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-008",
       "target": "proxy",
       "concurrency": 1,
-      "latency_ms": 120.13429200305836,
+      "latency_ms": 408.54687499995634,
       "request_bytes": 713,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -254,13 +267,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-009",
       "target": "proxy",
       "concurrency": 1,
-      "latency_ms": 137.38708299933933,
+      "latency_ms": 306.92891699982283,
       "request_bytes": 1059,
       "response_bytes": 608,
       "proxy_ms": null,
@@ -268,13 +282,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-010",
       "target": "proxy",
       "concurrency": 1,
-      "latency_ms": 121.51833299867576,
+      "latency_ms": 309.3096249995142,
       "request_bytes": 1288,
       "response_bytes": 608,
       "proxy_ms": null,
@@ -282,13 +297,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-001",
       "target": "native",
       "concurrency": 1,
-      "latency_ms": 204.80466700246325,
+      "latency_ms": 808.4326249991136,
       "request_bytes": 135,
       "response_bytes": 612,
       "proxy_ms": null,
@@ -296,13 +312,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-002",
       "target": "native",
       "concurrency": 1,
-      "latency_ms": 113.83558400120819,
+      "latency_ms": 312.94495800102595,
       "request_bytes": 137,
       "response_bytes": 609,
       "proxy_ms": null,
@@ -310,13 +327,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-003",
       "target": "native",
       "concurrency": 1,
-      "latency_ms": 121.03470799775096,
+      "latency_ms": 312.3998329992901,
       "request_bytes": 156,
       "response_bytes": 613,
       "proxy_ms": null,
@@ -324,13 +342,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-004",
       "target": "native",
       "concurrency": 1,
-      "latency_ms": 111.56304099858971,
+      "latency_ms": 397.6372920005815,
       "request_bytes": 324,
       "response_bytes": 609,
       "proxy_ms": null,
@@ -338,13 +357,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-005",
       "target": "native",
       "concurrency": 1,
-      "latency_ms": 111.3615829963237,
+      "latency_ms": 411.9372499990277,
       "request_bytes": 360,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -352,13 +372,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-006",
       "target": "native",
       "concurrency": 1,
-      "latency_ms": 110.658333003812,
+      "latency_ms": 315.70154200016987,
       "request_bytes": 369,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -366,13 +387,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-007",
       "target": "native",
       "concurrency": 1,
-      "latency_ms": 117.41383299522568,
+      "latency_ms": 312.9757500009873,
       "request_bytes": 523,
       "response_bytes": 613,
       "proxy_ms": null,
@@ -380,13 +402,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-008",
       "target": "native",
       "concurrency": 1,
-      "latency_ms": 113.4194580008625,
+      "latency_ms": 393.4859159999178,
       "request_bytes": 713,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -394,13 +417,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-009",
       "target": "native",
       "concurrency": 1,
-      "latency_ms": 112.52600000443636,
+      "latency_ms": 315.21799999973155,
       "request_bytes": 1059,
       "response_bytes": 608,
       "proxy_ms": null,
@@ -408,13 +432,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-010",
       "target": "native",
       "concurrency": 1,
-      "latency_ms": 111.37670899915975,
+      "latency_ms": 317.7583329998015,
       "request_bytes": 1288,
       "response_bytes": 608,
       "proxy_ms": null,
@@ -422,13 +447,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-001",
       "target": "proxy",
       "concurrency": 4,
-      "latency_ms": 234.69154099439038,
+      "latency_ms": 999.685667000449,
       "request_bytes": 135,
       "response_bytes": 612,
       "proxy_ms": null,
@@ -436,13 +462,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-002",
       "target": "proxy",
       "concurrency": 4,
-      "latency_ms": 233.05783399700886,
+      "latency_ms": 999.0562920011143,
       "request_bytes": 137,
       "response_bytes": 609,
       "proxy_ms": null,
@@ -450,13 +477,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-003",
       "target": "proxy",
       "concurrency": 4,
-      "latency_ms": 235.3116250014864,
+      "latency_ms": 995.6767910007329,
       "request_bytes": 156,
       "response_bytes": 613,
       "proxy_ms": null,
@@ -464,13 +492,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-004",
       "target": "proxy",
       "concurrency": 4,
-      "latency_ms": 222.53004200319992,
+      "latency_ms": 998.438915999941,
       "request_bytes": 324,
       "response_bytes": 609,
       "proxy_ms": null,
@@ -478,13 +507,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-005",
       "target": "proxy",
       "concurrency": 4,
-      "latency_ms": 117.01620899839327,
+      "latency_ms": 407.21991600003093,
       "request_bytes": 360,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -492,13 +522,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-006",
       "target": "proxy",
       "concurrency": 4,
-      "latency_ms": 122.41770800028462,
+      "latency_ms": 408.1294590014295,
       "request_bytes": 369,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -506,13 +537,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-007",
       "target": "proxy",
       "concurrency": 4,
-      "latency_ms": 123.6979590030387,
+      "latency_ms": 407.62524999991,
       "request_bytes": 523,
       "response_bytes": 613,
       "proxy_ms": null,
@@ -520,27 +552,29 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-008",
       "target": "proxy",
       "concurrency": 4,
-      "latency_ms": 122.8945830007433,
+      "latency_ms": 407.3292920002132,
       "request_bytes": 713,
-      "response_bytes": 610,
+      "response_bytes": 614,
       "proxy_ms": null,
       "success": true,
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-009",
       "target": "proxy",
       "concurrency": 4,
-      "latency_ms": 115.73087500437396,
+      "latency_ms": 311.3885000002483,
       "request_bytes": 1059,
       "response_bytes": 608,
       "proxy_ms": null,
@@ -548,13 +582,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-010",
       "target": "proxy",
       "concurrency": 4,
-      "latency_ms": 119.9555830025929,
+      "latency_ms": 311.9662920016708,
       "request_bytes": 1288,
       "response_bytes": 608,
       "proxy_ms": null,
@@ -562,13 +597,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-001",
       "target": "native",
       "concurrency": 4,
-      "latency_ms": 226.29687500011642,
+      "latency_ms": 828.0229579995648,
       "request_bytes": 135,
       "response_bytes": 612,
       "proxy_ms": null,
@@ -576,13 +612,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-002",
       "target": "native",
       "concurrency": 4,
-      "latency_ms": 208.2190000000992,
+      "latency_ms": 798.1604579999839,
       "request_bytes": 137,
       "response_bytes": 609,
       "proxy_ms": null,
@@ -590,13 +627,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-003",
       "target": "native",
       "concurrency": 4,
-      "latency_ms": 211.36308400309645,
+      "latency_ms": 806.0160420009197,
       "request_bytes": 156,
       "response_bytes": 613,
       "proxy_ms": null,
@@ -604,13 +642,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-004",
       "target": "native",
       "concurrency": 4,
-      "latency_ms": 227.1163749974221,
+      "latency_ms": 795.6725000003644,
       "request_bytes": 324,
       "response_bytes": 609,
       "proxy_ms": null,
@@ -618,13 +657,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-005",
       "target": "native",
       "concurrency": 4,
-      "latency_ms": 112.95004199928371,
+      "latency_ms": 412.4682500005292,
       "request_bytes": 360,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -632,13 +672,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-006",
       "target": "native",
       "concurrency": 4,
-      "latency_ms": 120.48266700003296,
+      "latency_ms": 410.4943339989404,
       "request_bytes": 369,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -646,13 +687,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-007",
       "target": "native",
       "concurrency": 4,
-      "latency_ms": 124.61216699739452,
+      "latency_ms": 404.4257919995289,
       "request_bytes": 523,
       "response_bytes": 613,
       "proxy_ms": null,
@@ -660,13 +702,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-008",
       "target": "native",
       "concurrency": 4,
-      "latency_ms": 121.93050000496441,
+      "latency_ms": 383.1324170005246,
       "request_bytes": 713,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -674,13 +717,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-009",
       "target": "native",
       "concurrency": 4,
-      "latency_ms": 120.3836249987944,
+      "latency_ms": 329.2208339989884,
       "request_bytes": 1059,
       "response_bytes": 608,
       "proxy_ms": null,
@@ -688,13 +732,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-010",
       "target": "native",
       "concurrency": 4,
-      "latency_ms": 120.10825000470504,
+      "latency_ms": 338.2089580009051,
       "request_bytes": 1288,
       "response_bytes": 608,
       "proxy_ms": null,
@@ -702,13 +747,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-001",
       "target": "proxy",
       "concurrency": 8,
-      "latency_ms": 220.56895900459494,
+      "latency_ms": 829.569999999876,
       "request_bytes": 135,
       "response_bytes": 612,
       "proxy_ms": null,
@@ -716,13 +762,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-002",
       "target": "proxy",
       "concurrency": 8,
-      "latency_ms": 222.23912499612197,
+      "latency_ms": 803.7883750002948,
       "request_bytes": 137,
       "response_bytes": 609,
       "proxy_ms": null,
@@ -730,13 +777,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-003",
       "target": "proxy",
       "concurrency": 8,
-      "latency_ms": 222.2043330039014,
+      "latency_ms": 777.7032499998313,
       "request_bytes": 156,
       "response_bytes": 613,
       "proxy_ms": null,
@@ -744,13 +792,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-004",
       "target": "proxy",
       "concurrency": 8,
-      "latency_ms": 227.85237499920186,
+      "latency_ms": 807.9050830001506,
       "request_bytes": 324,
       "response_bytes": 609,
       "proxy_ms": null,
@@ -758,13 +807,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-005",
       "target": "proxy",
       "concurrency": 8,
-      "latency_ms": 213.71633299713721,
+      "latency_ms": 774.5051249985409,
       "request_bytes": 360,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -772,13 +822,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-006",
       "target": "proxy",
       "concurrency": 8,
-      "latency_ms": 229.89354199671652,
+      "latency_ms": 775.9813750017202,
       "request_bytes": 369,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -786,13 +837,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-007",
       "target": "proxy",
       "concurrency": 8,
-      "latency_ms": 228.63466700073332,
+      "latency_ms": 806.2605840004835,
       "request_bytes": 523,
       "response_bytes": 613,
       "proxy_ms": null,
@@ -800,13 +852,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-008",
       "target": "proxy",
       "concurrency": 8,
-      "latency_ms": 225.63300000183517,
+      "latency_ms": 772.6370000000315,
       "request_bytes": 713,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -814,13 +867,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-009",
       "target": "proxy",
       "concurrency": 8,
-      "latency_ms": 118.64070799492765,
+      "latency_ms": 314.52600000011444,
       "request_bytes": 1059,
       "response_bytes": 608,
       "proxy_ms": null,
@@ -828,13 +882,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-010",
       "target": "proxy",
       "concurrency": 8,
-      "latency_ms": 127.79174999741372,
+      "latency_ms": 315.0483749996056,
       "request_bytes": 1288,
       "response_bytes": 608,
       "proxy_ms": null,
@@ -842,13 +897,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-001",
       "target": "native",
       "concurrency": 8,
-      "latency_ms": 231.91570799826877,
+      "latency_ms": 805.4282079992845,
       "request_bytes": 135,
       "response_bytes": 612,
       "proxy_ms": null,
@@ -856,13 +912,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-002",
       "target": "native",
       "concurrency": 8,
-      "latency_ms": 230.1338749966817,
+      "latency_ms": 806.4000840004155,
       "request_bytes": 137,
       "response_bytes": 609,
       "proxy_ms": null,
@@ -870,13 +927,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-003",
       "target": "native",
       "concurrency": 8,
-      "latency_ms": 229.10958400461823,
+      "latency_ms": 816.848292000941,
       "request_bytes": 156,
       "response_bytes": 613,
       "proxy_ms": null,
@@ -884,13 +942,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-004",
       "target": "native",
       "concurrency": 8,
-      "latency_ms": 230.00737500115065,
+      "latency_ms": 804.7147079996648,
       "request_bytes": 324,
       "response_bytes": 609,
       "proxy_ms": null,
@@ -898,13 +957,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-005",
       "target": "native",
       "concurrency": 8,
-      "latency_ms": 227.58995900221635,
+      "latency_ms": 804.5538330006821,
       "request_bytes": 360,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -912,13 +972,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-006",
       "target": "native",
       "concurrency": 8,
-      "latency_ms": 228.6210000020219,
+      "latency_ms": 813.0314999998518,
       "request_bytes": 369,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -926,13 +987,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-007",
       "target": "native",
       "concurrency": 8,
-      "latency_ms": 225.32850000425242,
+      "latency_ms": 812.2438329992292,
       "request_bytes": 523,
       "response_bytes": 613,
       "proxy_ms": null,
@@ -940,13 +1002,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-008",
       "target": "native",
       "concurrency": 8,
-      "latency_ms": 230.10420900391182,
+      "latency_ms": 801.1354589998518,
       "request_bytes": 713,
       "response_bytes": 614,
       "proxy_ms": null,
@@ -954,13 +1017,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-009",
       "target": "native",
       "concurrency": 8,
-      "latency_ms": 126.59829200129025,
+      "latency_ms": 309.3500420000055,
       "request_bytes": 1059,
       "response_bytes": 608,
       "proxy_ms": null,
@@ -968,13 +1032,14 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     },
     {
       "sample_id": "sample-010",
       "target": "native",
       "concurrency": 8,
-      "latency_ms": 124.93075000384124,
+      "latency_ms": 309.40074999853096,
       "request_bytes": 1288,
       "response_bytes": 608,
       "proxy_ms": null,
@@ -982,7 +1047,8 @@
       "error": null,
       "ttft_ms": null,
       "tpot_ms": null,
-      "token_count": null
+      "token_count": null,
+      "request_type": "chat"
     }
   ]
 }

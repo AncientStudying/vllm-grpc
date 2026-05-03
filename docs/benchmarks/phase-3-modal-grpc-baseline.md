@@ -1,19 +1,19 @@
 # Benchmark Summary
 
-**Run**: 2026-05-03T00:38:12.013260+00:00  
-**Commit**: 14eccd46c01c4583f3b865fd1459c769cc2c3a6a  
+**Run**: 2026-05-03T16:13:57.971581+00:00  
+**Commit**: 5deae6c26db531cdd00efbd1c3c294e58f3be125  
 **Host**: Mac  
 **GPU**: A10G  
-**Cold start**: 155.2s  
+**Cold start**: 105.3s  
 
 ## Concurrency = 1
 
 | Metric | Proxy | Native | Δ |
 |--------|-------|--------|---|
-| Latency P50 (ms) | 274.09 | 270.81 | +1.2% |
-| Latency P95 (ms) | 1034.72 | 279.73 | +269.9% |
-| Latency P99 (ms) | 1529.18 | 282.10 | +442.1% |
-| Throughput (rps) | 2.44 | 3.77 | -35.2% |
+| Latency P50 (ms) | 255.79 | 246.57 | +3.7% |
+| Latency P95 (ms) | 1092.25 | 266.62 | +309.7% |
+| Latency P99 (ms) | 1628.29 | 270.29 | +502.4% |
+| Throughput (rps) | 2.48 | 3.99 | -37.9% |
 | Request bytes (mean) | 506 | 506 | +0.0% |
 | Response bytes (mean) | 330 | 330 | +0.0% |
 | TTFT P50 (ms) | N/A | N/A | N/A |
@@ -22,38 +22,18 @@
 | TPOT P50 (ms) | N/A | N/A | N/A |
 | TPOT P95 (ms) | N/A | N/A | N/A |
 | TPOT P99 (ms) | N/A | N/A | N/A |
-| Proxy ms P50 | 0.199 | N/A | N/A |
-| Proxy ms P95 | 0.236 | N/A | N/A |
-| Proxy ms P99 | 0.243 | N/A | N/A |
+| Proxy ms P50 | 0.203 | N/A | N/A |
+| Proxy ms P95 | 0.253 | N/A | N/A |
+| Proxy ms P99 | 0.260 | N/A | N/A |
 
 ## Concurrency = 4
 
 | Metric | Proxy | Native | Δ |
 |--------|-------|--------|---|
-| Latency P50 (ms) | 193.63 | 277.13 | -30.1% |
-| Latency P95 (ms) | 369.06 | 304.59 | +21.2% |
-| Latency P99 (ms) | 369.32 | 321.82 | +14.8% |
-| Throughput (rps) | 4.10 | 3.55 | +15.6% |
-| Request bytes (mean) | 506 | 506 | +0.0% |
-| Response bytes (mean) | 330 | 330 | +0.1% |
-| TTFT P50 (ms) | N/A | N/A | N/A |
-| TTFT P95 (ms) | N/A | N/A | N/A |
-| TTFT P99 (ms) | N/A | N/A | N/A |
-| TPOT P50 (ms) | N/A | N/A | N/A |
-| TPOT P95 (ms) | N/A | N/A | N/A |
-| TPOT P99 (ms) | N/A | N/A | N/A |
-| Proxy ms P50 | 0.044 | N/A | N/A |
-| Proxy ms P95 | 0.107 | N/A | N/A |
-| Proxy ms P99 | 0.129 | N/A | N/A |
-
-## Concurrency = 8
-
-| Metric | Proxy | Native | Δ |
-|--------|-------|--------|---|
-| Latency P50 (ms) | 631.39 | 313.46 | +101.4% |
-| Latency P95 (ms) | 632.01 | 314.79 | +100.8% |
-| Latency P99 (ms) | 632.09 | 314.85 | +100.8% |
-| Throughput (rps) | 1.89 | 3.64 | -48.1% |
+| Latency P50 (ms) | 190.07 | 254.89 | -25.4% |
+| Latency P95 (ms) | 330.31 | 268.13 | +23.2% |
+| Latency P99 (ms) | 330.86 | 268.73 | +23.1% |
+| Throughput (rps) | 4.52 | 3.87 | +16.9% |
 | Request bytes (mean) | 506 | 506 | +0.0% |
 | Response bytes (mean) | 330 | 330 | +0.0% |
 | TTFT P50 (ms) | N/A | N/A | N/A |
@@ -62,6 +42,26 @@
 | TPOT P50 (ms) | N/A | N/A | N/A |
 | TPOT P95 (ms) | N/A | N/A | N/A |
 | TPOT P99 (ms) | N/A | N/A | N/A |
-| Proxy ms P50 | 0.038 | N/A | N/A |
-| Proxy ms P95 | 0.115 | N/A | N/A |
-| Proxy ms P99 | 0.124 | N/A | N/A |
+| Proxy ms P50 | 0.056 | N/A | N/A |
+| Proxy ms P95 | 0.131 | N/A | N/A |
+| Proxy ms P99 | 0.142 | N/A | N/A |
+
+## Concurrency = 8
+
+| Metric | Proxy | Native | Δ |
+|--------|-------|--------|---|
+| Latency P50 (ms) | 520.95 | 294.90 | +76.7% |
+| Latency P95 (ms) | 521.92 | 341.74 | +52.7% |
+| Latency P99 (ms) | 522.12 | 341.82 | +52.7% |
+| Throughput (rps) | 2.27 | 3.61 | -37.0% |
+| Request bytes (mean) | 506 | 506 | +0.0% |
+| Response bytes (mean) | 330 | 330 | +0.0% |
+| TTFT P50 (ms) | N/A | N/A | N/A |
+| TTFT P95 (ms) | N/A | N/A | N/A |
+| TTFT P99 (ms) | N/A | N/A | N/A |
+| TPOT P50 (ms) | N/A | N/A | N/A |
+| TPOT P95 (ms) | N/A | N/A | N/A |
+| TPOT P99 (ms) | N/A | N/A | N/A |
+| Proxy ms P50 | 0.040 | N/A | N/A |
+| Proxy ms P95 | 0.136 | N/A | N/A |
+| Proxy ms P99 | 0.140 | N/A | N/A |
