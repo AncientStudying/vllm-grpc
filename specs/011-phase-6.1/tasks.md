@@ -40,9 +40,9 @@
 
 ### Implementation for User Story 1
 
-- [ ] T004 [US1] Deploy updated frontend wheel to Modal (rebuild image with the `enable_prompt_embeds=True` change) — `scripts/python/bench_modal.py` or `Makefile` bench-modal target
-- [ ] T005 [US1] Run `modal run scripts/python/verify_prompt_embeds_modal.py` as a smoke test to confirm vLLM 0.20.0 on A10G accepts `prompt_embeds` — `scripts/python/verify_prompt_embeds_modal.py`
-- [ ] T006 [US1] Run `make bench-modal` and confirm `grpc-direct | completion-embeds` row shows `success=True` with real latency and `resp_bytes_mean` — `tools/benchmark/`
+- [x] T004 [US1] Deploy updated frontend wheel to Modal (rebuild image with the `enable_prompt_embeds=True` change) — `scripts/python/bench_modal.py` or `Makefile` bench-modal target
+- [x] T005 [US1] Run `modal run scripts/python/verify_prompt_embeds_modal.py` as a smoke test to confirm vLLM 0.20.0 on A10G accepts `prompt_embeds` — `scripts/python/verify_prompt_embeds_modal.py`
+- [x] T006 [US1] Run `make bench-modal` and confirm `grpc-direct | completion-embeds` row shows `success=True` with real latency and `resp_bytes_mean` — `tools/benchmark/`
 
 **Checkpoint**: User Story 1 verified — gRPC-direct prompt-embedding path is functional end-to-end.
 
@@ -56,7 +56,7 @@
 
 ### Implementation for User Story 2
 
-- [ ] T007 [US2] Confirm `proxy | completion-embeds` row in the bench-modal results from T006 shows `success=True` — no code changes needed; same bench run covers both paths
+- [x] T007 [US2] Confirm `proxy | completion-embeds` row in the bench-modal results from T006 shows `success=True` — no code changes needed; same bench run covers both paths
 
 **Checkpoint**: User Stories 1 AND 2 verified in the same benchmark run.
 
