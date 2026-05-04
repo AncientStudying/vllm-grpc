@@ -3,27 +3,27 @@
 ## Run Metadata
 
 **REST**:  
-- Timestamp: 2026-05-03T19:27:43.200012+00:00  
-- Git SHA: 720a95a579bfb23e8c3b1177a94624e0c0a8c4cb  
+- Timestamp: 2026-05-03T23:39:30.583599+00:00  
+- Git SHA: 50be64179f39a052b98a70a4d51f1a29c9b30540  
 - Host: Mac  
 - GPU: A10G  
-- Cold start: 125.2s  
+- Cold start: 155.2s  
 
 **gRPC**:  
-- Timestamp: 2026-05-03T19:30:54.685592+00:00  
-- Git SHA: 720a95a579bfb23e8c3b1177a94624e0c0a8c4cb  
+- Timestamp: 2026-05-03T23:41:57.484425+00:00  
+- Git SHA: 50be64179f39a052b98a70a4d51f1a29c9b30540  
 - Host: Mac  
 - GPU: A10G  
-- Cold start: 175.3s  
+- Cold start: 130.2s  
 
 ## Concurrency = 1
 
 | Metric | REST | gRPC | Δ |
 |--------|------|------|---|
-| Latency P50 (ms) | 106.33 | 334.68 | +214.8% |
-| Latency P95 (ms) | 160.91 | 1591.16 | +888.9% |
-| Latency P99 (ms) | 191.70 | 2404.47 | +1154.3% |
-| Throughput (rps) | 8.65 | 1.77 | -79.5% |
+| Latency P50 (ms) | 104.60 | 285.47 | +172.9% |
+| Latency P95 (ms) | 192.11 | 1152.50 | +499.9% |
+| Latency P99 (ms) | 200.88 | 1659.62 | +726.2% |
+| Throughput (rps) | 8.27 | 2.27 | -72.6% |
 | TTFT P50 (ms) | N/A | N/A | — |
 | TTFT P95 (ms) | N/A | N/A | — |
 | TTFT P99 (ms) | N/A | N/A | — |
@@ -37,10 +37,10 @@
 
 | Metric | REST | gRPC | Δ |
 |--------|------|------|---|
-| Latency P50 (ms) | 118.64 | 250.31 | +111.0% |
-| Latency P95 (ms) | 165.51 | 404.28 | +144.3% |
-| Latency P99 (ms) | 165.70 | 404.53 | +144.1% |
-| Throughput (rps) | 7.39 | 3.49 | -52.7% |
+| Latency P50 (ms) | 118.85 | 245.85 | +106.9% |
+| Latency P95 (ms) | 172.84 | 359.26 | +107.9% |
+| Latency P99 (ms) | 173.16 | 359.38 | +107.5% |
+| Throughput (rps) | 7.43 | 3.92 | -47.3% |
 | TTFT P50 (ms) | N/A | N/A | — |
 | TTFT P95 (ms) | N/A | N/A | — |
 | TTFT P99 (ms) | N/A | N/A | — |
@@ -48,16 +48,16 @@
 | TPOT P95 (ms) | N/A | N/A | — |
 | TPOT P99 (ms) | N/A | N/A | — |
 | Request bytes (mean) | 506 | 506 | +0.0% |
-| Response bytes (mean) | 611 | 330 | -46.0% |
+| Response bytes (mean) | 611 | 330 | -45.9% |
 
 ## Concurrency = 8
 
 | Metric | REST | gRPC | Δ |
 |--------|------|------|---|
-| Latency P50 (ms) | 175.64 | 404.31 | +130.2% |
-| Latency P95 (ms) | 178.17 | 405.35 | +127.5% |
-| Latency P99 (ms) | 178.53 | 405.48 | +127.1% |
-| Throughput (rps) | 6.16 | 2.82 | -54.2% |
+| Latency P50 (ms) | 181.36 | 373.91 | +106.2% |
+| Latency P95 (ms) | 183.43 | 376.19 | +105.1% |
+| Latency P99 (ms) | 183.46 | 376.35 | +105.1% |
+| Throughput (rps) | 6.02 | 3.02 | -49.7% |
 | TTFT P50 (ms) | N/A | N/A | — |
 | TTFT P95 (ms) | N/A | N/A | — |
 | TTFT P99 (ms) | N/A | N/A | — |

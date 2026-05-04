@@ -16,7 +16,7 @@
 
 **Purpose**: Confirm baseline health before any changes.
 
-- [ ] T001 Run `make check` to confirm ruff + mypy --strict + pytest pass clean on the current branch before any edits
+- [x] T001 Run `make check` to confirm ruff + mypy --strict + pytest pass clean on the current branch before any edits
 
 ---
 
@@ -26,11 +26,11 @@
 
 **⚠️ CRITICAL**: T013 (make bench-modal) cannot run until T002–T005 and T006 are all complete.
 
-- [ ] T002 [P] Update `write_wire_size_comparison_md` in `tools/benchmark/src/vllm_grpc_bench/reporter.py` — replace the flat latency/throughput table with `## Concurrency = N` top-level sections, `### Text Prompt Completions` and `### Prompt-Embed Completions` sub-sections, and a five-column table `| metric | native | proxy | Δ vs native | gRPC-direct | Δ vs native |` with explicit deltas matching the `write_three_way_md` style (per `specs/012-demo-polish/plan.md` Phase 1 Implementation Detail)
-- [ ] T003 [P] Update `tools/benchmark/tests/test_reporter.py` — update or add a test for `write_wire_size_comparison_md` that asserts the new output contains `## Concurrency = 1`, `### Text Prompt Completions`, and a Δ column header; remove or update any assertion that references the old flat-table format
-- [ ] T004 [P] Update `scripts/python/bench_modal.py` — after `completions_summaries = compute_summaries(all_completions)`, filter `all_completions` by `target` to create a `BenchmarkRun` per path and write `docs/benchmarks/phase-6-completions-{native,proxy,grpc-direct}.json`; add each JSON path to `output_paths` (per `specs/012-demo-polish/plan.md` Phase 1 Implementation Detail)
-- [ ] T005 [P] Update `scripts/python/regen_bench_reports.py` — add `--phase5-rest`, `--phase5-proxy`, `--phase5-direct` (defaults: `docs/benchmarks/phase-5-{rest,grpc-proxy,grpc-direct}-streaming.json`) and `--phase6-native`, `--phase6-proxy`, `--phase6-direct` (defaults: `docs/benchmarks/phase-6-completions-{native,proxy,grpc-direct}.json`) arg groups; when Phase 5 files present regenerate `phase-5-streaming-comparison.md` via `write_three_way_md`; when Phase 6 files present combine their summaries and regenerate `phase-6-completions-comparison.md` via `write_wire_size_comparison_md`
-- [ ] T006 Run `make check` to confirm ruff + mypy --strict + pytest pass after T002–T005 — `tools/benchmark/`, `scripts/python/`
+- [x] T002 [P] Update `write_wire_size_comparison_md` in `tools/benchmark/src/vllm_grpc_bench/reporter.py` — replace the flat latency/throughput table with `## Concurrency = N` top-level sections, `### Text Prompt Completions` and `### Prompt-Embed Completions` sub-sections, and a five-column table `| metric | native | proxy | Δ vs native | gRPC-direct | Δ vs native |` with explicit deltas matching the `write_three_way_md` style (per `specs/012-demo-polish/plan.md` Phase 1 Implementation Detail)
+- [x] T003 [P] Update `tools/benchmark/tests/test_reporter.py` — update or add a test for `write_wire_size_comparison_md` that asserts the new output contains `## Concurrency = 1`, `### Text Prompt Completions`, and a Δ column header; remove or update any assertion that references the old flat-table format
+- [x] T004 [P] Update `scripts/python/bench_modal.py` — after `completions_summaries = compute_summaries(all_completions)`, filter `all_completions` by `target` to create a `BenchmarkRun` per path and write `docs/benchmarks/phase-6-completions-{native,proxy,grpc-direct}.json`; add each JSON path to `output_paths` (per `specs/012-demo-polish/plan.md` Phase 1 Implementation Detail)
+- [x] T005 [P] Update `scripts/python/regen_bench_reports.py` — add `--phase5-rest`, `--phase5-proxy`, `--phase5-direct` (defaults: `docs/benchmarks/phase-5-{rest,grpc-proxy,grpc-direct}-streaming.json`) and `--phase6-native`, `--phase6-proxy`, `--phase6-direct` (defaults: `docs/benchmarks/phase-6-completions-{native,proxy,grpc-direct}.json`) arg groups; when Phase 5 files present regenerate `phase-5-streaming-comparison.md` via `write_three_way_md`; when Phase 6 files present combine their summaries and regenerate `phase-6-completions-comparison.md` via `write_wire_size_comparison_md`
+- [x] T006 Run `make check` to confirm ruff + mypy --strict + pytest pass after T002–T005 — `tools/benchmark/`, `scripts/python/`
 
 **Checkpoint**: All code changes verified. Bench run and demo scripts can now proceed in parallel.
 
@@ -44,12 +44,12 @@
 
 ### Implementation for User Story 1
 
-- [ ] T007 [US1] Create `demo/` directory at the repository root
-- [ ] T008 [US1] Create `demo/curl-rest.sh` — bash script that sends a non-streaming chat completion to the proxy via curl; annotated with inline comments; reads `PROXY_BASE_URL` env var (default `http://localhost:8000`); `curl -sf` with explicit fail + `|| { echo "ERROR: ..."; exit 1; }` on connection failure; `seed=42`, model `Qwen/Qwen3-0.6B`
-- [ ] T009 [P] [US1] Create `demo/openai-sdk.py` — openai SDK non-streaming chat completion via proxy; annotated; reads `PROXY_BASE_URL` env var; catches `openai.APIError` and exits 1 with a clear message; `seed=42`, model `Qwen/Qwen3-0.6B`; mirrors `scripts/python/chat-nonstreaming.py` pattern
-- [ ] T010 [P] [US1] Create `demo/grpc-direct.py` — async script using `VllmGrpcClient` from `vllm_grpc_client`; annotated to explain the gRPC-direct path and lack of proxy; reads `FRONTEND_ADDR` env var (default `localhost:50051`); catches gRPC errors and exits 1 with a clear message; `seed=42`, model `Qwen/Qwen3-0.6B`
-- [ ] T011 [P] [US1] Create `demo/streaming.py` — openai SDK streaming chat completion via proxy (`stream=True`); prints tokens as they arrive via `print(..., end="", flush=True)`; annotated; reads `PROXY_BASE_URL` env var; catches `openai.APIError` and exits 1; `seed=42`, model `Qwen/Qwen3-0.6B`
-- [ ] T012 [US1] Run `ruff check demo/ && mypy --ignore-missing-imports demo/ && shellcheck demo/curl-rest.sh` and confirm all pass — `demo/`
+- [x] T007 [US1] Create `demo/` directory at the repository root
+- [x] T008 [US1] Create `demo/curl-rest.sh` — bash script that sends a non-streaming chat completion to the proxy via curl; annotated with inline comments; reads `PROXY_BASE_URL` env var (default `http://localhost:8000`); `curl -sf` with explicit fail + `|| { echo "ERROR: ..."; exit 1; }` on connection failure; `seed=42`, model `Qwen/Qwen3-0.6B`
+- [x] T009 [P] [US1] Create `demo/openai-sdk.py` — openai SDK non-streaming chat completion via proxy; annotated; reads `PROXY_BASE_URL` env var; catches `openai.APIError` and exits 1 with a clear message; `seed=42`, model `Qwen/Qwen3-0.6B`; mirrors `scripts/python/chat-nonstreaming.py` pattern
+- [x] T010 [P] [US1] Create `demo/grpc-direct.py` — async script using `VllmGrpcClient` from `vllm_grpc_client`; annotated to explain the gRPC-direct path and lack of proxy; reads `FRONTEND_ADDR` env var (default `localhost:50051`); catches gRPC errors and exits 1 with a clear message; `seed=42`, model `Qwen/Qwen3-0.6B`
+- [x] T011 [P] [US1] Create `demo/streaming.py` — openai SDK streaming chat completion via proxy (`stream=True`); prints tokens as they arrive via `print(..., end="", flush=True)`; annotated; reads `PROXY_BASE_URL` env var; catches `openai.APIError` and exits 1; `seed=42`, model `Qwen/Qwen3-0.6B`
+- [x] T012 [US1] Run `ruff check demo/ && mypy --ignore-missing-imports demo/ && shellcheck demo/curl-rest.sh` and confirm all pass — `demo/`
 
 **Checkpoint**: User Story 1 verified — all four demo scripts pass lint and are runnable end-to-end against a local frontend.
 
@@ -64,11 +64,11 @@
 ### Implementation for User Story 2
 
 - [ ] T013 [US2] Run `make bench-modal` — requires Modal GPU (A10G); produces `docs/benchmarks/phase-6-completions-{native,proxy,grpc-direct}.json` and updated `docs/benchmarks/phase-6-completions-comparison.md` — `scripts/python/bench_modal.py`
-- [ ] T014 [US2] Verify `docs/benchmarks/phase-6-completions-{native,proxy,grpc-direct}.json` all exist and each contains a non-empty `summaries` array covering both `completion-text` and `completion-embeds` request types — `docs/benchmarks/`
-- [ ] T015 [US2] Verify `docs/benchmarks/phase-6-completions-comparison.md` contains `## Concurrency = 1`, `### Text Prompt Completions`, `### Prompt-Embed Completions`, and `Δ vs native` column headers — confirms the new reporter format is live — `docs/benchmarks/`
-- [ ] T016 [US2] Run `make regen-bench-reports` (or `uv run python scripts/python/regen_bench_reports.py`) and confirm it regenerates `phase-3-modal-*.md`, `phase-4.2-*.md`, `phase-5-streaming-comparison.md`, and `phase-6-completions-comparison.md` without errors; confirm Phase 5 and Phase 6 output matches Phase 4.2 layout — `scripts/python/regen_bench_reports.py`
-- [ ] T017 [US2] Create `docs/benchmarks/summary.md` — three sections: (1) Non-Streaming Chat (Phase 4.2 A10G numbers: P50/P95/P99 latency, request bytes, and response bytes for REST / gRPC-proxy / gRPC-direct at c=1 and c=8); (2) Streaming Chat (Phase 5 A10G numbers: TTFT P50/P95/P99 and TPOT P50/P95/P99 and request bytes at c=1 and c=8); (3) Completions (Phase 6 A10G numbers: request bytes and response bytes for text and embed paths across all three targets); each section includes a methodology block (corpus path, concurrency levels, GPU type A10G, vLLM version 0.20.0, model Qwen/Qwen3-0.6B); one honest interpretation paragraph per section; every number cited traces to its source JSON file by name — `docs/benchmarks/summary.md`
-- [ ] T018 [US2] Commit `docs/benchmarks/phase-6-completions-{native,proxy,grpc-direct}.json` and `docs/benchmarks/phase-6-completions-comparison.md` (run after T014 confirms JSON is valid) — `docs/benchmarks/`
+- [x] T014 [US2] Verify `docs/benchmarks/phase-6-completions-{native,proxy,grpc-direct}.json` all exist and each contains a non-empty `summaries` array covering both `completion-text` and `completion-embeds` request types — `docs/benchmarks/`
+- [x] T015 [US2] Verify `docs/benchmarks/phase-6-completions-comparison.md` contains `## Concurrency = 1`, `### Text Prompt Completions`, `### Prompt-Embed Completions`, and `Δ vs native` column headers — confirms the new reporter format is live — `docs/benchmarks/`
+- [x] T016 [US2] Run `make regen-bench-reports` (or `uv run python scripts/python/regen_bench_reports.py`) and confirm it regenerates `phase-3-modal-*.md`, `phase-4.2-*.md`, `phase-5-streaming-comparison.md`, and `phase-6-completions-comparison.md` without errors; confirm Phase 5 and Phase 6 output matches Phase 4.2 layout — `scripts/python/regen_bench_reports.py`
+- [x] T017 [US2] Create `docs/benchmarks/summary.md` — three sections: (1) Non-Streaming Chat (Phase 4.2 A10G numbers: P50/P95/P99 latency, request bytes, and response bytes for REST / gRPC-proxy / gRPC-direct at c=1 and c=8); (2) Streaming Chat (Phase 5 A10G numbers: TTFT P50/P95/P99 and TPOT P50/P95/P99 and request bytes at c=1 and c=8); (3) Completions (Phase 6 A10G numbers: request bytes and response bytes for text and embed paths across all three targets); each section includes a methodology block (corpus path, concurrency levels, GPU type A10G, vLLM version 0.20.0, model Qwen/Qwen3-0.6B); one honest interpretation paragraph per section; every number cited traces to its source JSON file by name — `docs/benchmarks/summary.md`
+- [x] T018 [US2] Commit `docs/benchmarks/phase-6-completions-{native,proxy,grpc-direct}.json` and `docs/benchmarks/phase-6-completions-comparison.md` (run after T014 confirms JSON is valid) — `docs/benchmarks/`
 
 **Checkpoint**: User Story 2 verified — Phase 6 JSON committed, comparison document reformatted, regen covers all phases, summary.md complete.
 
@@ -82,7 +82,7 @@
 
 ### Implementation for User Story 3
 
-- [ ] T019 [US3] Rewrite `README.md` with sections: (1) "What is this?" — project purpose and wire-overhead thesis; (2) "Three access paths" — REST via proxy, gRPC via proxy, gRPC-direct and why each exists; (3) "Prerequisites" — `uv`, `make`, links to install docs; (4) "Quick start" — `make bootstrap`, `make run-frontend`, `make run-proxy`, then run each `demo/` script; (5) "Benchmark headlines" — one paragraph summary of key results from `docs/benchmarks/summary.md`; (6) "Development commands" — existing `make` targets; (7) "Repository structure" — updated for Phases 4–7 packages and tools — `README.md`
+- [x] T019 [US3] Rewrite `README.md` with sections: (1) "What is this?" — project purpose and wire-overhead thesis; (2) "Three access paths" — REST via proxy, gRPC via proxy, gRPC-direct and why each exists; (3) "Prerequisites" — `uv`, `make`, links to install docs; (4) "Quick start" — `make bootstrap`, `make run-frontend`, `make run-proxy`, then run each `demo/` script; (5) "Benchmark headlines" — one paragraph summary of key results from `docs/benchmarks/summary.md`; (6) "Development commands" — existing `make` targets; (7) "Repository structure" — updated for Phases 4–7 packages and tools — `README.md`
 
 **Checkpoint**: All three user stories complete.
 
@@ -92,7 +92,7 @@
 
 **Purpose**: Final quality gate across all Phase 7 changes.
 
-- [ ] T020 Run `make check` to confirm ruff + mypy --strict + pytest all pass after all Phase 7 changes — repo root
+- [x] T020 Run `make check` to confirm ruff + mypy --strict + pytest all pass after all Phase 7 changes — repo root
 
 ---
 

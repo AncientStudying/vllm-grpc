@@ -138,7 +138,7 @@ def test_write_wire_size_comparison_md(tmp_path: Path) -> None:
     assert out.exists()
     content = out.read_text()
 
-    # Table structure
+    # Wire-size summary section
     assert "| path |" in content
     assert "Δ vs baseline" in content
 
@@ -153,6 +153,10 @@ def test_write_wire_size_comparison_md(tmp_path: Path) -> None:
     assert "baseline" in content
     assert "vs native-REST" in content
 
-    # Latency table present with expected headers
-    assert "latency_p50_ms" in content
-    assert "throughput_rps" in content
+    # Concurrency-split latency section (new format)
+    assert "## Concurrency = 1" in content
+    assert "### Text Prompt Completions" in content
+    assert "### Prompt-Embed Completions" in content
+    assert "Δ vs native" in content
+    assert "Latency P50 (ms)" in content
+    assert "Throughput (rps)" in content

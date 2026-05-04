@@ -271,11 +271,21 @@ def write_cross_run_md(report: CrossRunReport, output_path: Path) -> Path:
     return output_path
 
 
+_COMPLETIONS_LATENCY_METRICS: list[tuple[str, str, int]] = [
+    ("latency_p50_ms", "Latency P50 (ms)", 2),
+    ("latency_p95_ms", "Latency P95 (ms)", 2),
+    ("latency_p99_ms", "Latency P99 (ms)", 2),
+    ("throughput_rps", "Throughput (rps)", 2),
+    ("request_bytes_mean", "Request bytes (mean)", 0),
+    ("response_bytes_mean", "Response bytes (mean)", 0),
+]
+
+
 def write_wire_size_comparison_md(
     summaries: list[RunSummary],
     output_path: Path,
 ) -> Path:
-    """Render Phase 6 completions report: wire-size + latency/throughput by path and input type."""
+    """Render Phase 6 completions report: wire-size summary + per-concurrency latency tables."""
     completion_summaries = [
         s for s in summaries if s.request_type in ("completion-text", "completion-embeds")
     ]
@@ -291,13 +301,13 @@ def write_wire_size_comparison_md(
         "- Baseline for text completions is native REST (the conventional approach).",
         "- Baseline for embed completions is native REST (isolates protocol from proxy overhead).",
         "",
-        "## Wire-Size by Path and Input Type",
+        "## Wire-Size Summary",
         "",
         "| path | input_type | req_bytes_mean | resp_bytes_mean | Δ vs baseline |",
         "|------|------------|----------------|-----------------|---------------|",
     ]
 
-    # Group by (target, request_type), average across concurrency levels
+    # Wire-size: average request/response bytes across concurrency levels
     groups: dict[tuple[str, str], list[RunSummary]] = defaultdict(list)
     for s in completion_summaries:
         groups[(s.target, s.request_type)].append(s)
@@ -310,7 +320,6 @@ def write_wire_size_comparison_md(
         resp_vals = [s.response_bytes_mean for s in group if s.response_bytes_mean is not None]
         group_resp_bytes[key] = sum(resp_vals) / len(resp_vals) if resp_vals else None
 
-    # Text completions: baseline = native REST; all three paths shown
     native_text_bytes = group_req_bytes.get(("native", "completion-text"))
     for target in ("native", "proxy", "grpc-direct"):
         key = (target, "completion-text")
@@ -327,7 +336,6 @@ def write_wire_size_comparison_md(
             delta_str = f"{sign}{pct:.1f}% vs native-REST"
         lines.append(f"| {target} | completion-text | {req_bytes:.0f} | {resp_str} | {delta_str} |")
 
-    # Embed completions: baseline = native REST; all three paths shown
     native_embed_bytes = group_req_bytes.get(("native", "completion-embeds"))
     for target in ("native", "proxy", "grpc-direct"):
         key = (target, "completion-embeds")
@@ -346,34 +354,44 @@ def write_wire_size_comparison_md(
             f"| {target} | completion-embeds | {req_bytes:.0f} | {resp_str} | {delta_str} |"
         )
 
-    # Latency and throughput section (data already in summaries from timed runners)
-    lines += [
-        "",
-        "## Latency and Throughput by Path, Input Type, and Concurrency",
-        "",
-        "| path | input_type | concurrency | latency_p50_ms | latency_p95_ms | latency_p99_ms"
-        " | throughput_rps |",
-        "|------|------------|-------------|----------------|----------------|----------------"
-        "|----------------|",
-    ]
-
-    sort_key_target = {"native": 0, "proxy": 1, "grpc-direct": 2}
-    sort_key_type = {"completion-text": 0, "completion-embeds": 1}
-    for s in sorted(
-        completion_summaries,
-        key=lambda x: (
-            sort_key_type.get(x.request_type, 9),
-            sort_key_target.get(x.target, 9),
-            x.concurrency,
-        ),
-    ):
-        lines.append(
-            f"| {s.target} | {s.request_type} | {s.concurrency}"
-            f" | {_fmt(s.latency_p50_ms)} | {_fmt(s.latency_p95_ms)}"
-            f" | {_fmt(s.latency_p99_ms)} | {_fmt(s.throughput_rps)} |"
-        )
-
     lines.append("")
+
+    # Latency section: per concurrency, sub-sections per input type
+    summary_index: dict[tuple[str, str, int], RunSummary] = {}
+    for s in completion_summaries:
+        summary_index[(s.target, s.request_type, s.concurrency)] = s
+
+    concurrencies = sorted({s.concurrency for s in completion_summaries})
+
+    for conc in concurrencies:
+        lines += [f"## Concurrency = {conc}", ""]
+
+        for req_type, section_title in [
+            ("completion-text", "Text Prompt Completions"),
+            ("completion-embeds", "Prompt-Embed Completions"),
+        ]:
+            n = summary_index.get(("native", req_type, conc))
+            p = summary_index.get(("proxy", req_type, conc))
+            g = summary_index.get(("grpc-direct", req_type, conc))
+            if n is None and p is None and g is None:
+                continue
+
+            lines += [
+                f"### {section_title}",
+                "",
+                "| metric | native | proxy | Δ vs native | gRPC-direct | Δ vs native |",
+                "|--------|--------|-------|-------------|-------------|-------------|",
+            ]
+            for field, label, precision in _COMPLETIONS_LATENCY_METRICS:
+                nv: float | None = getattr(n, field) if n else None
+                pv: float | None = getattr(p, field) if p else None
+                gv: float | None = getattr(g, field) if g else None
+                lines.append(
+                    f"| {label} | {_fmt(nv, precision)} | {_fmt(pv, precision)}"
+                    f" | {_delta(pv, nv)} | {_fmt(gv, precision)} | {_delta(gv, nv)} |"
+                )
+            lines.append("")
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines))
     return output_path

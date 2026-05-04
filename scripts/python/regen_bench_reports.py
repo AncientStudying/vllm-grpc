@@ -29,6 +29,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Regenerate markdown benchmark reports from JSON result files."
     )
+    # Phase 4.2 non-streaming
     parser.add_argument(
         "--rest",
         type=Path,
@@ -47,11 +48,54 @@ def main() -> None:
         default=_DOCS / "phase-4.2-grpc-direct-baseline.json",
         metavar="PATH",
     )
+    # Phase 5 streaming
+    parser.add_argument(
+        "--phase5-rest",
+        type=Path,
+        default=_DOCS / "phase-5-rest-streaming.json",
+        metavar="PATH",
+    )
+    parser.add_argument(
+        "--phase5-proxy",
+        type=Path,
+        default=_DOCS / "phase-5-grpc-proxy-streaming.json",
+        metavar="PATH",
+    )
+    parser.add_argument(
+        "--phase5-direct",
+        type=Path,
+        default=_DOCS / "phase-5-grpc-direct-streaming.json",
+        metavar="PATH",
+    )
+    # Phase 6 completions
+    parser.add_argument(
+        "--phase6-native",
+        type=Path,
+        default=_DOCS / "phase-6-completions-native.json",
+        metavar="PATH",
+    )
+    parser.add_argument(
+        "--phase6-proxy",
+        type=Path,
+        default=_DOCS / "phase-6-completions-proxy.json",
+        metavar="PATH",
+    )
+    parser.add_argument(
+        "--phase6-direct",
+        type=Path,
+        default=_DOCS / "phase-6-completions-grpc-direct.json",
+        metavar="PATH",
+    )
     args = parser.parse_args()
 
     from vllm_grpc_bench.compare import compare_cross, compare_three_way
     from vllm_grpc_bench.io import load_run
-    from vllm_grpc_bench.reporter import write_cross_run_md, write_summary_md, write_three_way_md
+    from vllm_grpc_bench.reporter import (
+        write_cross_run_md,
+        write_summary_md,
+        write_three_way_md,
+        write_wire_size_comparison_md,
+    )
 
     rest_path: Path = args.rest
     proxy_path: Path = args.grpc_proxy
@@ -109,6 +153,47 @@ def main() -> None:
     dest = _DOCS / "phase-4.2-three-way-comparison.md"
     write_three_way_md(three_report, dest)
     print(f"Written {dest}")
+
+    # Phase-5 streaming comparison (skip if files not present)
+    p5_paths = (args.phase5_rest, args.phase5_proxy, args.phase5_direct)
+    if all(p.exists() for p in p5_paths):
+        print(f"Loading {args.phase5_rest} ...")
+        p5_rest = load_run(args.phase5_rest)
+        print(f"Loading {args.phase5_proxy} ...")
+        p5_proxy = load_run(args.phase5_proxy)
+        print(f"Loading {args.phase5_direct} ...")
+        p5_direct = load_run(args.phase5_direct)
+        p5_report = compare_three_way(
+            p5_rest,
+            p5_proxy,
+            p5_direct,
+            label_a="REST",
+            label_b="gRPC-proxy",
+            label_c="gRPC-direct",
+        )
+        dest = _DOCS / "phase-5-streaming-comparison.md"
+        write_three_way_md(p5_report, dest)
+        print(f"Written {dest}")
+    else:
+        missing_p5 = [p for p in p5_paths if not p.exists()]
+        print(f"Skipping Phase 5 streaming (missing: {', '.join(str(p) for p in missing_p5)})")
+
+    # Phase-6 completions comparison (skip if files not present)
+    p6_paths = (args.phase6_native, args.phase6_proxy, args.phase6_direct)
+    if all(p.exists() for p in p6_paths):
+        print(f"Loading {args.phase6_native} ...")
+        p6_native = load_run(args.phase6_native)
+        print(f"Loading {args.phase6_proxy} ...")
+        p6_proxy = load_run(args.phase6_proxy)
+        print(f"Loading {args.phase6_direct} ...")
+        p6_direct = load_run(args.phase6_direct)
+        combined_summaries = p6_native.summaries + p6_proxy.summaries + p6_direct.summaries
+        dest = _DOCS / "phase-6-completions-comparison.md"
+        write_wire_size_comparison_md(combined_summaries, dest)
+        print(f"Written {dest}")
+    else:
+        missing_p6 = [p for p in p6_paths if not p.exists()]
+        print(f"Skipping Phase 6 completions (missing: {', '.join(str(p) for p in missing_p6)})")
 
     print("Done.")
 
