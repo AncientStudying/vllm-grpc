@@ -594,6 +594,32 @@ def main() -> None:
 
         if all_completions:
             completions_summaries = compute_summaries(all_completions)
+
+            # Serialize per-path JSON (matching Phase 4.2/5 naming convention)
+            completions_ts = _dt.now(tz=UTC).isoformat()
+            for target_slug in ("native", "proxy", "grpc-direct"):
+                target_results = [r for r in all_completions if r.target == target_slug]
+                if not target_results:
+                    continue
+                target_meta = RunMeta(
+                    timestamp=completions_ts,
+                    git_sha=git_sha,
+                    hostname=socket.gethostname(),
+                    corpus_path="tools/benchmark/corpus/completions_*.json",
+                    concurrency_levels=concurrency_levels,
+                    proxy_url="N/A",
+                    native_url="N/A",
+                    gpu_type="A10G",
+                )
+                target_run = BenchmarkRun(
+                    meta=target_meta,
+                    summaries=compute_summaries(target_results),
+                    raw_results=target_results,
+                )
+                json_path = _DOCS_BENCHMARKS / f"phase-6-completions-{target_slug}.json"
+                json_path.write_text(json.dumps(dataclasses.asdict(target_run), indent=2))
+                print(f"[COMPLETIONS] JSON written to {json_path}")
+
             phase6_comparison_path = _DOCS_BENCHMARKS / "phase-6-completions-comparison.md"
             write_wire_size_comparison_md(completions_summaries, phase6_comparison_path)
             print(f"[COMPLETIONS] Report written to {phase6_comparison_path}")
@@ -742,6 +768,10 @@ def main() -> None:
         phase5_direct_json,
         phase5_comparison_path,
     ]
+    for target_slug in ("native", "proxy", "grpc-direct"):
+        p6_json = _DOCS_BENCHMARKS / f"phase-6-completions-{target_slug}.json"
+        if p6_json.exists():
+            output_paths.append(p6_json)
     if phase6_comparison_path is not None:
         output_paths.append(phase6_comparison_path)
     for p in output_paths:
