@@ -96,19 +96,29 @@ Numbers are drawn from committed JSON files in `docs/benchmarks/`.
 
 | Metric | Native REST | Proxy REST | Δ vs native | gRPC-direct | Δ vs native |
 |--------|-------------|------------|-------------|-------------|-------------|
-| Latency P50 (ms) | 306 | 460 | +50% | 317 | +4% |
-| Latency P95 (ms) | 364 | 475 | +30% | 358 | −2% |
-| Throughput (rps) | 3.22 | 2.17 | −33% | 3.05 | −5% |
+| Latency P50 (ms) | 307 | 435 | +42% | 295 | −4% |
+| Latency P95 (ms) | 451 | 447 | −1% | 406 | −10% |
+| Throughput (rps) | 3.11 | 2.29 | −26% | 3.23 | +4% |
 
 ### Latency — Embed Completions, Concurrency = 1
 
 | Metric | Native REST | Proxy REST | Δ vs native | gRPC-direct | Δ vs native |
 |--------|-------------|------------|-------------|-------------|-------------|
-| Latency P50 (ms) | 460 | 865 | +88% | 452 | −2% |
-| Latency P95 (ms) | 1016 | 1090 | +7% | 903 | −11% |
-| Throughput (rps) | 1.91 | 1.15 | −40% | 1.83 | −4% |
+| Latency P50 (ms) | 463 | 668 | +44% | 432 | −7% |
+| Latency P95 (ms) | 855 | 913 | +7% | 615 | −28% |
+| Throughput (rps) | 2.02 | 1.42 | −30% | 2.27 | +13% |
 
-**Interpretation:** The headline result is wire-size reduction for embed requests. Native REST base64-encodes the raw tensor bytes (~33% overhead), so a 455 KB gRPC payload replaces a 606 KB REST payload — a 25% saving that scales with embedding dimensionality. Response bytes are also 59–60% smaller via gRPC-direct because the completions proto response is more compact than the JSON OpenAI envelope. Latency for gRPC-direct is within noise of native REST at c=1; the proxy adds 50–88% latency due to the additional REST→gRPC translation layer.
+### Latency — Text Completions, Concurrency = 8 ⚠️
+
+| Metric | Native REST | Proxy REST | Δ vs native | gRPC-direct | Δ vs native |
+|--------|-------------|------------|-------------|-------------|-------------|
+| Latency P50 (ms) | 379 | 424 | +12% | 419 | +10% |
+| Latency P95 (ms) | **13,598** | 537 | −96% | 552 | −96% |
+| Throughput (rps) | **0.18** | 2.24 | +1169% | 2.23 | +1161% |
+
+> ⚠️ Native REST at c=8 text completions experienced server-side queue saturation in this run: P95 latency spiked to 13.6 s and throughput collapsed to 0.18 rps while proxy and gRPC-direct both remained stable (~535 ms P95, ~2.2 rps). The Δ vs native values in this row reflect a degraded baseline and do not represent a stable protocol comparison. See `phase-6-completions-native.json` for raw results.
+
+**Interpretation:** The headline result is wire-size reduction for embed requests: a 455 KB gRPC payload replaces a 606 KB REST payload (−25%), because native REST base64-encodes raw tensor bytes while gRPC transmits them directly. Response bytes are 59–60% smaller via gRPC-direct across all concurrencies and request types. At c=1, gRPC-direct latency is slightly *below* native REST for both text (−4%) and embed (−7%) completions — unlike Phase 4.2 chat where the channel setup added ~35 ms overhead, the completions path has less per-request setup cost. Proxy adds 42–44% latency at c=1 due to the REST→gRPC translation hop. At c=8, native REST text completions showed queue saturation (P95 = 13.6 s); treat those Δ values as an artifact of a degraded baseline, not a framework result. Embed completions at c=8 remain stable across all three paths.
 
 ---
 
