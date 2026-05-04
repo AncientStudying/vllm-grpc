@@ -90,6 +90,36 @@ All runs on Modal A10G GPU, vLLM 0.20.0, model `Qwen/Qwen3-0.6B`. Full numbers a
 
 ---
 
+## Roadmap
+
+### Milestone 1 — Foundation (current release)
+
+Three access paths (REST via proxy, gRPC via proxy, gRPC-direct) implemented and benchmarked end-to-end on Modal A10G. Headline finding: gRPC-direct reduces response bytes by **89%** for chat completions and **25%** for embed request payloads. See [`docs/benchmarks/summary.md`](docs/benchmarks/summary.md) for full numbers and methodology.
+
+### Milestone 2 — Parameter Tuning
+
+Investigate whether adjusting vLLM serving parameters and grpcio channel settings materially changes the latency or throughput story measured in Milestone 1.
+
+- Does increasing the grpcio max message size reduce latency for large embed payloads?
+- Does vLLM's continuous batching interact differently with gRPC streaming vs REST SSE?
+- What channel configuration minimises TTFT at high concurrency?
+
+### Milestone 3 — Corpus Expansion
+
+Re-run all three access paths against a larger, more varied prompt corpus covering short and long prompts, multi-turn conversations, and domain-specific content (code, structured data). Determine whether the Milestone 1 wire-size and latency findings hold across input diversity.
+
+- Do wire-size deltas change with longer prompts or multi-turn context windows?
+- Does streaming TPOT variance increase with structurally different prompt types?
+
+### Milestone 4 — Model Expansion
+
+Repeat the Milestone 1 and 2 benchmarks with at least two additional models of different sizes and architecture families. Determine whether the wire-overhead thesis is model-agnostic or depends on tokeniser and output characteristics.
+
+- Does a larger model (7B+) shift the latency story relative to wire-size gains?
+- Do models with different default output lengths change the response-byte delta?
+
+---
+
 ## Development Commands
 
 ```bash
