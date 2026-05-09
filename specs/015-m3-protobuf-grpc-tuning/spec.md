@@ -5,7 +5,7 @@
 **Status**: Draft
 **Input**: User description: "M3 — Protobuf & gRPC Tuning. Focus on gRPC tuning first (channel options, max_message_size, keepalive, compression, HTTP/2 framing, streaming flow control between FastAPI proxy and the gRPC servicer wrapping AsyncLLM). Protobuf message-shape tuning is in scope but secondary — sequence after gRPC wins are measured."
 
-**Note**: The original input also bundled a small repository-hygiene task — stop tracking `graphify-out/GRAPH_REPORT.md` and `graphify-out/graph.html`, and add them to `.gitignore`. That task has been split out of M3 and shipped as its own change off `main`, because it is a friction point for all future branch switches and does not need to wait for the M3 benchmark cycle to land.
+**Note**: The original input also bundled a small repository-hygiene task — stop tracking `graphify-out/GRAPH_REPORT.md` and `graphify-out/graph.html`, and add them to `.gitignore`. On investigation that work had already landed in M2 (PR #16, task T034): `git ls-files graphify-out/` is empty on `main` and `/graphify-out/` is in `.gitignore`. The friction surfaced for the user only because they encountered it on a `main` checkout that pre-dated the M2 merge; pulling M2 permanently resolves it. No carry-over work into M3.
 
 ## User Scenarios & Testing *(mandatory)*
 
