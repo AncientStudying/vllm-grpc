@@ -68,22 +68,33 @@ done — 0 rebuilt, 0 skipped, 3 cold (4m12s)
 
 ## Step 5 — Verify with three queries
 
-These verifications correspond to the User Story 1 independent test (spec.md):
+These verifications correspond to the User Story 1 independent test (spec.md). The query strategy follows the `## Codebase navigation` block in [`CLAUDE.md`](../../CLAUDE.md): cross-repo *paths* go against `cross-repo.json`; repo-specific questions go against the individual upstream graph.
 
 ```bash
-# (a) cross-repo.json loadable
-graphify query "what is in this graph" --graph cross-repo.json --budget 200
+# (a) cross-repo.json loadable + cross-repo path query
+graphify path "ChatServicer" "AsyncLLM" --graph cross-repo.json
 
-# (b) vLLM-internals query
-graphify query "how does AsyncLLM dispatch generate" --graph cross-repo.json --budget 1500
+# (b) vLLM-internals query — query the vLLM graph directly
+graphify query "how does AsyncLLM dispatch generate" \
+  --graph ~/.graphify/repos/vllm-project/vllm/graphify-out/graph.json \
+  --budget 1500
 
-# (c) grpcio channel-options query
-graphify query "how grpcio enforces max_message_size" --graph cross-repo.json --budget 1500
+# (c) grpcio channel-options query — query the targeted Python wrapper graph
+#     directly, with concrete identifiers via `path` / `explain` (preferred
+#     over natural-language `query` per CLAUDE.md)
+graphify path "Channel" "_RPCState" \
+  --graph ~/.graphify/repos/grpc/grpc/src/python/grpcio/graphify-out/graph.json
+
+graphify explain "_channel.py" \
+  --graph ~/.graphify/repos/grpc/grpc/src/python/grpcio/graphify-out/graph.json
 ```
 
 Pass criteria:
+- (a) `graphify path` returns a multi-hop chain spanning the project + vLLM repos (confirms `cross-repo.json` is loadable AND that the merge connected the three subgraphs).
 - (b) returns at least one god node near `LLMEngine`, `AsyncLLM`, scheduler, or model executor (SC-002).
-- (c) returns at least one god node near `Channel`, `Server`, channel options, or HTTP/2 framing (SC-002).
+- (c) `path` returns a usable call chain reaching `_RPCState`; `explain "_channel.py"` returns a high-degree god node whose neighbors include `Channel`, the four `*MultiCallable` types, and the rendezvous classes (SC-002).
+
+**Note on the historical recipe.** Earlier drafts of this quickstart suggested running `graphify query "<natural-language question>" --graph cross-repo.json` for (b) and (c). That works for vLLM but is unreliable for grpcio: the merged graph's BFS-from-question expands by edge density, with no provenance weighting, so a ~32× size imbalance between vLLM (~55K nodes) and the targeted grpcio Python wrappers (~1.7K nodes) crowds the smaller subgraph out of the answer. Querying the individual upstream graph removes the imbalance. CLAUDE.md is the canonical reference for which graph to query for which question shape.
 
 ## Step 6 — Verify the post-commit hook
 

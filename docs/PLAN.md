@@ -13,6 +13,43 @@ When working with Claude Code on this project, point it at this file plus the ac
 
 ---
 
+## Milestone Roadmap (canonical, M1–M5)
+
+This section mirrors the M1–M5 framing in [`README.md`](../README.md). M1 is delivered, M2 is the active milestone, and M3–M5 are upcoming research directions. The Phase 1–7 plan below this section is preserved as completed-work history (see the boundary heading further down) — it captures decisions and trade-offs that still inform future work, but the milestones above are the canonical forward view.
+
+### M1 — Foundation (delivered)
+
+Three access paths (REST via proxy, gRPC via proxy, gRPC-direct) implemented and benchmarked end-to-end on Modal A10G. Headline numbers: chat-completion response bytes drop from 611 B (REST JSON) to 65 B (gRPC proto, an 89% reduction); embed request payloads drop ~25% because gRPC transmits raw tensor bytes while REST base64-encodes them. Full numbers and methodology in [`benchmarks/summary.md`](benchmarks/summary.md).
+
+### M2 — Cross-Repo Ground-Truth Research (active)
+
+Formalize the practice of consulting cloned vLLM (the inference engine) and grpcio (the wire stack) as authoritative references when making proto, channel, or decode-tuning decisions in M3 and beyond. Tooling, merge process, and rebuild cadence are documented in [`../ground-truth-workflow-for-associated-projects.md`](../ground-truth-workflow-for-associated-projects.md), and the project-local `/ground-truth-refresh` skill drives the documented cadence in one invocation. **Known gap:** graphify does not parse `.proto` files, so proto-shape questions are answered by reading [`../proto/`](../proto) directly; graphify is leaned on for vLLM internals and grpcio channel implementation.
+
+### M3 — Protobuf & gRPC Tuning (upcoming)
+
+Drive wire-size and decode tuning from a mock model that exposes a configurable `hidden_size` (canonical values: 2048, 4096, 8192) and emits embeddings of the matching shape with dummy weights. Per upstream guidance, embed payload size is determined by `hidden_size` rather than total parameter count — Llama 3.1 8B and Llama 3.3 70B both use `hidden_size=8192` and produce identically-sized embed payloads, so a real model is not required for this milestone. GPU cost is removed from the loop. Tuning decisions lean on cloned vLLM and grpcio source as ground truth via `cross-repo.json`.
+
+The milestone splits into two axes:
+
+- **Schema-level (protobuf):** can refinements to message shape (packed scalars, streaming chunk granularity, `oneof` layout for the input union) reduce response or request bytes below the M1 baseline?
+- **Channel-level (grpcio):** how do `max_message_size`, keepalive, compression, and HTTP/2 framing settings affect wire size and decode time across `hidden_size` 2048 / 4096 / 8192? At what `hidden_size` does grpcio's default `max_message_size` become binding for embed requests?
+
+### M4 — Corpus Expansion (upcoming)
+
+Re-run all three access paths against a larger, more varied prompt corpus covering short and long prompts, multi-turn conversations, and domain-specific content (code, structured data). Determine whether the M1 wire-size and latency findings hold across input diversity — do wire-size deltas change with longer prompts or multi-turn context windows, and does streaming TPOT variance increase with structurally different prompt types?
+
+### M5 — Model Expansion (upcoming)
+
+Repeat the M1 and M3 benchmarks with at least two additional models of different sizes and architecture families. Determine whether the wire-overhead thesis is model-agnostic or depends on tokeniser and output characteristics, and validate that the mock-derived findings from M3 hold against real models.
+
+---
+
+## Phase History (preserved as completed-work record)
+
+The content below predates the milestone overlay above and is retained for the decisions and trade-offs it records. New phases of work are tracked under M3–M5 in the milestone roadmap; the Phase 1–7 framing here is read as history.
+
+---
+
 ## 1. Project Overview
 
 ### Problem Statement

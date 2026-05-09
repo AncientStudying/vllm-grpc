@@ -42,11 +42,15 @@ graphify install
 ```bash
 graphify clone https://github.com/vllm-project/vllm
 # Lands at ~/.graphify/repos/vllm-project/vllm/
+
+graphify update ~/.graphify/repos/vllm-project/vllm
 # Produces graphify-out/{graph.json, graph.html, GRAPH_REPORT.md}
 ```
 
-Pin to whichever vLLM version this project depends on; only rebuild when
-the dependency bumps. Stale graphs on a fast-moving upstream are the main
+`graphify clone` only places the repo under `~/.graphify/repos/`;
+`graphify update <path>` is what runs the AST extraction. Pin to
+whichever vLLM version this project depends on; only rebuild when the
+dependency bumps. Stale graphs on a fast-moving upstream are the main
 failure mode.
 
 ### Build the grpcio reference graph
@@ -54,14 +58,29 @@ failure mode.
 ```bash
 graphify clone https://github.com/grpc/grpc
 # Lands at ~/.graphify/repos/grpc/grpc/
-# Produces graphify-out/{graph.json, graph.html, GRAPH_REPORT.md}
+
+graphify update ~/.graphify/repos/grpc/grpc/src/python/grpcio
+# Produces ~/.graphify/repos/grpc/grpc/src/python/grpcio/graphify-out/
+#   {graph.json, graph.html, GRAPH_REPORT.md}
 ```
 
-Pin to the grpcio version this project depends on (resolved version in the
-project lockfile) and rebuild only on bump. The grpcio repo is large but
-most M3-relevant code lives in the Python wrappers
-(`src/python/grpcio/`) plus the channel-options and HTTP/2 layers in
-C-core; AST extraction handles the Python side cleanly.
+Pin to the grpcio version this project depends on (resolved version in
+the project lockfile) and rebuild only on bump.
+
+**Why we target `src/python/grpcio/` rather than the repo root.** grpcio
+is a multi-language monorepo. Indexing the whole tree produces ~55,500
+nodes — but only ~10% of them are Python wrappers; the rest is C++ core
+(55%), C++ tests (12%), Ruby / PHP / Objective-C / C# bindings (6%),
+vendored protobuf C runtime (`third_party/upb`, ~3%), and build tooling.
+For the M3 wire-tuning surface — channel options, RPC state machinery,
+streaming flow control as exposed to Python — that breadth crowds out
+the relevant nodes during BFS query expansion. Indexing only
+`src/python/grpcio/` produces ~1,700 nodes (97% reduction) covering
+`Channel`, `Server`, `_RPCState`, `UnaryUnaryMultiCallable` and friends
+cleanly, with no Ruby/PHP/Obj-C noise. Deep C-core (HTTP/2 transport,
+completion queues, low-level flow control) is "needs source-level
+reading" per the Known gaps section below — graphify wouldn't add value
+there even if we did index it.
 
 ### Build this project's graph and install the Claude Code integration
 
@@ -78,36 +97,65 @@ graphify hook install     # post-commit / post-checkout auto-rebuild
 graphify merge-graphs \
   ./graphify-out/graph.json \
   ~/.graphify/repos/vllm-project/vllm/graphify-out/graph.json \
-  ~/.graphify/repos/grpc/grpc/graphify-out/graph.json \
+  ~/.graphify/repos/grpc/grpc/src/python/grpcio/graphify-out/graph.json \
   --out cross-repo.json
 ```
 
+(The grpcio source path is the Python wrapper subtree, not the repo
+root — see "Build the grpcio reference graph" above.)
+
 Re-run the merge whenever any of the three sides rebuilds — operates on
 JSON, fast.
+
+`cross-repo.json` and the project's `graphify-out/` directory are
+gitignored: they are locally-built artifacts, rebuilt cheaply via the
+`/ground-truth-refresh` skill (see "Rebuild cadence" below). Treat them
+as derived state — never commit them, and never rely on a teammate
+having the same graph bytes.
+
+### Versions resolved from `uv.lock`
+
+The `/ground-truth-refresh` skill auto-detects the target vLLM and
+grpcio versions from `uv.lock` (falling back to `pyproject.toml` only
+when the lockfile is unreadable). No manual `--vllm-version` or
+`--grpcio-version` arguments are required — refreshes stay in sync
+with project dependencies automatically.
+
+The project pins these targets in `pyproject.toml`'s
+`[dependency-groups] graph-targets`:
+
+```toml
+graph-targets = [
+    "grpcio==1.80.0",
+    "vllm==0.20.0; sys_platform == 'linux'",
+]
+```
+
+The `sys_platform == 'linux'` marker on vLLM keeps `uv lock` working on
+the M2 dev machine (vLLM 0.20.0 has CUDA-only wheels with no macOS
+support); the lockfile still records the pinned version for graphify's
+upstream clone.
+
+### Auto-rebuild on lockfile drift
+
+When the lockfile-resolved version differs from the cached upstream
+graph's recorded version, the refresh skill automatically rebuilds the
+affected upstream and surfaces the rebuild as a per-step entry, e.g.
+`rebuilding vLLM graph @ 0.21.0 (was 0.20.0)`. The cache miss is the
+expensive step; the merge that follows operates on JSON and is fast.
 
 ---
 
 ## Querying from Claude Code
 
-```bash
-# Semantic query against the merged graph, capped at 1500 tokens
-/graphify query "how vLLM dispatches a generate request to the engine" \
-  --graph cross-repo.json --budget 1500
-
-# Channel-side wire question (M3 territory)
-/graphify query "how grpcio enforces max_message_size on streaming responses" \
-  --graph cross-repo.json --budget 1500
-
-# Shortest path between two concepts (great for wiring gRPC → vLLM internals)
-/graphify path "GrpcServer" "LLMEngine" --graph cross-repo.json
-
-# Plain-language explanation of a node
-/graphify explain "AsyncLLMEngine" --graph cross-repo.json
-```
-
-For local-only questions (this project's own gRPC/proto layer), the
-PreToolUse hook handles it automatically — no explicit `/graphify` command
-needed.
+The canonical reference for which graph to query for which question shape
+is the `## Codebase navigation` block in [`CLAUDE.md`](CLAUDE.md). In
+short: cross-repo *path* questions go against `cross-repo.json`;
+repo-specific questions go against the individual upstream graph
+(`~/.graphify/repos/<owner>/<repo>/graphify-out/graph.json`, or
+`.../src/python/grpcio/graphify-out/graph.json` for grpcio); project-local
+questions are handled automatically by graphify's PreToolUse hook. See
+CLAUDE.md for concrete commands.
 
 ---
 
@@ -182,10 +230,10 @@ After `graphify claude install` writes its section, append this directive:
 | Trigger | Action |
 |---------|--------|
 | Local commit / branch switch | Auto-handled by `graphify hook install` |
-| `git pull` on a clone | Manual `graphify .` (cheap with cache) |
-| vLLM dependency bump in this project | Rebuild vLLM graph + re-merge |
-| grpcio dependency bump in this project | Rebuild grpcio graph + re-merge |
-| Substantial local refactor | Verify hook fired; if not, manual rebuild |
+| `git pull` on a clone | `/ground-truth-refresh` (cheap when nothing drifted; the SHA256 cache is honored) |
+| vLLM dependency bump in this project | `/ground-truth-refresh` (skill detects the lockfile drift and rebuilds the vLLM graph automatically) |
+| grpcio dependency bump in this project | `/ground-truth-refresh` (same — skill auto-rebuilds the grpcio graph on drift) |
+| Substantial local refactor | `/ground-truth-refresh` (verify the hook fired; the skill is the recovery path if it didn't) |
 
 ---
 

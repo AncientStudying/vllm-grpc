@@ -17,6 +17,15 @@ members = ["packages/gen", "packages/proxy", "packages/frontend", "packages/clie
 investigation = [
     "vllm-metal @ https://github.com/vllm-project/vllm-metal/releases/download/v0.2.0-20260430-132616/vllm_metal-0.2.0-cp312-cp312-macosx_11_0_arm64.whl",
 ]
+# Targets indexed by graphify into cross-repo.json. Pinning here lets the
+# /ground-truth-refresh skill resolve concrete versions from uv.lock without
+# manual flags (FR-019a, FR-019c). vllm carries a sys_platform == 'linux'
+# marker because vllm 0.20.0 has CUDA-only wheels with no macOS support;
+# the marker keeps `uv lock` working on the M2 dev machine.
+graph-targets = [
+    "grpcio==1.80.0",
+    "vllm==0.20.0; sys_platform == 'linux'",
+]
 dev = [
     "grpcio-tools>=1.65",
     "modal>=0.73",
