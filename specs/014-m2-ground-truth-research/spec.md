@@ -5,6 +5,14 @@
 **Status**: Draft
 **Input**: User description: "Milestone 2 — Cross-Repo Ground-Truth Research as documented in README.md and decide or propose changes to docs/PLAN.md to accomodate the currently laid out milestones 2+ in README.md"
 
+## Clarifications
+
+### Session 2026-05-09
+
+- Q: Should `cross-repo.json` and the project's `graphify-out/` be committed to git, or gitignored? → A: Gitignore both — locally-built artifacts; the refresh skill makes rebuild cheap.
+- Q: How should the refresh skill determine which vLLM and grpcio versions to graph? → A: Auto-detect from `uv.lock` / `pyproject.toml` — pin lives in one place; refresh stays in sync with project dependencies.
+- Q: When the refresh skill detects a stale upstream cache (lockfile pin differs from cached graph version), how should it behave? → A: Auto-rebuild the affected upstream graph and surface the rebuild as a per-step entry in the skill's output (e.g., "rebuilding vLLM @ 0.21.0 (was 0.20.0)").
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 — Maintainer Has Authoritative Upstream References Wired In Before M3 Tuning Begins (Priority: P1)
@@ -96,7 +104,7 @@ A new contributor or returning maintainer finds the ground-truth workflow docume
 
 - **FR-001**: vLLM source MUST be cloned via graphify and indexed into a graph artifact at the documented path under `~/.graphify/repos/`.
 - **FR-002**: grpcio source MUST be cloned via graphify and indexed into a graph artifact at the documented path under `~/.graphify/repos/`.
-- **FR-003**: The project's local graph and the two upstream graphs MUST be merged into a single `cross-repo.json` artifact at a stable path inside the working directory, reproducible via the command sequence in the workflow doc.
+- **FR-003**: The project's local graph and the two upstream graphs MUST be merged into a single `cross-repo.json` artifact at a stable path inside the working directory, reproducible via the command sequence in the workflow doc. `cross-repo.json` and the project's `graphify-out/` directory MUST be gitignored as locally-built artifacts.
 - **FR-004**: A graphify post-commit / post-checkout hook MUST be installed so the project's local graph auto-rebuilds on local commits and branch switches.
 - **FR-005**: The Claude Code integration directive (`graphify claude install`) MUST be applied so the PreToolUse hook handles local graph queries automatically.
 - **FR-006**: `CLAUDE.md` MUST contain explicit directives stating: (a) consult `cross-repo.json` for vLLM-internals questions before reading vLLM source, (b) consult `cross-repo.json` for grpcio channel-behavior questions before reading grpcio source, (c) for the project's own gRPC/proto layer the local graph plus PreToolUse hook is sufficient, and (d) `.proto` definitions are NOT in the graph and must be read directly.
@@ -119,6 +127,8 @@ A new contributor or returning maintainer finds the ground-truth workflow docume
 - **FR-017**: At least one skill MUST exist that performs the full refresh sequence — local rebuild, upstream refreshes (when needed), and merge — in a single invocation, so the maintainer does not have to compose the underlying graphify commands by hand.
 - **FR-018**: Refresh skills MUST surface per-step progress and outcome (success / failure / skipped) and MUST report the path to the produced `cross-repo.json` on success.
 - **FR-019**: Refresh skills MUST honor graphify's SHA256 cache so re-invocation on an unchanged tree completes without redoing expensive work; upstream clones MUST be reused if the pinned dependency version has not changed.
+- **FR-019a**: Refresh skills MUST resolve the target vLLM and grpcio versions from the project's lockfile (`uv.lock`, falling back to `pyproject.toml` if the lockfile is absent) so the cross-repo graph stays in sync with the project's pinned dependencies without manual version arguments.
+- **FR-019b**: When the resolved lockfile version differs from the version represented by the cached upstream graph, refresh skills MUST automatically rebuild the affected upstream graph and surface the rebuild as a per-step entry in the skill's output (e.g., "rebuilding vLLM graph @ 0.21.0 (was 0.20.0)") so the maintainer sees when expensive work runs.
 - **FR-020**: Refresh skills MUST detect missing prerequisites (e.g., graphify not installed, working directory is not the vllm-grpc repository) and report them with an actionable next step rather than failing with a raw shell error.
 - **FR-021**: The workflow document's rebuild cadence table MUST name the skill (or skills) to invoke for each trigger row so contributors do not need to know the underlying graphify CLI to follow the cadence.
 - **FR-022**: `CLAUDE.md` MUST reference the refresh skill(s) as the canonical way to bring `cross-repo.json` back to current when the graph is suspected stale.
