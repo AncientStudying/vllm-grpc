@@ -7,6 +7,14 @@
 
 **Note**: The original input also bundled a small repository-hygiene task — stop tracking `graphify-out/GRAPH_REPORT.md` and `graphify-out/graph.html`, and add them to `.gitignore`. On investigation that work had already landed in M2 (PR #16, task T034): `git ls-files graphify-out/` is empty on `main` and `/graphify-out/` is in `.gitignore`. The friction surfaced for the user only because they encountered it on a `main` checkout that pre-dated the M2 merge; pulling M2 permanently resolves it. No carry-over work into M3.
 
+## Clarifications
+
+### Session 2026-05-09
+
+- Q: What threshold defines a "win" for an M3 channel- or schema-level recommendation (the noise floor referenced by SC-003)? → A: A measured improvement must exceed the upper bound of the 95% confidence interval of the M1-baseline measurement at the same workload; this requires repeated runs per cell to estimate the baseline CI.
+- Q: When does P1 close so that P2 (schema-level proto tuning) may begin? → A: All four channel axes (`max_message_size`, keepalive, compression, HTTP/2 framing) must each have a recorded outcome — a positive recommendation, an explicit "no winner found", or an explicit "not measurable on this harness" — before P2 starts. Partial closure does not unblock P2.
+- Q: What prompt corpus drives the chat-completion streaming workload? → A: The M1 prompt corpus drives the bulk of streaming runs (preserving M1↔M3 comparability per FR-003), and the harness adds at least one explicit long-stream synthetic prompt — long enough to exercise keepalive and HTTP/2 framing behaviour the M1 corpus may not reach — so the keepalive-regression Edge Case is observable.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 — Channel-level (gRPC) tuning measurements (Priority: P1)
@@ -62,9 +70,10 @@ After P1 has produced a documented best channel configuration, a maintainer want
 - **FR-005**: For each gRPC channel-level setting under test (`max_message_size`, keepalive, compression, HTTP/2 framing), the report MUST document the configurations compared, the per-setting wire-byte and decode-time deltas vs. the M1 baseline, and the recommended setting with its rationale.
 - **FR-006**: The report MUST identify the embedding width at which the default `max_message_size` first becomes binding for the embed path.
 - **FR-007**: Channel-tuning recommendations MUST cite the corresponding behaviour in cloned grpcio source per the M2 ground-truth workflow, not documentation summaries alone.
-- **FR-008**: Schema-level (protobuf) tuning MUST NOT begin until the P1 channel configuration has been measured and recorded in the M3 report. The recorded P1 configuration becomes the fixed baseline against which schema-level deltas are reported.
+- **FR-008**: Schema-level (protobuf) tuning MUST NOT begin until **all four** P1 channel axes — `max_message_size`, keepalive, compression, and HTTP/2 framing — have each been measured and have a recorded outcome in the M3 report. A recorded outcome is one of: a positive recommendation with supporting delta, an explicit "no winner found" with supporting numbers, or an explicit "not measurable on this harness" with rationale. Partial axis closure does not unblock P2. The frozen four-axis P1 channel configuration becomes the fixed baseline against which P2 schema-level deltas are reported.
 - **FR-009**: For each schema-level proto change under test, the report MUST document the wire-byte and decode-time deltas vs. the P1 baseline, the rationale (with vLLM/grpcio citations per the M2 workflow), and any compatibility implications for existing clients.
 - **FR-010**: Findings, deltas, and recommendations MUST be published in a new section of `docs/benchmarks/` (or an analogous report file) in the same format as the existing M1 summary, so external readers can compare M1 vs. M3 numbers at a glance.
+- **FR-011**: The chat-completion streaming workload MUST be driven by the M1 prompt corpus (to preserve M1↔M3 comparability per FR-003), augmented with at least one explicit long-stream synthetic prompt long enough to exercise keepalive and HTTP/2 framing behaviour the M1 corpus may not surface (so the keepalive-regression Edge Case is observable).
 
 ### Key Entities
 
@@ -80,7 +89,7 @@ After P1 has produced a documented best channel configuration, a maintainer want
 
 - **SC-001**: A reader of the M3 report can answer "which gRPC channel settings should I use to minimise wire bytes for an LLM-style embed payload at hidden_size 2048, 4096, and 8192?" without rerunning the benchmark — at all three canonical widths, the report names a recommended setting per axis (`max_message_size`, keepalive, compression, HTTP/2 framing) and shows the supporting delta vs. the M1 baseline.
 - **SC-002**: A reader can identify the embedding width at which the default `max_message_size` first becomes binding for the embed path, expressed as a specific width value, with the failure mode described.
-- **SC-003**: For at least one channel-level setting, the M3 report demonstrates a measurable reduction in either wire bytes or decode time relative to the M1 baseline, beyond benchmark noise floor (or, if no setting wins, the report explicitly documents that finding with the supporting numbers).
+- **SC-003**: For at least one channel-level setting, the M3 report demonstrates a measurable reduction in either wire bytes or decode time relative to the M1 baseline, where the reduction exceeds the upper bound of the 95% confidence interval of the M1-baseline measurement at the same workload (the harness must therefore run enough repetitions per cell to estimate that CI). If no setting clears that bar, the report explicitly documents that finding with the supporting numbers and the per-cell CI.
 - **SC-004**: After P1 closes, at least one schema-level proto candidate is benchmarked against the P1 channel baseline and its wire-byte and decode-time deltas are recorded in the report — even if the candidate is ultimately rejected, the negative result is documented.
 - **SC-005**: Every channel-level and schema-level recommendation in the M3 report is paired with a citation pointing into cloned grpcio or vLLM source via the M2 ground-truth workflow.
 
