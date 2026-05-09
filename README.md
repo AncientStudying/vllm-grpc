@@ -96,24 +96,35 @@ All runs on Modal A10G GPU, vLLM 0.20.0, model `Qwen/Qwen3-0.6B`. Full numbers a
 
 Three access paths (REST via proxy, gRPC via proxy, gRPC-direct) implemented and benchmarked end-to-end on Modal A10G. Headline finding: gRPC-direct reduces response bytes by **89%** for chat completions and **25%** for embed request payloads. See [`docs/benchmarks/summary.md`](docs/benchmarks/summary.md) for full numbers and methodology.
 
-### Milestone 2 — Parameter Tuning
+### Milestone 2 — Cross-Repo Ground-Truth Research
 
-Investigate whether adjusting vLLM serving parameters and grpcio channel settings materially changes the latency or throughput story measured in Milestone 1.
+Formalize the practice of consulting cloned vLLM (the inference engine) and grpcio (the wire stack) as authoritative references when making proto, channel, or decode-tuning decisions in M3 and beyond. Tooling, merge process, and rebuild cadence are documented in [`ground-truth-workflow-for-associated-projects.md`](ground-truth-workflow-for-associated-projects.md). Known gap: graphify does not parse `.proto` files, so proto-shape questions are answered by reading `proto/` directly; graphify is leaned on for vLLM internals and grpcio channel implementation.
 
-- Does increasing the grpcio max message size reduce latency for large embed payloads?
-- Does vLLM's continuous batching interact differently with gRPC streaming vs REST SSE?
-- What channel configuration minimises TTFT at high concurrency?
+### Milestone 3 — Protobuf & gRPC Tuning
 
-### Milestone 3 — Corpus Expansion
+Drive wire-size and decode tuning from a mock model that exposes a configurable `hidden_size` (canonical values: 2048, 4096, 8192) and emits embeddings of the matching shape with dummy weights. Per upstream guidance, embed payload size is determined by `hidden_size` rather than total parameter count — Llama 3.1 8B and Llama 3.3 70B both use `hidden_size=8192` and produce identically-sized embed payloads, so a real model is not required for this milestone. GPU cost is removed from the loop.
+
+The milestone splits into two axes:
+
+**Schema-level (protobuf):**
+- Can refinements to message shape (packed scalars, streaming chunk granularity, `oneof` layout for the input union) reduce response or request bytes below the M1 baseline?
+
+**Channel-level (grpcio):**
+- How do `max_message_size`, keepalive, compression, and HTTP/2 framing settings affect wire size and decode time across `hidden_size` 2048 / 4096 / 8192?
+- At what `hidden_size` does grpcio's default `max_message_size` become binding for embed requests?
+
+Tuning decisions in this milestone lean on cloned vLLM and grpcio source as ground truth — see [`ground-truth-workflow-for-associated-projects.md`](ground-truth-workflow-for-associated-projects.md).
+
+### Milestone 4 — Corpus Expansion
 
 Re-run all three access paths against a larger, more varied prompt corpus covering short and long prompts, multi-turn conversations, and domain-specific content (code, structured data). Determine whether the Milestone 1 wire-size and latency findings hold across input diversity.
 
 - Do wire-size deltas change with longer prompts or multi-turn context windows?
 - Does streaming TPOT variance increase with structurally different prompt types?
 
-### Milestone 4 — Model Expansion
+### Milestone 5 — Model Expansion
 
-Repeat the Milestone 1 and 2 benchmarks with at least two additional models of different sizes and architecture families. Determine whether the wire-overhead thesis is model-agnostic or depends on tokeniser and output characteristics.
+Repeat the Milestone 1 and 3 benchmarks with at least two additional models of different sizes and architecture families. Determine whether the wire-overhead thesis is model-agnostic or depends on tokeniser and output characteristics, and validate that the mock-derived findings from M3 hold against real models.
 
 - Does a larger model (7B+) shift the latency story relative to wire-size gains?
 - Do models with different default output lengths change the response-byte delta?
