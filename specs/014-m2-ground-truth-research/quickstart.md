@@ -55,14 +55,16 @@ After this step, every `git commit` and `git checkout` triggers a project-graph 
 What you should see (illustrative; exact times vary on first build because both upstream graphs are cold):
 
 ```text
-vLLM @ 0.20.0 (uv.lock)
+vLLM @ 0.20.1 (uv.lock)
 grpcio @ 1.80.0 (uv.lock)
-building vLLM graph @ 0.20.0 (cold)            ... ok
+building vLLM graph @ 0.20.1 (cold)            ... ok
 building grpcio graph @ 1.80.0 (cold)          ... ok
 local graph rebuilt
 merged → /Users/<user>/projects/vllm-grpc/cross-repo.json
 done — 0 rebuilt, 0 skipped, 3 cold (4m12s)
 ```
+
+(Exact versions track `uv.lock`'s pins for `vllm` and `grpcio`; the ones above were current as of the most recent FR-019b validation pass.)
 
 `cross-repo.json` is now present at the repo root and gitignored.
 
@@ -99,11 +101,17 @@ Pass criteria:
 ## Step 6 — Verify the post-commit hook
 
 ```bash
-echo "# touch" >> docs/PLAN.md && git add docs/PLAN.md && git commit -m "test"
-git reset --hard HEAD^          # roll back the test commit
+# Use a throwaway untracked file so this works even if you have other
+# uncommitted edits — `git reset --hard` would wipe those.
+date > .hook-probe && git add .hook-probe && git commit -m "test: post-commit hook"
+
+# Soft reset so the working tree and any unrelated staged work stay intact.
+git reset --soft HEAD^ && git restore --staged .hook-probe && rm .hook-probe
 ```
 
-Inspect `graphify-out/manifest.json` — its mtime should reflect the commit you just made and rolled back. (User Story 1 acceptance scenario 4.)
+Inspect `graphify-out/graph.json` — its mtime should reflect the commit you just made and rolled back. (User Story 1 acceptance scenario 4.)
+
+**Why a real file rather than `git commit --allow-empty`:** the post-commit hook short-circuits when `git diff --name-only HEAD~1 HEAD` is empty (`if [ -z "$CHANGED" ]; then exit 0`), so an empty commit will NOT trigger the rebuild. The hook also writes `graph.json` (and `graph.html`, `GRAPH_REPORT.md`) but does NOT write `graphify-out/manifest.json` — check `graph.json`'s mtime, not `manifest.json`'s.
 
 ---
 
