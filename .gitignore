@@ -222,6 +222,12 @@ docs/graphs/
 graphify-out/cache/
 graphify-out/manifest.json
 
+# Project local graph artifacts (locally rebuilt via graphify hooks or /ground-truth-refresh)
+/graphify-out/
+
+# Cross-repo merged graph (locally rebuilt via /ground-truth-refresh)
+/cross-repo.json
+
 # PyPI configuration file
 .pypirc
 
