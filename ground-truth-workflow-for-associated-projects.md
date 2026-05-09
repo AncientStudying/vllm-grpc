@@ -40,30 +40,38 @@ graphify install
 ### Build the vLLM reference graph
 
 ```bash
-graphify clone https://github.com/vllm-project/vllm
-# Lands at ~/.graphify/repos/vllm-project/vllm/
+graphify clone https://github.com/vllm-project/vllm --branch v0.20.0
+# Lands at ~/.graphify/repos/vllm-project/vllm/ in detached-HEAD at v0.20.0
 
 graphify update ~/.graphify/repos/vllm-project/vllm
-# Produces graphify-out/{graph.json, graph.html, GRAPH_REPORT.md}
+echo "0.20.0" > ~/.graphify/repos/vllm-project/vllm/graphify-out/.target-version.txt
+# Produces graphify-out/{graph.json, graph.html, GRAPH_REPORT.md, .target-version.txt}
 ```
 
-`graphify clone` only places the repo under `~/.graphify/repos/`;
-`graphify update <path>` is what runs the AST extraction. Pin to
-whichever vLLM version this project depends on; only rebuild when the
-dependency bumps. Stale graphs on a fast-moving upstream are the main
-failure mode.
+`graphify clone --branch <tag>` lands the clone at the tagged ref in
+detached-HEAD state (URL must come first, flags follow); `graphify
+update <path>` runs the AST extraction. The `.target-version.txt`
+sidecar is what the `/ground-truth-refresh` skill reads to detect drift
+on subsequent refreshes — without it, every refresh would treat the
+upstream as cold. Pin to whichever vLLM version this project's
+`uv.lock` resolves; rebuild only when the lockfile bumps. Stale graphs
+on a fast-moving upstream are the main failure mode, and the sidecar is
+the single source of truth for "what version is cached."
 
 ### Build the grpcio reference graph
 
 ```bash
-graphify clone https://github.com/grpc/grpc
-# Lands at ~/.graphify/repos/grpc/grpc/
+graphify clone https://github.com/grpc/grpc --branch v1.80.0
+# Lands at ~/.graphify/repos/grpc/grpc/ in detached-HEAD at v1.80.0
 
 graphify update ~/.graphify/repos/grpc/grpc/src/python/grpcio
+echo "1.80.0" > ~/.graphify/repos/grpc/grpc/src/python/grpcio/graphify-out/.target-version.txt
 # Produces ~/.graphify/repos/grpc/grpc/src/python/grpcio/graphify-out/
-#   {graph.json, graph.html, GRAPH_REPORT.md}
+#   {graph.json, graph.html, GRAPH_REPORT.md, .target-version.txt}
 ```
 
+The sidecar lives inside the **indexed subpath's** `graphify-out/`
+(matching where the graph itself lands), not the clone's repo root.
 Pin to the grpcio version this project depends on (resolved version in
 the project lockfile) and rebuild only on bump.
 

@@ -24,7 +24,7 @@ investigation = [
 # the marker keeps `uv lock` working on the M2 dev machine.
 graph-targets = [
     "grpcio==1.80.0",
-    "vllm==0.20.0; sys_platform == 'linux'",
+    "vllm==0.20.1; sys_platform == 'linux'",
 ]
 dev = [
     "grpcio-tools>=1.65",

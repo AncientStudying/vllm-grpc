@@ -108,43 +108,80 @@ this branch is a recovery path, not the default.
 
 For each resolved upstream (`vllm-project/vllm`, `grpc/grpc`):
 
-1. Read the cached version from
-   `~/.graphify/repos/<owner>/<repo>/graphify-out/manifest.json`.
+1. Read the **cached version** from the sidecar file
+   `~/.graphify/repos/<owner>/<repo>[/<subpath>]/graphify-out/.target-version.txt`.
+   If absent, treat as no cache (cold).
 2. Compare against the lockfile-resolved version from Step 3.
 
 Emit one of:
 
-- `vLLM graph cache current @ 0.20.0 — skipped` (cached version matches)
-- `building vLLM graph @ 0.20.0 (cold)` (no cache yet — first build)
-- `rebuilding vLLM graph @ 0.21.0 (was 0.20.0)` (drift detected)
-
-For cold builds, the cycle is two graphify commands per upstream — clone
-then update. `graphify clone` only places the repo under
-`~/.graphify/repos/<owner>/<repo>/`; `graphify update <path>` performs
-the AST extraction that produces `<path>/graphify-out/graph.json`.
+- `vLLM graph cache current @ 0.20.0 — skipped` (sidecar matches)
+- `building vLLM graph @ 0.20.0 (cold)` (no sidecar — first build)
+- `rebuilding vLLM graph @ 0.21.0 (was 0.20.0)` (sidecar disagrees with lockfile)
 
 vLLM is indexed from the repo root because its source tree is already
 domain-tight (every node under `vllm/` is on-thesis). grpcio is a
 multi-language monorepo (~55K nodes total: 55% C++ core, 12% C++ tests,
 6% Ruby/PHP/Objective-C/C# bindings, only ~10% Python wrappers), so the
-skill indexes only the Python wrapper subtree at
-`src/python/grpcio/` (~1.7K nodes, 97% reduction). Channel options,
-RPC state machinery, and the Python-side wire surface all live there;
-deep C-core (HTTP/2 framing, completion queues) is read at source per
-the workflow doc's "Known gaps" section:
+skill indexes only the Python wrapper subtree at `src/python/grpcio/`
+(~1.7K nodes, 97% reduction). Channel options, RPC state machinery, and
+the Python-side wire surface all live there; deep C-core (HTTP/2
+framing, completion queues) is read at source per the workflow doc's
+"Known gaps" section.
+
+**Cold path** — clone at the resolved tag in one step. `graphify clone`
+requires the URL first, then flags. Tag-format fallback: try
+`v<version>` first; if `graphify clone --branch v<version>` fails, fall
+back to a plain clone followed by `git -C <clone> fetch origin tag
+<version> && git -C <clone> checkout <version>` for upstreams that
+don't use the `v` prefix.
 
 ```bash
-graphify clone https://github.com/vllm-project/vllm
+# vLLM (whole repo indexed)
+graphify clone https://github.com/vllm-project/vllm --branch v0.20.0
 graphify update ~/.graphify/repos/vllm-project/vllm
+echo "0.20.0" > ~/.graphify/repos/vllm-project/vllm/graphify-out/.target-version.txt
 
-graphify clone https://github.com/grpc/grpc
+# grpcio (Python wrapper subtree indexed)
+graphify clone https://github.com/grpc/grpc --branch v1.80.0
 graphify update ~/.graphify/repos/grpc/grpc/src/python/grpcio
+echo "1.80.0" > ~/.graphify/repos/grpc/grpc/src/python/grpcio/graphify-out/.target-version.txt
 ```
 
-For drift rebuilds, check out the new tag/version in the cached clone
-under `~/.graphify/repos/<owner>/<repo>/` and run `graphify update`
-against the same path used in the cold build. The SHA256 cache makes
-the re-extraction cheap for files that didn't change between versions.
+The sidecar lives **inside the indexed subpath's `graphify-out/`** so
+vLLM (parent = subpath) and grpcio (parent ≠ subpath) follow the same
+rule.
+
+**Drift path** — fetch the new tag in the existing clone, check out,
+re-extract, update the sidecar:
+
+```bash
+# vLLM drift example: 0.20.0 → 0.20.2
+git -C ~/.graphify/repos/vllm-project/vllm fetch origin tag v0.20.2 --no-tags
+git -C ~/.graphify/repos/vllm-project/vllm checkout v0.20.2 \
+  || git -C ~/.graphify/repos/vllm-project/vllm checkout 0.20.2
+graphify update ~/.graphify/repos/vllm-project/vllm
+echo "0.20.2" > ~/.graphify/repos/vllm-project/vllm/graphify-out/.target-version.txt
+
+# grpcio drift example: 1.80.0 → 1.80.2 (same shape, indexed subpath)
+git -C ~/.graphify/repos/grpc/grpc fetch origin tag v1.80.2 --no-tags
+git -C ~/.graphify/repos/grpc/grpc checkout v1.80.2 \
+  || git -C ~/.graphify/repos/grpc/grpc checkout 1.80.2
+graphify update ~/.graphify/repos/grpc/grpc/src/python/grpcio
+echo "1.80.2" > ~/.graphify/repos/grpc/grpc/src/python/grpcio/graphify-out/.target-version.txt
+```
+
+The SHA256 cache keeps re-extraction cheap for files unchanged between
+versions; only post-tag-diff files re-extract.
+
+**Edge case — graphify's "refusing to overwrite" guardrail.** If
+`graphify update` reports `new graph has N nodes but existing graph.json
+has M. Refusing to overwrite — you may be missing chunk files from a
+previous session.`, the existing graph.json was built against a
+significantly different ref (e.g. main HEAD vs a release tag). Recovery:
+delete the stale `graphify-out/graph.json` and re-run `graphify update`.
+Skill emits this as `<repo> graph cache stale (size mismatch) — purging
+and rebuilding @ <version>`.
 
 ### Step 5 — Refresh the project local graph
 
