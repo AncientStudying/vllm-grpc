@@ -436,7 +436,21 @@ async def _measure_cell(
     *,
     seed: int,
     pace_tokens: bool,
+    warmup_n: int = 0,
 ) -> RunCohort:
+    """Measure ``cell.iterations`` RPCs after ``warmup_n`` discarded warmup RPCs.
+
+    The warmup RPCs reuse the same server + channel as the measurement, so
+    cold-start cost (channel establishment, first-RPC HTTP/2 negotiation,
+    protobuf descriptor caches, asyncio event-loop priming) is paid before
+    the first measured sample. Without this, the first ~5–10 RPCs against
+    a fresh process can dominate within-cohort variance and trip the
+    FR-005 baseline-CV cap on commodity hosts.
+
+    The returned cohort has exactly ``cell.iterations`` samples; the
+    discarded warmup samples are not visible to ``_aggregate`` and never
+    surface in the published JSON.
+    """
     long_stream = cell.corpus_subset == "m3_long_stream"
     engine_cfg = _engine_config(
         hidden_size=cell.hidden_size,
@@ -445,12 +459,18 @@ async def _measure_cell(
         seed=seed,
     )
     engine = MockEngine(engine_cfg)
-    async with serve_in_process(engine, cell.channel_config) as addr:
-        if cell.path == "embed":
-            samples = await _drive_embed_cell(addr, cell, seed)
+    drive_cell = (
+        replace(cell, iterations=cell.iterations + warmup_n) if warmup_n > 0 else cell
+    )
+    async with serve_in_process(engine, drive_cell.channel_config) as addr:
+        if drive_cell.path == "embed":
+            samples = await _drive_embed_cell(addr, drive_cell, seed)
         else:
-            samples = await _drive_chat_stream_cell(addr, cell, seed, long_stream=long_stream)
-    cohort = _aggregate(cell, samples)
+            samples = await _drive_chat_stream_cell(
+                addr, drive_cell, seed, long_stream=long_stream
+            )
+    measured = list(samples[warmup_n:]) if warmup_n > 0 else list(samples)
+    cohort = _aggregate(cell, measured)
     return _attach_ttft(cohort)
 
 
@@ -485,7 +505,12 @@ async def measure_shared_baseline(
         corpus_subset=corpus,  # type: ignore[arg-type]
         iterations=config.baseline_n,
     )
-    cohort = await _measure_cell(cell, seed=seed, pace_tokens=(config.pacing_mode == "paced"))
+    cohort = await _measure_cell(
+        cell,
+        seed=seed,
+        pace_tokens=(config.pacing_mode == "paced"),
+        warmup_n=config.warmup_n,
+    )
     return replace(
         cohort,
         is_baseline=True,
@@ -502,7 +527,12 @@ async def measure_candidate(
     config: M4SweepConfig,
 ) -> RunCohort:
     """Measure one candidate cell with the borderline-expand cascade."""
-    cohort = await _measure_cell(cell, seed=seed, pace_tokens=(config.pacing_mode == "paced"))
+    cohort = await _measure_cell(
+        cell,
+        seed=seed,
+        pace_tokens=(config.pacing_mode == "paced"),
+        warmup_n=config.warmup_n,
+    )
     metric = "ttft" if cell.path == "chat_stream" else "time"
     overlapped = detect_ci_overlap(baseline, cohort, metric=metric)
     if overlapped and cohort.measurable:
@@ -513,6 +543,7 @@ async def measure_candidate(
                 new_cell,
                 seed=seed + 1,
                 pace_tokens=(config.pacing_mode == "paced"),
+                warmup_n=config.warmup_n,
             )
 
         cohort = await expand_cohort(
@@ -725,7 +756,12 @@ async def compose_frozen_baselines(
             corpus_subset=corpus,  # type: ignore[arg-type]
             iterations=config.baseline_n,
         )
-        cohort = await _measure_cell(cell, seed=seed, pace_tokens=(config.pacing_mode == "paced"))
+        cohort = await _measure_cell(
+            cell,
+            seed=seed,
+            pace_tokens=(config.pacing_mode == "paced"),
+            warmup_n=config.warmup_n,
+        )
         cohort = replace(
             cohort,
             is_baseline=True,

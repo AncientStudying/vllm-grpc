@@ -9,6 +9,7 @@ python -m vllm_grpc_bench --m4 \
     [--baseline-n=<int>] \
     [--candidate-n=<int>] \
     [--expand-n=<int>] \
+    [--warmup-n=<int>] \
     [--baseline-cv-max=<float>] \
     [--widths=<csv-int>] \
     [--paths=<csv>] \
@@ -28,6 +29,7 @@ python -m vllm_grpc_bench --m4 \
 | `--baseline-n=<int>` | `100` | Sample count per shared baseline cohort. Minimum 100 (rejected below). |
 | `--candidate-n=<int>` | `100` | Default sample count per candidate cohort before borderline-expand. |
 | `--expand-n=<int>` | `250` | Sample count after borderline-expand. Must be `> --candidate-n`. |
+| `--warmup-n=<int>` | `10` | Discarded leading RPCs per cohort. Reuses the same server + channel as the measurement so cold-start cost (channel setup, HTTP/2 negotiation, protobuf descriptor caches) is paid before sampling begins. Set to 0 to disable. |
 | `--baseline-cv-max=<float>` | `0.05` | Maximum within-cohort coefficient of variation on the time metric for baseline cohorts (FR-005 / R-11). Run aborts if exceeded. |
 | `--widths=<csv-int>` | `2048,4096,8192` | Hidden-size matrix. Schema candidates always start at 4096 (cascade). |
 | `--paths=<csv>` | `embed,chat_stream` | Paths to measure. |

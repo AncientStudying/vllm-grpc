@@ -188,6 +188,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline-n", type=int, default=100)
     parser.add_argument("--candidate-n", type=int, default=100)
     parser.add_argument("--expand-n", type=int, default=250)
+    parser.add_argument(
+        "--warmup-n",
+        type=int,
+        default=10,
+        help=(
+            "M4: discard this many leading RPCs per cohort to absorb cold-start "
+            "cost (channel setup, first-RPC HTTP/2 negotiation, descriptor caches). "
+            "Crucial for hitting the FR-005 baseline-CV cap on commodity hosts."
+        ),
+    )
     parser.add_argument("--baseline-cv-max", type=float, default=0.05)
     parser.add_argument(
         "--widths",
@@ -634,6 +644,7 @@ def _build_m4_config(args: argparse.Namespace) -> M4SweepConfig:
         baseline_n=int(args.baseline_n),
         candidate_n=int(args.candidate_n),
         expand_n=int(args.expand_n),
+        warmup_n=int(args.warmup_n),
         baseline_cv_max=float(args.baseline_cv_max),
         widths=widths,
         paths=paths,  # type: ignore[arg-type]

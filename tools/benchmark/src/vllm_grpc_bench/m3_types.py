@@ -301,12 +301,20 @@ class M4SweepConfig:
     schema_canonical_width: int = 4096
     skip_schema: bool = False
     seed: int = 0
+    # Discard this many leading RPCs from every cohort before aggregation.
+    # Reuses the same server + channel as the measurement, so cold-start
+    # cost (channel establishment, first-RPC HTTP/2 negotiation, protobuf
+    # descriptor caches) is paid before sampling begins. Crucial for
+    # hitting the FR-005 baseline-CV cap on commodity hosts.
+    warmup_n: int = 10
 
     def __post_init__(self) -> None:
         if self.baseline_n < 100:
             raise ValueError("M4SweepConfig.baseline_n must be >= 100 (FR-002)")
         if self.candidate_n < 100:
             raise ValueError("M4SweepConfig.candidate_n must be >= 100 (FR-002)")
+        if self.warmup_n < 0:
+            raise ValueError("M4SweepConfig.warmup_n must be >= 0")
         if self.expand_n <= self.candidate_n:
             raise ValueError(
                 "M4SweepConfig.expand_n must be > candidate_n "
