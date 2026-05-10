@@ -423,9 +423,12 @@ def _aggregate(cell: BenchmarkCell, samples: list[Sample]) -> RunCohort:
         )
     bytes_samples = [float(s.response_wire_bytes + s.request_wire_bytes) for s in successful]
     time_samples = [s.wall_clock_seconds for s in successful]
-    if len(successful) < 2:
-        bm = bytes_samples[0]
-        tm = time_samples[0]
+    # ci.estimate() refuses n<10 for SC-003 rigor; pilots and other low-n runs
+    # report mean-only with degenerate CIs and measurable=False so the
+    # recommendation builder downgrades them to "not_measurable" cleanly.
+    if len(successful) < 10:
+        bm = sum(bytes_samples) / len(bytes_samples)
+        tm = sum(time_samples) / len(time_samples)
         return RunCohort(
             cell=cell,
             samples=tuple(samples),
@@ -436,7 +439,7 @@ def _aggregate(cell: BenchmarkCell, samples: list[Sample]) -> RunCohort:
             time_mean=tm,
             time_ci_low=tm,
             time_ci_high=tm,
-            measurable=measurable,
+            measurable=False,
         )
     bytes_est = estimate(bytes_samples)
     time_est = estimate(time_samples)
@@ -465,6 +468,17 @@ def _corpus_for_path(path: Path_, long_stream: bool) -> CorpusSubset:
     return "m3_long_stream" if long_stream else "m1_chat"
 
 
+LONG_STREAM_WIDTH: int = 4096
+"""Canonical mid-point width at which the long-stream cohort is evaluated.
+
+Long-stream coverage is restricted to one width because keepalive ping
+intervals and HTTP/2 BDP-probe behaviour are timing-dominated, not
+payload-size-dominated — per-width × per-config long-stream cells would
+multiply wall time (~52s/iter at n=30 → 26 min/cell) without adding signal.
+The published M3 report records this scope decision in its methodology note.
+"""
+
+
 def plan_cells(
     *,
     axes: tuple[Axis, ...],
@@ -473,7 +487,12 @@ def plan_cells(
     iterations: int,
     include_long_stream: bool = True,
 ) -> list[BenchmarkCell]:
-    """Build the cartesian product of cells for the given dimensions."""
+    """Build the cartesian product of cells for the given dimensions.
+
+    Long-stream chat cohorts are added only on the keepalive and http2_framing
+    axes and only at ``LONG_STREAM_WIDTH`` (the canonical mid-point). See the
+    constant's docstring for the rationale.
+    """
     cells: list[BenchmarkCell] = []
     for axis in axes:
         for cfg in presets_for_axis(axis):
@@ -485,20 +504,11 @@ def plan_cells(
                             path == "chat_stream"
                             and include_long_stream
                             and axis in {"keepalive", "http2_framing"}
+                            and w == LONG_STREAM_WIDTH
                         )
                         else (False,)
                     )
                     for ls in long_streams:
-                        if (
-                            path == "chat_stream"
-                            and ls is True
-                            and axis
-                            not in {
-                                "keepalive",
-                                "http2_framing",
-                            }
-                        ):
-                            continue
                         cells.append(
                             BenchmarkCell(
                                 path=path,
