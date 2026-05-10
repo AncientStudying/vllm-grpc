@@ -148,9 +148,7 @@ def verdict_metric_cv(cohort: RunCohort) -> tuple[str, float | None]:
     return "time", cohort.time_cv
 
 
-def flag_noisy_baseline(
-    cohort: RunCohort, *, baseline_cv_warn: float
-) -> RunCohort:
+def flag_noisy_baseline(cohort: RunCohort, *, baseline_cv_warn: float) -> RunCohort:
     """FR-005 / R-11: tag a baseline cohort whose verdict-metric CV exceeds
     ``baseline_cv_warn``. Never raises — the run always continues; the flag is
     a reader-facing signal in the published report.
@@ -482,16 +480,12 @@ async def _measure_cell(
         seed=seed,
     )
     engine = MockEngine(engine_cfg)
-    drive_cell = (
-        replace(cell, iterations=cell.iterations + warmup_n) if warmup_n > 0 else cell
-    )
+    drive_cell = replace(cell, iterations=cell.iterations + warmup_n) if warmup_n > 0 else cell
     async with serve_in_process(engine, drive_cell.channel_config) as addr:
         if drive_cell.path == "embed":
             samples = await _drive_embed_cell(addr, drive_cell, seed)
         else:
-            samples = await _drive_chat_stream_cell(
-                addr, drive_cell, seed, long_stream=long_stream
-            )
+            samples = await _drive_chat_stream_cell(addr, drive_cell, seed, long_stream=long_stream)
     measured = list(samples[warmup_n:]) if warmup_n > 0 else list(samples)
     cohort = _aggregate(cell, measured)
     return _attach_ttft(cohort)
@@ -511,9 +505,7 @@ def _attach_ttft(cohort: RunCohort) -> RunCohort:
     if est is None:
         return replace(cohort, ttft_cv=ttft_cv)
     mean, low, high, _n = est
-    return replace(
-        cohort, time_to_first_token_seconds=(mean, low, high), ttft_cv=ttft_cv
-    )
+    return replace(cohort, time_to_first_token_seconds=(mean, low, high), ttft_cv=ttft_cv)
 
 
 # ---------------------------------------------------------------------------
@@ -652,9 +644,7 @@ async def run_m4_sweep(
             seed=config.seed,
             config=config,
         )
-        baseline = flag_noisy_baseline(
-            baseline, baseline_cv_warn=config.baseline_cv_warn
-        )
+        baseline = flag_noisy_baseline(baseline, baseline_cv_warn=config.baseline_cv_warn)
         cohorts.append(baseline)
         shared_baselines[path] = baseline
         if progress:

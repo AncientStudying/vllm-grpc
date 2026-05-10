@@ -70,17 +70,15 @@ async def main() -> None:
                 config=config,
             )
             elapsed = time.perf_counter() - t0
-            walls = sorted(
-                s.wall_clock_seconds for s in cohort.samples if s.error is None
-            )
+            walls = sorted(s.wall_clock_seconds for s in cohort.samples if s.error is None)
             mean = statistics.fmean(walls)
             cv = statistics.stdev(walls) / mean if mean > 0 else 0.0
             top3 = sorted(walls, reverse=True)[:3]
             print(
-                f"{run:>3d} {cv:>7.4f} {mean*1000:>8.2f} "
-                f"{_pct(walls, 0.50)*1000:>8.2f} {_pct(walls, 0.99)*1000:>8.2f} "
-                f"{walls[-1]*1000:>8.2f} "
-                f"{[round(x*1000,2) for x in top3]!s:>20s}  "
+                f"{run:>3d} {cv:>7.4f} {mean * 1000:>8.2f} "
+                f"{_pct(walls, 0.50) * 1000:>8.2f} {_pct(walls, 0.99) * 1000:>8.2f} "
+                f"{walls[-1] * 1000:>8.2f} "
+                f"{[round(x * 1000, 2) for x in top3]!s:>20s}  "
                 f"(elapsed={elapsed:.1f}s)"
             )
     finally:

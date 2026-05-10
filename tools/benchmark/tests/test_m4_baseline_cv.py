@@ -112,9 +112,7 @@ class TestVerdictMetricCV:
         # so the gate must read ttft_cv, not time_cv. Mirrors the real shape:
         # under no-pacing, total wall-clock is dominated by per-token asyncio
         # yield jitter and is not the verdict metric.
-        cohort = _chat_baseline_cohort(
-            [0.010] * 100, [0.001] * 100, time_cv=0.20, ttft_cv=0.01
-        )
+        cohort = _chat_baseline_cohort([0.010] * 100, [0.001] * 100, time_cv=0.20, ttft_cv=0.01)
         metric, cv = verdict_metric_cv(cohort)
         assert metric == "ttft"
         assert cv == 0.01
@@ -145,18 +143,14 @@ class TestFlagNoisyBaseline:
 
         # Wall-clock CV is huge but TTFT CV is tiny — chat_stream must NOT be
         # flagged because the verdict metric (TTFT) is well-behaved.
-        cohort = _chat_baseline_cohort(
-            [0.010] * 100, [0.001] * 100, time_cv=0.30, ttft_cv=0.01
-        )
+        cohort = _chat_baseline_cohort([0.010] * 100, [0.001] * 100, time_cv=0.30, ttft_cv=0.01)
         flagged = flag_noisy_baseline(cohort, baseline_cv_warn=0.05)
         assert flagged.noisy_baseline is False
 
     def test_chat_stream_high_ttft_cv_is_flagged(self) -> None:
         from vllm_grpc_bench.m4_sweep import flag_noisy_baseline
 
-        cohort = _chat_baseline_cohort(
-            [0.010] * 100, [0.001] * 100, time_cv=0.01, ttft_cv=0.15
-        )
+        cohort = _chat_baseline_cohort([0.010] * 100, [0.001] * 100, time_cv=0.01, ttft_cv=0.15)
         flagged = flag_noisy_baseline(cohort, baseline_cv_warn=0.05)
         assert flagged.noisy_baseline is True
 
@@ -194,9 +188,7 @@ class TestEmitNoisyBaselineWarning:
 
         clean1 = _baseline_cohort([0.010] * 100, time_cv=0.03, hidden_size=2048)
         clean2 = _baseline_cohort([0.010] * 100, time_cv=0.04, hidden_size=4096)
-        warned = emit_noisy_baseline_warning(
-            [clean1, clean2], baseline_cv_warn=0.05
-        )
+        warned = emit_noisy_baseline_warning([clean1, clean2], baseline_cv_warn=0.05)
         captured = capsys.readouterr()
         assert warned == []
         assert captured.err == ""
@@ -208,12 +200,8 @@ class TestEmitNoisyBaselineWarning:
         from vllm_grpc_bench.m4_sweep import emit_noisy_baseline_warning
 
         candidate = _baseline_cohort([0.010] * 100, time_cv=0.12)
-        candidate = replace(
-            candidate, is_baseline=False, baseline_role=None, noisy_baseline=True
-        )
-        warned = emit_noisy_baseline_warning(
-            [candidate], baseline_cv_warn=0.05
-        )
+        candidate = replace(candidate, is_baseline=False, baseline_role=None, noisy_baseline=True)
+        warned = emit_noisy_baseline_warning([candidate], baseline_cv_warn=0.05)
         captured = capsys.readouterr()
         assert warned == []
         assert captured.err == ""
