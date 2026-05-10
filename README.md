@@ -113,18 +113,31 @@ The milestone splits into two axes:
 - How do `max_message_size`, keepalive, compression, and HTTP/2 framing settings affect wire size and decode time across `hidden_size` 2048 / 4096 / 8192?
 - At what `hidden_size` does grpcio's default `max_message_size` become binding for embed requests?
 
-Tuning decisions in this milestone lean on cloned vLLM and grpcio source as ground truth — see [`ground-truth-workflow-for-associated-projects.md`](ground-truth-workflow-for-associated-projects.md).
+Bytes-verdict report shipped 2026-05-10 in PR #17 (`docs/benchmarks/m3-channel-tuning.{md,json}`). Wall-clock-time re-analysis (Phase A / US3) on the same data closes the milestone; defensible time verdicts are deferred to Milestone 4 per the methodology constraints documented in `specs/015-m3-protobuf-grpc-tuning/research.md` R-11..R-14. Tuning decisions in this milestone lean on cloned vLLM and grpcio source as ground truth — see [`ground-truth-workflow-for-associated-projects.md`](ground-truth-workflow-for-associated-projects.md).
 
-### Milestone 4 — Corpus Expansion
+### Milestone 4 — Time-Axis Channel & Schema Tuning
+
+Re-frame the M3 measurements around wall-clock time as a first-class success metric (TTFT for streaming, total per-RPC wall-clock for embed), and run the protobuf message-shape candidates deferred from M3 under that methodology. M3 closed with bytes verdicts and an interim time re-analysis; M4 produces the definitive time-axis result.
+
+**Harness redesign (Phase B):**
+- Add a no-pacing mode to the mock engine so streaming wall-clock is dominated by transport+serialization rather than artificial token-emission delay.
+- Add a shared-baseline orchestrator mode (one M1_BASELINE cohort measured up front, n≥100, reused across all axes) to eliminate cross-batch drift.
+- Promote TTFT to a first-class metric in the recommendation builder for chat_stream cells.
+
+**Definitive sweep + schema candidates:**
+- Re-run the four-axis channel sweep under the new methodology.
+- Measure protobuf-shape candidates (packed scalars on token-id fields, `oneof` flattening on the input union, alternative streaming chunk granularity) against the new frozen-channel baseline using both bytes and time verdicts.
+
+### Milestone 5 — Corpus Expansion
 
 Re-run all three access paths against a larger, more varied prompt corpus covering short and long prompts, multi-turn conversations, and domain-specific content (code, structured data). Determine whether the Milestone 1 wire-size and latency findings hold across input diversity.
 
 - Do wire-size deltas change with longer prompts or multi-turn context windows?
 - Does streaming TPOT variance increase with structurally different prompt types?
 
-### Milestone 5 — Model Expansion
+### Milestone 6 — Model Expansion
 
-Repeat the Milestone 1 and 3 benchmarks with at least two additional models of different sizes and architecture families. Determine whether the wire-overhead thesis is model-agnostic or depends on tokeniser and output characteristics, and validate that the mock-derived findings from M3 hold against real models.
+Repeat the Milestone 1, 3, and 4 benchmarks with at least two additional models of different sizes and architecture families. Determine whether the wire-overhead thesis is model-agnostic or depends on tokeniser and output characteristics, and validate that the mock-derived findings from M3 and M4 hold against real models.
 
 - Does a larger model (7B+) shift the latency story relative to wire-size gains?
 - Do models with different default output lengths change the response-byte delta?

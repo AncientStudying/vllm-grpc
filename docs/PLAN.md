@@ -1,6 +1,6 @@
 # Project Plan: Protobuf/gRPC Frontend for vLLM
 
-**Status:** Draft v2 — updated 2026-05-02: added Phase 4.2 (direct gRPC client library), `packages/client` component, three-way benchmark
+**Status:** Draft v3 — updated 2026-05-10: inserted new M4 (Time-Axis Channel & Schema Tuning); renumbered Corpus Expansion → M5 and Model Expansion → M6
 **Repo:** Private GitHub repo (already provisioned), MIT license
 
 ---
@@ -13,34 +13,45 @@ When working with Claude Code on this project, point it at this file plus the ac
 
 ---
 
-## Milestone Roadmap (canonical, M1–M5)
+## Milestone Roadmap (canonical, M1–M6)
 
-This section mirrors the M1–M5 framing in [`README.md`](../README.md). M1 is delivered, M2 is the active milestone, and M3–M5 are upcoming research directions. The Phase 1–7 plan below this section is preserved as completed-work history (see the boundary heading further down) — it captures decisions and trade-offs that still inform future work, but the milestones above are the canonical forward view.
+This section mirrors the milestone framing in [`README.md`](../README.md). M1 and M2 are delivered, M3 is the active milestone (P1 channel-tuning shipped on 2026-05-10 in PR #17; Phase A wall-clock re-analysis is the in-flight US3 closing M3), and M4–M6 are upcoming research directions. The Phase 1–7 plan below this section is preserved as completed-work history (see the boundary heading further down) — it captures decisions and trade-offs that still inform future work, but the milestones above are the canonical forward view.
 
 ### M1 — Foundation (delivered)
 
 Three access paths (REST via proxy, gRPC via proxy, gRPC-direct) implemented and benchmarked end-to-end on Modal A10G. Headline numbers: chat-completion response bytes drop from 611 B (REST JSON) to 65 B (gRPC proto, an 89% reduction); embed request payloads drop ~25% because gRPC transmits raw tensor bytes while REST base64-encodes them. Full numbers and methodology in [`benchmarks/summary.md`](benchmarks/summary.md).
 
-### M2 — Cross-Repo Ground-Truth Research (active)
+### M2 — Cross-Repo Ground-Truth Research (delivered)
 
 Formalize the practice of consulting cloned vLLM (the inference engine) and grpcio (the wire stack) as authoritative references when making proto, channel, or decode-tuning decisions in M3 and beyond. Tooling, merge process, and rebuild cadence are documented in [`../ground-truth-workflow-for-associated-projects.md`](../ground-truth-workflow-for-associated-projects.md), and the project-local `/ground-truth-refresh` skill drives the documented cadence in one invocation. **Known gap:** graphify does not parse `.proto` files, so proto-shape questions are answered by reading [`../proto/`](../proto) directly; graphify is leaned on for vLLM internals and grpcio channel implementation.
 
-### M3 — Protobuf & gRPC Tuning (upcoming)
+### M3 — Protobuf & gRPC Tuning (active)
 
 Drive wire-size and decode tuning from a mock model that exposes a configurable `hidden_size` (canonical values: 2048, 4096, 8192) and emits embeddings of the matching shape with dummy weights. Per upstream guidance, embed payload size is determined by `hidden_size` rather than total parameter count — Llama 3.1 8B and Llama 3.3 70B both use `hidden_size=8192` and produce identically-sized embed payloads, so a real model is not required for this milestone. GPU cost is removed from the loop. Tuning decisions lean on cloned vLLM and grpcio source as ground truth via `cross-repo.json`.
 
 The milestone splits into two axes:
 
-- **Schema-level (protobuf):** can refinements to message shape (packed scalars, streaming chunk granularity, `oneof` layout for the input union) reduce response or request bytes below the M1 baseline?
-- **Channel-level (grpcio):** how do `max_message_size`, keepalive, compression, and HTTP/2 framing settings affect wire size and decode time across `hidden_size` 2048 / 4096 / 8192? At what `hidden_size` does grpcio's default `max_message_size` become binding for embed requests?
+- **Schema-level (protobuf):** can refinements to message shape (packed scalars, streaming chunk granularity, `oneof` layout for the input union) reduce response or request bytes below the M1 baseline? (Originally scoped as US2 in `specs/015-m3-protobuf-grpc-tuning/`. **Deferred to M4** per the 2026-05-10 clarifications session, since the proto-shape candidates are most likely to manifest as wall-clock-time wins and time becomes a defensible verdict metric only under the M4 harness redesign.)
+- **Channel-level (grpcio):** how do `max_message_size`, keepalive, compression, and HTTP/2 framing settings affect wire size and decode time across `hidden_size` 2048 / 4096 / 8192? At what `hidden_size` does grpcio's default `max_message_size` become binding for embed requests? (Bytes verdicts shipped 2026-05-10 in PR #17. Phase A time re-analysis on the same data closes M3 as US3.)
 
-### M4 — Corpus Expansion (upcoming)
+### M4 — Time-Axis Channel & Schema Tuning (upcoming)
+
+Re-frame the M3 measurements around wall-clock time as a first-class success metric (TTFT for streaming, total per-RPC wall-clock for embed), and run the protobuf message-shape candidates deferred from M3 under that methodology. M3's bytes verdicts stand; M4 closes the gap that became visible in M3's published report — the existing harness's mock-pacing and per-axis fresh-baseline pairing prevent a defensible time-metric verdict on chat_stream wall-clock, which is exactly the metric the project's wire-overhead thesis cares about most.
+
+The milestone splits into two axes, both gated on M3 closure:
+
+- **Harness redesign (Phase B, the prerequisite):** add a `--no-pacing` mode to the mock engine so streaming wall-clock is dominated by transport+serialization rather than artificial token-emission delay; add a shared-baseline orchestrator mode that measures one M1_BASELINE cohort up front (n≥100) and reuses it across all axes (kills cross-batch baseline drift, observed at ~13% in M3); promote TTFT to a first-class metric in the recommendation builder for chat_stream cells. Optional: add a cross-host transport mode for the keepalive and HTTP/2 framing axes that don't manifest savings on loopback.
+- **Definitive time-axis sweep + schema-level candidates:** re-run the four-axis channel sweep under the new methodology, then measure the protobuf-shape candidates (packed scalars on token-id fields, `oneof` flattening on the input union, alternative streaming chunk granularity per `specs/015-m3-protobuf-grpc-tuning/research.md` R-9) against the new frozen-channel baseline using both bytes and time verdicts.
+
+Outputs supersede M3's bytes-only verdicts where the new methodology produces a different result; M3's report stays in place as the bytes baseline for traceability. Citations follow the M2 ground-truth workflow.
+
+### M5 — Corpus Expansion (upcoming)
 
 Re-run all three access paths against a larger, more varied prompt corpus covering short and long prompts, multi-turn conversations, and domain-specific content (code, structured data). Determine whether the M1 wire-size and latency findings hold across input diversity — do wire-size deltas change with longer prompts or multi-turn context windows, and does streaming TPOT variance increase with structurally different prompt types?
 
-### M5 — Model Expansion (upcoming)
+### M6 — Model Expansion (upcoming)
 
-Repeat the M1 and M3 benchmarks with at least two additional models of different sizes and architecture families. Determine whether the wire-overhead thesis is model-agnostic or depends on tokeniser and output characteristics, and validate that the mock-derived findings from M3 hold against real models.
+Repeat the M1 and M3/M4 benchmarks with at least two additional models of different sizes and architecture families. Determine whether the wire-overhead thesis is model-agnostic or depends on tokeniser and output characteristics, and validate that the mock-derived findings from M3 and M4 hold against real models.
 
 ---
 
