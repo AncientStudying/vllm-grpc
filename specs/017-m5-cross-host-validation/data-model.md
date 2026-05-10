@@ -74,6 +74,39 @@ class RTTRecord:
 
 `RTTRecord` is attached to every M5 cohort entry. For M3/M4 cohorts (no cross-host topology), `RTTRecord` is absent from the cohort entry — the M5 JSON's strict-superset rule (FR-014) requires the field to be present on M5 cohorts but does not retroactively add it to M3/M4 entries.
 
+## New: `Citation` (FR-017)
+
+```python
+# m3_types.py
+@dataclass(frozen=True)
+class Citation:
+    """One ground-truth citation entry attached to a verdict-changed
+    time-metric supersession (per FR-017 / M2 ground-truth workflow).
+
+    Populated by `m5_supersede.build_supersedes_m4_table` when an M5
+    recommendation supersedes an M4 recommendation on the time metric.
+    Source-of-truth lookups use `cross-repo.json` for cross-repo paths
+    and the targeted single-repo graphs (`vllm` / `grpcio`) for
+    repo-specific evidence per CLAUDE.md navigation rules.
+    """
+    repo: Literal["vllm-project/vllm", "grpc/grpc"]
+    file_path: str          # repo-relative path
+    identifier: str | None  # function/class name, or None for whole-file citation
+    justification: str      # one-line explanation of why this source backs the verdict change
+```
+
+## New: `ExpectedClass` (spec Edge Cases)
+
+```python
+# m3_types.py
+ExpectedClass = Literal[
+    "verdict_confirmed",        # M4 and M5 verdicts match on both metrics; no supersession row strictly required (table still includes for traceability of loopback-caveat resolution)
+    "loopback_resolution",      # M4 had loopback_caveat=True AND verdict changed (the headline M5 case)
+    "transport_resolution",     # M4 had no loopback_caveat AND axis is keepalive/http2_framing AND verdict changed (a real-RTT effect M4 missed for reasons other than the loopback caveat)
+    "unexpected_supersession",  # verdict changed AND axis is max_message_size/compression — transport-RTT shouldn't dominate, so this signals either a real transport-layer effect M4 didn't capture, or a measurement-noise artifact that the reader should investigate (spec Edge Cases)
+]
+```
+
 ## New: `SupersedesM4Entry`
 
 ```python
@@ -99,9 +132,15 @@ class SupersedesM4Entry:
     m5_supporting_ci_upper: float   # CI upper bound on the verdict-driver metric
     rationale: str                  # one-line human-readable supersession rationale
     verdict_changed: bool           # True iff (m4_verdict_time != m5_verdict_time) or (m4_verdict_bytes != m5_verdict_bytes)
+    expected_class: ExpectedClass   # NEW: classification per spec Edge Cases (verdict_confirmed / loopback_resolution / transport_resolution / unexpected_supersession)
+    citations: tuple[Citation, ...] = ()  # NEW (FR-017): populated for verdict-changed time-metric supersessions; empty tuple otherwise
 ```
 
 `verdict_changed` is computed at construction time, not stored separately on either side; the reader can group / sort the supersession table by this flag (SC-004 requires visual distinction between verdict-changed and verdict-confirmed rows).
+
+`expected_class` is computed by the same `m5_supersede.build_supersedes_m4_table` pass using the four-value classifier: `verdict_confirmed` when verdicts match; `loopback_resolution` when M4 had `loopback_caveat == True` AND verdict changed; `transport_resolution` when axis ∈ {`keepalive`, `http2_framing`} AND M4 had no loopback caveat AND verdict changed; `unexpected_supersession` when axis ∈ {`max_message_size`, `compression`} AND verdict changed. Readers MUST treat `unexpected_supersession` rows with elevated scrutiny per spec Edge Cases.
+
+`citations` is populated only for time-metric verdict-changed supersessions (M4 said one thing on the time metric, M5 says another). For bytes-only changes or loopback-resolution rows whose time verdict is unchanged, the tuple is empty.
 
 ## New: `M5CrossHostBaseline`
 

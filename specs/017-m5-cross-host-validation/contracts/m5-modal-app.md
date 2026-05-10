@@ -47,15 +47,43 @@ app = modal.App(_APP_NAME)
 async def serve_bench(token: str, region: str) -> None:
     """Serve the M5 mock-engine gRPC server until the harness signals teardown.
 
-    The harness sets `token` and `region`; the function publishes the tunnel URL +
-    token via modal.Dict and blocks on a teardown signal published to the same dict.
+    Registers BOTH the M3 production-shape servicers (for US1 channel-sweep
+    cohorts) AND the three M4 candidate-shape servicers (for US2 schema-
+    candidate cohorts) on a single gRPC port. Candidate proto services
+    live in a distinct proto namespace (`vllm_grpc/v1/m4_candidates/`)
+    and have non-colliding service names, so simultaneous registration
+    is conflict-free and avoids a Modal redeploy between US1 and US2.
     """
-    # 1. Build gRPC server with M3 servicers + M4 mock engine.
-    server = build_bench_server(token)
+    engine = MockEngine(...)
+    server = grpc.aio.server(interceptors=[BearerTokenInterceptor(token)])
+
+    # ── M3 production-shape servicers (US1 channel-sweep cohorts) ──────────────
+    from vllm_grpc_frontend.servicers import M3CompletionsServicer, M3ChatServicer
+    chat_pb2_grpc.add_M3ChatServicer_to_server(M3ChatServicer(engine), server)
+    completions_pb2_grpc.add_M3CompletionsServicer_to_server(
+        M3CompletionsServicer(engine), server
+    )
+
+    # ── M4 candidate-shape servicers (US2 schema-candidate cohorts) ────────────
+    from vllm_grpc_bench.candidate_servicers import (
+        PackedTokenIdsServicer,
+        OneofFlattenedInputServicer,
+        ChunkGranularityServicer,
+    )
+    packed_token_ids_pb2_grpc.add_PackedTokenIdsServicer_to_server(
+        PackedTokenIdsServicer(engine), server
+    )
+    oneof_flattened_input_pb2_grpc.add_OneofFlattenedInputServicer_to_server(
+        OneofFlattenedInputServicer(engine), server
+    )
+    chunk_granularity_pb2_grpc.add_ChunkGranularityServicer_to_server(
+        ChunkGranularityServicer(engine), server
+    )
+
     server.add_insecure_port(f"[::]:{_GRPC_PORT}")  # Modal's tunnel will TLS-terminate.
     await server.start()
 
-    # 2. Open Modal TLS-terminated tunnel and publish the address.
+    # ── Open Modal TLS-terminated tunnel and publish the address ──────────────
     async with modal.forward.aio(_GRPC_PORT, unencrypted=False) as tunnel:
         d = modal.Dict.from_name(_DICT_NAME, create_if_missing=True)
         await d.put.aio("endpoint", tunnel.url)              # e.g., "tcp://r3.modal.host:54321"
@@ -63,14 +91,26 @@ async def serve_bench(token: str, region: str) -> None:
         await d.put.aio("region", region)
         await d.put.aio("ready", True)
 
-        # 3. Block until harness signals teardown.
+        # Block until harness signals teardown.
         while not await d.get.aio("teardown", default=False):
             await asyncio.sleep(0.5)
 
     await server.stop(grace=5.0)
 ```
 
-The function takes the `token` and `region` as arguments so the harness controls both; the function does not generate them. Region is informational (Modal apps can be region-affined at app-config time; the function records it in the handshake dict).
+The function takes the `token` and `region` as arguments so the harness controls both; the function does not generate them. Region is informational (Modal apps can be region-affined at app-config time; the function records it in the handshake dict). The harness selects which service to call per cohort via standard gRPC client routing — no separate channel, no separate endpoint, no second Modal deploy.
+
+## Servicers registered
+
+All servicers live on a single Modal-tunneled gRPC port (50051). The production-shape services and the M4 candidate-shape services have distinct fully-qualified service names (different proto packages), so simultaneous registration is conflict-free.
+
+| Servicer | Source proto | Used by |
+|----------|--------------|---------|
+| `M3CompletionsServicer` | `proto/vllm_grpc/v1/completions.proto` | US1 channel-sweep cohorts (embed path) |
+| `M3ChatServicer` | `proto/vllm_grpc/v1/chat.proto` | US1 channel-sweep cohorts (chat_stream path) |
+| `PackedTokenIdsServicer` | `proto/vllm_grpc/v1/m4-candidates/packed_token_ids.proto` | US2 schema candidate (a) |
+| `OneofFlattenedInputServicer` | `proto/vllm_grpc/v1/m4-candidates/oneof_flattened_input.proto` | US2 schema candidate (b) |
+| `ChunkGranularityServicer` | `proto/vllm_grpc/v1/m4-candidates/chunk_granularity.proto` | US2 schema candidate (c) |
 
 ## Bearer-token interceptor
 

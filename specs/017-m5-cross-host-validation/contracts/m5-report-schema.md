@@ -110,7 +110,16 @@ This contract defines the M5 report schema as a **strict superset** of M4's `m4-
   "m5_supporting_ci_lower": 0.041,                // CI lower bound on the verdict-driver metric delta
   "m5_supporting_ci_upper": 0.067,                // CI upper bound on the verdict-driver metric delta
   "rationale": "real RTT exposed a 5.4% TTFT reduction under keepalive=enabled at hidden_size 4096",
-  "verdict_changed": true
+  "verdict_changed": true,
+  "expected_class": "loopback_resolution",   // one of: verdict_confirmed | loopback_resolution | transport_resolution | unexpected_supersession
+  "citations": [                              // FR-017: populated for verdict-changed time-metric supersessions only; empty array otherwise
+    {
+      "repo": "grpc/grpc",
+      "file_path": "src/core/lib/transport/transport.h",
+      "identifier": null,
+      "justification": "HTTP/2 KEEPALIVE_TIMEOUT default behavior under non-loopback RTT"
+    }
+  ]
 }
 ```
 
@@ -118,7 +127,7 @@ One row exists for:
 1. Every M4 cell where `m4_loopback_caveat == true` (FR-015 mandatory — these are the cells M5 exists to resolve).
 2. Any other M4 cell where either `m5_verdict_time != m4_verdict_time` or `m5_verdict_bytes != m4_verdict_bytes` (FR-015 conditional — verdicts M5 has changed for reasons other than loopback resolution).
 
-Verdict-changed rows are visually emphasized in the markdown companion (`m5-cross-host-validation.md`) per SC-004; the JSON simply carries the boolean `verdict_changed` field.
+Verdict-changed rows are visually emphasized in the markdown companion (`m5-cross-host-validation.md`) per SC-004; the JSON simply carries the boolean `verdict_changed` field plus the `expected_class` classifier. `unexpected_supersession` rows are additionally grouped under a separate sub-heading in the Markdown table per spec Edge Cases.
 
 ## Recommendation-level addition (`verdicts[*]`)
 
@@ -140,6 +149,8 @@ When present, `supersedes_m4_cell` carries the same payload as the corresponding
 - `server_bound`: NEW in M5. Emitted on cohorts whose dominant cost is remote-server overhead (research.md R-4 classifier). Mutually exclusive with `client_bound` in practice (a cohort cannot be both dominated by client and by server); the M5 sweep tolerates the edge case where both classifiers fire by recording both flags and excluding the cohort from `recommend` tallies under either flag.
 - `low_rtt_caveat`: NEW in M5. Emitted when `rtt_record.median_ms < rtt_exercise_threshold_ms` (default 20.0). Cohorts with `low_rtt_caveat: true` still produce verdicts; readers are expected to discount RTT-bounded-axis verdicts (`keepalive`, `http2_framing`) from `low_rtt_caveat` cells.
 - `discarded`: NEW in M5. Emitted on warm-up cohorts; readers MUST skip discarded cohorts in any aggregate computation.
+- `expected_class` (on `supersedes_m4[*]`): NEW in M5. Classifies the supersession's expected vs unexpected nature per spec Edge Cases ("Verdict stability between M4 and M5 disagrees and the rationale is not transport-related"). Values: `verdict_confirmed`, `loopback_resolution`, `transport_resolution`, `unexpected_supersession`. Readers MUST treat `unexpected_supersession` rows with elevated scrutiny — they signal either a real transport-layer effect M4 didn't capture, or a measurement-noise artifact that the reader should investigate.
+- `citations` (on `supersedes_m4[*]`): NEW in M5 (FR-017). Populated only for time-metric verdict-changed supersessions; empty array otherwise. Each entry is a `(repo, file_path, identifier, justification)` tuple pointing into the cloned vLLM (`~/.graphify/repos/vllm-project/vllm/`) or grpcio (`~/.graphify/repos/grpc/grpc/`) source trees, satisfying the M2 ground-truth workflow citation convention.
 
 ## Versioning
 
