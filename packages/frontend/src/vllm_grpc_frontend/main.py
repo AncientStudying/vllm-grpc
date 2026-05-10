@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Sequence
+from typing import Any
 
 import grpc
 from vllm_grpc.v1 import chat_pb2_grpc, completions_pb2_grpc, health_pb2_grpc
@@ -10,8 +12,42 @@ from vllm_grpc_frontend.chat import ChatServicer
 from vllm_grpc_frontend.completions import CompletionsServicer
 from vllm_grpc_frontend.health import HealthServicer
 
+ChannelOption = tuple[str, int | str]
 
-async def serve() -> None:
+
+def build_server(
+    engine: Any,
+    tokenizer: Any,
+    *,
+    options: Sequence[ChannelOption] | None = None,
+    compression: grpc.Compression | None = None,
+) -> grpc.aio.Server:
+    """Construct a gRPC server with the project's three servicers wired up.
+
+    ``options`` and ``compression`` accept ``ChannelConfig.server_options`` and
+    ``ChannelConfig.compression`` from ``vllm_grpc_bench.channel_config``. With
+    defaults (``None``/``None``), the call is equivalent to
+    ``grpc.aio.server()`` — preserving the M1 wire shape exactly.
+    """
+    server_kwargs: dict[str, Any] = {}
+    if options is not None:
+        server_kwargs["options"] = list(options)
+    if compression is not None:
+        server_kwargs["compression"] = compression
+    server = grpc.aio.server(**server_kwargs)
+    health_pb2_grpc.add_HealthServicer_to_server(HealthServicer(), server)
+    chat_pb2_grpc.add_ChatServiceServicer_to_server(ChatServicer(engine, tokenizer), server)
+    completions_pb2_grpc.add_CompletionsServiceServicer_to_server(
+        CompletionsServicer(engine), server
+    )
+    return server
+
+
+async def serve(
+    *,
+    options: Sequence[ChannelOption] | None = None,
+    compression: grpc.Compression | None = None,
+) -> None:
     from transformers import AutoTokenizer
     from vllm import AsyncEngineArgs, AsyncLLMEngine
 
@@ -23,12 +59,7 @@ async def serve() -> None:
 
     host = os.environ.get("FRONTEND_HOST", "0.0.0.0")
     port = os.environ.get("FRONTEND_PORT", "50051")
-    server = grpc.aio.server()
-    health_pb2_grpc.add_HealthServicer_to_server(HealthServicer(), server)
-    chat_pb2_grpc.add_ChatServiceServicer_to_server(ChatServicer(engine, tokenizer), server)
-    completions_pb2_grpc.add_CompletionsServiceServicer_to_server(
-        CompletionsServicer(engine), server
-    )
+    server = build_server(engine, tokenizer, options=options, compression=compression)
     server.add_insecure_port(f"{host}:{port}")
     await server.start()
     print(f"Frontend gRPC server listening on {host}:{port}", flush=True)

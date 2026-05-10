@@ -3061,6 +3061,7 @@ version = "0.0.0"
 source = { editable = "tools/benchmark" }
 dependencies = [
     { name = "httpx" },
+    { name = "numpy" },
     { name = "psutil" },
     { name = "vllm-grpc-client" },
 ]
@@ -3068,6 +3069,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
+    { name = "numpy", specifier = ">=1.26" },
     { name = "psutil", specifier = ">=5.9" },
     { name = "vllm-grpc-client", editable = "packages/client" },
 ]

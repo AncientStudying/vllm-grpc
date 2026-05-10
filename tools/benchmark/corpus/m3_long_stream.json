@@ -1,0 +1,17 @@
+[
+  {
+    "id": "m3-long-stream-001",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Generate a long technical explanation of gRPC channel options including max_message_size, keepalive, and HTTP/2 framing semantics. min_tokens=1024 deterministic_seed=m3"
+      }
+    ],
+    "model": "mock-engine",
+    "max_tokens": 1024,
+    "temperature": 0.0,
+    "seed": 17,
+    "_m3_min_tokens": 1024,
+    "_m3_notes": "Synthetic long-stream prompt for keepalive + HTTP/2 framing axes (FR-011). The mock engine reads `min_tokens=1024` from the prompt text and produces >=1024 tokens at the configured tokens_per_second pace. At the default 20 tps, total wall-clock ~51s — long enough to cross KEEPALIVE_AGGRESSIVE's 10s ping interval multiple times."
+  }
+]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -81,6 +82,55 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATH",
         help="Write report to file (default: stdout)",
+    )
+
+    # ---- m3 mode (channel + schema tuning sweep) ----
+    parser.add_argument(
+        "--m3",
+        action="store_true",
+        help="Run the M3 channel-tuning sweep (see specs/015-m3-protobuf-grpc-tuning).",
+    )
+    parser.add_argument(
+        "--axis",
+        choices=("max_message_size", "keepalive", "compression", "http2_framing", "all"),
+        default="all",
+        help="Which channel axis to sweep (M3 mode).",
+    )
+    parser.add_argument(
+        "--width",
+        default="all",
+        help="Embedding hidden_size: 2048|4096|8192|all|<positive_integer> (M3 mode).",
+    )
+    parser.add_argument(
+        "--path",
+        choices=("embed", "chat_stream", "both"),
+        default="both",
+        help="Which RPC path(s) to exercise (M3 mode).",
+    )
+    parser.add_argument(
+        "--iters-per-cell", type=int, default=30, help="Iterations per cell (M3 mode)."
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path("docs/benchmarks"),
+        help="Where to write report files (M3 mode).",
+    )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="One iter/cell, no CI math, transient artefact under bench-results/.",
+    )
+    parser.add_argument("--seed", type=int, default=0, help="RNG seed (M3 mode).")
+    parser.add_argument(
+        "--p2-revision",
+        default=None,
+        help="P2 schema candidate name (requires --frozen-channel).",
+    )
+    parser.add_argument(
+        "--frozen-channel",
+        default=None,
+        help="Frozen ChannelConfig preset name for P2 (required with --p2-revision).",
     )
 
     # ---- run (default) ----
@@ -245,9 +295,121 @@ def _print_comparison(report: ComparisonReport) -> None:
         )
 
 
+def _parse_widths(spec: str) -> tuple[int, ...]:
+    if spec == "all":
+        return (2048, 4096, 8192)
+    if spec.isdigit():
+        v = int(spec)
+        if v <= 0:
+            raise ValueError("width must be a positive integer")
+        return (v,)
+    if spec in ("2048", "4096", "8192"):
+        return (int(spec),)
+    raise ValueError(f"--width must be 2048|4096|8192|all|<positive_integer>, got {spec!r}")
+
+
+def _parse_axes(spec: str) -> tuple[str, ...]:
+    if spec == "all":
+        return ("max_message_size", "keepalive", "compression", "http2_framing")
+    return (spec,)
+
+
+def _parse_paths(spec: str) -> tuple[str, ...]:
+    if spec == "both":
+        return ("embed", "chat_stream")
+    return (spec,)
+
+
+def _run_m3(args: argparse.Namespace) -> int:
+    from datetime import datetime
+
+    from vllm_grpc_bench import m3_sweep
+    from vllm_grpc_bench.channel_config import preset_by_name
+
+    if args.p2_revision is not None and args.frozen_channel is None:
+        print(
+            "Error: --p2-revision requires --frozen-channel to be set",
+            file=sys.stderr,
+        )
+        return 2
+    if args.frozen_channel is not None:
+        try:
+            preset_by_name(args.frozen_channel)
+        except KeyError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+
+    try:
+        widths = _parse_widths(str(args.width))
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    axes = _parse_axes(args.axis)
+    paths = _parse_paths(args.path)
+
+    if args.smoke:
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        smoke_path = Path("bench-results") / f"m3-smoke-{ts}.json"
+        return asyncio.run(
+            m3_sweep.run_smoke(
+                axis=axes[0],  # type: ignore[arg-type]
+                width=widths[0],
+                path=paths[0],  # type: ignore[arg-type]
+                seed=args.seed,
+                out_path=smoke_path,
+            )
+        )
+
+    cohorts = asyncio.run(
+        m3_sweep.run_sweep(
+            axes=axes,  # type: ignore[arg-type]
+            widths=widths,
+            paths=paths,  # type: ignore[arg-type]
+            iterations=args.iters_per_cell,
+            seed=args.seed,
+        )
+    )
+    out_dir: Path = args.out_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    is_p2 = args.p2_revision is not None
+    base = "m3-schema-tuning" if is_p2 else "m3-channel-tuning"
+    json_path = out_dir / f"{base}.json"
+
+    recs: list[dict[str, object]] = []
+    for axis in axes:
+        for r in m3_sweep.build_recommendations(cohorts, axis=axis):  # type: ignore[arg-type]
+            recs.append(m3_sweep.recommendation_to_dict(r))
+
+    payload = {
+        "mode": "p2" if is_p2 else "p1",
+        "axes": list(axes),
+        "widths": list(widths),
+        "paths": list(paths),
+        "iterations_per_cell": args.iters_per_cell,
+        "seed": args.seed,
+        "p2_revision": args.p2_revision,
+        "frozen_channel": args.frozen_channel,
+        "cohorts": [m3_sweep.cohort_to_dict(c) for c in cohorts],
+        "recommendations": recs,
+    }
+    try:
+        json_path.write_text(json.dumps(payload, indent=2, default=str))
+    except OSError as exc:
+        print(f"Error writing report: {exc}", file=sys.stderr)
+        return 4
+    print(f"M3 report written to {json_path}")
+
+    has_unmeasurable = any(not c.measurable for c in cohorts)
+    return 3 if has_unmeasurable else 0
+
+
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+
+    if getattr(args, "m3", False):
+        sys.exit(_run_m3(args))
 
     if args.subcommand == "compare":
         baseline_path = Path(args.baseline)
