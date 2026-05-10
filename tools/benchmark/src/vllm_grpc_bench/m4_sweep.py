@@ -54,7 +54,6 @@ from vllm_grpc_bench.m3_types import (
 from vllm_grpc_bench.mock_engine import MockEngine, MockEngineConfig
 from vllm_grpc_bench.ttft import ttft_estimate
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
