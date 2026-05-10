@@ -424,6 +424,7 @@ def _aggregate(cell: BenchmarkCell, samples: list[Sample]) -> RunCohort:
         )
     bytes_samples = [float(s.response_wire_bytes + s.request_wire_bytes) for s in successful]
     time_samples = [s.wall_clock_seconds for s in successful]
+    time_cv = _coefficient_of_variation(time_samples)
     # ci.estimate() refuses n<10 for SC-003 rigor; pilots and other low-n runs
     # report mean-only with degenerate CIs and measurable=False so the
     # recommendation builder downgrades them to "not_measurable" cleanly.
@@ -441,6 +442,7 @@ def _aggregate(cell: BenchmarkCell, samples: list[Sample]) -> RunCohort:
             time_ci_low=tm,
             time_ci_high=tm,
             measurable=False,
+            time_cv=time_cv,
         )
     bytes_est = estimate(bytes_samples)
     time_est = estimate(time_samples)
@@ -455,7 +457,24 @@ def _aggregate(cell: BenchmarkCell, samples: list[Sample]) -> RunCohort:
         time_ci_low=time_est.ci_low,
         time_ci_high=time_est.ci_high,
         measurable=measurable,
+        time_cv=time_cv,
     )
+
+
+def _coefficient_of_variation(values: list[float]) -> float | None:
+    """Within-cohort CV (stddev/mean). Returns None if undefined.
+
+    FR-005 recording helper. Used by both M3 and M4 cohorts so the per-cohort
+    CV field is always populated when there's enough signal to compute it.
+    """
+    import statistics
+
+    if len(values) < 2:
+        return None
+    mean = statistics.fmean(values)
+    if mean <= 0:
+        return None
+    return statistics.stdev(values) / mean
 
 
 # ---------------------------------------------------------------------------
@@ -674,20 +693,10 @@ def _build_recommendations_bytes(cohorts: list[RunCohort], *, axis: Axis) -> lis
 
 
 def _ttft_estimate_for_cohort(cohort: RunCohort) -> tuple[float, float, float, int] | None:
-    """TTFT mean + 95% CI bounds + n from ``samples[i].time_to_first_token_seconds``.
+    """Delegate to ``vllm_grpc_bench.ttft.ttft_estimate`` (R-10 shared math)."""
+    from vllm_grpc_bench.ttft import ttft_estimate
 
-    Returns ``None`` if fewer than the ci.py-supported floor (n=10) of samples
-    carry a TTFT (non-streaming paths or failed RPCs both contribute None).
-    """
-    ttfts = [
-        s.time_to_first_token_seconds
-        for s in cohort.samples
-        if s.time_to_first_token_seconds is not None and s.error is None
-    ]
-    if len(ttfts) < 10:
-        return None
-    est = estimate(ttfts)
-    return est.mean, est.ci_low, est.ci_high, est.n
+    return ttft_estimate(cohort)
 
 
 def _metric_estimate(cohort: RunCohort, metric: str) -> tuple[float, float, float] | None:

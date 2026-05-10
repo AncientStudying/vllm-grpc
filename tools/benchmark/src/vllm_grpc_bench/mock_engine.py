@@ -69,12 +69,16 @@ class MockEngineConfig:
     seed: int = 0
     tokens_per_second: float = 20.0
     max_tokens_per_stream: int = 64
+    # M4 / FR-001 / R-1: when False, the streaming loop skips the inter-token
+    # ``asyncio.sleep`` call. ``tokens_per_second`` validation is then relaxed
+    # because the value is unused.
+    pace_tokens: bool = True
 
     def __post_init__(self) -> None:
         if self.hidden_size <= 0:
             raise ValueError("MockEngineConfig.hidden_size must be > 0")
-        if self.tokens_per_second <= 0:
-            raise ValueError("MockEngineConfig.tokens_per_second must be > 0")
+        if self.pace_tokens and self.tokens_per_second <= 0:
+            raise ValueError("MockEngineConfig.tokens_per_second must be > 0 when pace_tokens=True")
         if self.max_tokens_per_stream < 1:
             raise ValueError("MockEngineConfig.max_tokens_per_stream must be >= 1")
         if self.seed < 0:
@@ -176,11 +180,12 @@ class MockEngine:
             fragment_indices = rng.integers(0, len(_TOKEN_FRAGMENTS), size=n_tokens).tolist()
             token_ids: list[int] = []
             running_text_parts: list[str] = []
-            interval = 1.0 / self._config.tokens_per_second
+            pace = self._config.pace_tokens
+            interval = (1.0 / self._config.tokens_per_second) if pace else 0.0
             prompt_token_ids = [int(seed >> (i * 4) & 0xFFFF) for i in range(8)]
 
             for i, frag_idx in enumerate(fragment_indices):
-                if i > 0:
+                if i > 0 and pace:
                     await asyncio.sleep(interval)
                 token_ids.append(int(frag_idx))
                 running_text_parts.append(_TOKEN_FRAGMENTS[frag_idx])

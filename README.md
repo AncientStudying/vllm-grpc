@@ -135,16 +135,28 @@ Re-frame the M3 measurements around wall-clock time as a first-class success met
 - Re-run the four-axis channel sweep under the new methodology.
 - Measure protobuf-shape candidates (packed scalars on token-id fields, `oneof` flattening on the input union, alternative streaming chunk granularity) against the new frozen-channel baseline using both bytes and time verdicts.
 
-### Milestone 5 — Corpus Expansion
+**Status (delivered 2026-05-10):** harness redesign + definitive sweep merged on `016-m4-time-axis-tuning`. Published report at [`docs/benchmarks/m4-time-axis-tuning.{md,json}`](docs/benchmarks/m4-time-axis-tuning.md). Drive the sweep with `python -m vllm_grpc_bench --m4` (default no-pacing, shared baseline, n=100→250 cascade, per-cohort CV recorded — the run never aborts on a noisy baseline; cohorts above the warn threshold are flagged in the report for reader adjudication per FR-005). M5 addresses the loopback caveat axes (`keepalive`, `http2_framing`) by re-running the same sweep on Modal.
+
+### Milestone 5 — Cross-Host Time-Axis Validation
+
+Re-run the M4 sweep with the gRPC server deployed on Modal and the benchmark client running locally, so transmission crosses real wire instead of `127.0.0.1`. The goal is to confirm — or supersede — the M4 verdicts on axes that loopback masks: `keepalive` and `http2_framing` carry M4's loopback caveat because RTT-bounded behavior cannot manifest on a single host. A real client-server topology with realistic RTT exposes the actual transport behavior.
+
+- Does aggressive keepalive measurably reduce TTFT once RTT is non-zero?
+- Does HTTP/2 BDP probing affect throughput when there's a real bandwidth-delay product?
+- Do the M4 channel verdicts on `max_message_size` and `compression` hold over real wire?
+
+Reuses the existing M4 harness (`vllm_grpc_bench --m4`) unchanged; only the connection target moves. Outputs land at `docs/benchmarks/m5-cross-host-time-axis.{md,json}` with a "Supersedes M4" table for axes whose verdicts shift.
+
+### Milestone 6 — Corpus Expansion
 
 Re-run all three access paths against a larger, more varied prompt corpus covering short and long prompts, multi-turn conversations, and domain-specific content (code, structured data). Determine whether the Milestone 1 wire-size and latency findings hold across input diversity.
 
 - Do wire-size deltas change with longer prompts or multi-turn context windows?
 - Does streaming TPOT variance increase with structurally different prompt types?
 
-### Milestone 6 — Model Expansion
+### Milestone 7 — Model Expansion
 
-Repeat the Milestone 1, 3, and 4 benchmarks with at least two additional models of different sizes and architecture families. Determine whether the wire-overhead thesis is model-agnostic or depends on tokeniser and output characteristics, and validate that the mock-derived findings from M3 and M4 hold against real models.
+Repeat the Milestone 1, 3, 4, and 5 benchmarks with at least two additional models of different sizes and architecture families. Determine whether the wire-overhead thesis is model-agnostic or depends on tokeniser and output characteristics, and validate that the mock-derived findings from M3–M5 hold against real models.
 
 - Does a larger model (7B+) shift the latency story relative to wire-size gains?
 - Do models with different default output lengths change the response-byte delta?

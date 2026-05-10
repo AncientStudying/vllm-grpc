@@ -1,0 +1,30 @@
+// M4 schema candidate (b) — flatten the `oneof input` on CompletionRequest.
+//
+// Production `CompletionRequest` carries `oneof input { string prompt = 6;
+// bytes prompt_embeds = 7; }`. This candidate replaces the union with an
+// explicit `InputKind` enum + sibling fields so the harness can quantify
+// the cost (or savings) of dropping the oneof discriminator.
+
+syntax = "proto3";
+
+package vllm_grpc.v1.m4_candidates.oneof_flattened_input;
+
+enum InputKind {
+  INPUT_KIND_UNSPECIFIED = 0;
+  INPUT_KIND_PROMPT      = 1;
+  INPUT_KIND_EMBEDS      = 2;
+}
+
+message CompletionRequest {
+  string model      = 1;
+  int32  max_tokens = 2;
+  optional float temperature = 3;
+  optional float top_p       = 4;
+  optional int64 seed        = 5;
+  // Flat alternative: explicit kind + sibling fields. Empty / zero-valued
+  // fields are still serialized only when set (proto3 default-rules apply
+  // for scalars; bytes are present iff non-empty).
+  InputKind input_kind   = 6;
+  string    prompt       = 7;
+  bytes     prompt_embeds = 8;
+}

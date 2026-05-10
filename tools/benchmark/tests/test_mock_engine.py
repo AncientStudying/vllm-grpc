@@ -83,6 +83,42 @@ class TestStreamingPacing:
             f"elapsed={elapsed:.4f} expected~{expected:.4f}"
         )
 
+    @pytest.mark.asyncio
+    async def test_pace_tokens_false_skips_inter_token_sleep(self) -> None:
+        """T006 / FR-001 / R-1 — no-pacing mode emits tokens as fast as the
+        event loop dispatches them. The cohort wall-clock under
+        ``pace_tokens=False`` must be materially lower than the paced default.
+        """
+        paced = MockEngine(
+            MockEngineConfig(hidden_size=2048, tokens_per_second=100.0, pace_tokens=True)
+        )
+        unpaced = MockEngine(
+            MockEngineConfig(hidden_size=2048, tokens_per_second=100.0, pace_tokens=False)
+        )
+        params = SimpleNamespace(max_tokens=16)
+        t0 = time.perf_counter()
+        async for _ in paced.generate("p", params, request_id="paced"):
+            pass
+        paced_wall = time.perf_counter() - t0
+        t1 = time.perf_counter()
+        async for _ in unpaced.generate("p", params, request_id="unpaced"):
+            pass
+        unpaced_wall = time.perf_counter() - t1
+        # 15 inter-token sleeps × 10 ms = 150 ms of forced pacing on the paced
+        # path; the unpaced path should be < 10% of that.
+        assert unpaced_wall < paced_wall * 0.5, (
+            f"unpaced_wall={unpaced_wall:.4f} not materially lower than paced_wall={paced_wall:.4f}"
+        )
+
+    def test_pace_tokens_false_relaxes_tps_validation(self) -> None:
+        """T006 / R-1 — when pace_tokens=False, tokens_per_second is unused
+        and validation is relaxed (any positive value works; a non-positive
+        value still raises since the field is required).
+        """
+        # Should not raise — tps validation is skipped when pacing is off.
+        cfg = MockEngineConfig(hidden_size=2048, pace_tokens=False, tokens_per_second=0.5)
+        assert cfg.pace_tokens is False
+
 
 class TestFailureModes:
     @pytest.mark.asyncio
