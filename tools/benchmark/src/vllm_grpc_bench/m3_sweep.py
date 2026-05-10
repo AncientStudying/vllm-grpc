@@ -80,9 +80,9 @@ CITATIONS: dict[Axis, str] = {
     ),
     "http2_framing": (
         "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/"
-        "flow_control.cc; "
-        "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/"
-        "bdp_estimator.cc"
+        "flow_control.cc (chttp2 stream/transport flow-control state); "
+        "~/.graphify/repos/grpc/grpc/src/core/lib/transport/"
+        "bdp_estimator.cc (BDP probe state machine)"
     ),
     "schema": (
         "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_runtime_protos.py "

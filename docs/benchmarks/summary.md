@@ -123,3 +123,23 @@ Numbers are drawn from committed JSON files in `docs/benchmarks/`.
 ---
 
 *All results from Modal A10G runs. Source JSON files in `docs/benchmarks/`.*
+
+---
+
+## 4. M3 — gRPC Channel-Level Tuning (Phase 015)
+
+**Methodology** (CPU-only, mock vLLM engine — distinct from §1–§3 GPU runs above)
+- Sweep: 4 channel axes × 3 canonical widths × 2 paths × 30 iters/cell
+- Source: [`m3-channel-tuning.md`](./m3-channel-tuning.md) | [`m3-channel-tuning.json`](./m3-channel-tuning.json)
+- SC-003 win bar: candidate bytes 95% CI strictly below baseline 95% CI
+
+| Axis | Width range | Path | Verdict | Notes |
+|---|---|---|---|---|
+| `max_message_size` | 2048 / 4096 / 8192 | embed + chat_stream | no_winner (all 6 cells) | default 4 MiB never binds; embed payload is ~524 KB at h=8192 |
+| `keepalive` | 2048 / 4096 / 8192 | embed + chat_stream | no_winner (all 6 cells) | aggressive 10 s pings completed long-stream cohort with no drops |
+| `compression` | 2048 / 4096 / 8192 | embed + chat_stream | no_winner (all 6 cells) | gzip costs +18–39% time on dense-float embeds with no wire-byte win |
+| `http2_framing` | 2048 / 4096 / 8192 | embed + chat_stream | no_winner (all 6 cells) | BDP-probe cannot manifest a win on loopback CPU-only mock |
+
+**P1 frozen channel config (FR-008):** `M1_BASELINE` (all axes default — no candidate cleared SC-003). This is the configuration US2 (P2 schema-level tuning) measures against.
+
+**Cross-comparison caveat:** the M3 numbers above are **not** comparable to §1–§3 above. M3 runs CPU-only with a mock engine to isolate channel/protocol effects from model-execution effects, while §1–§3 benchmark the live vLLM engine on Modal A10G. M3's "delta vs M1" is computed against the M3 in-batch baseline (also CPU-mock), not against the GPU numbers in §2.
