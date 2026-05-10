@@ -1,0 +1,24 @@
+// M4 schema candidate (a) — packed scalars on chat token-ids.
+//
+// In proto3, repeated scalar fields are packed by default; this candidate
+// makes the encoding explicit on the streaming chunk so a reader can compare
+// wire bytes (and serialization time) against the production
+// `ChatStreamChunk` shape that uses an int32 token_index alone.
+//
+// The candidate adds a `repeated int32 token_ids` field carrying every token
+// id emitted in the chunk. The harness measures the trade-off between
+// "richer chunk" and "wire bytes / serialization time".
+//
+// **Not wired into production servicers.** US3 imports the generated stubs
+// only when measuring this cohort; production proto is unchanged.
+
+syntax = "proto3";
+
+package vllm_grpc.v1.m4_candidates.packed_token_ids;
+
+message ChatStreamChunk {
+  string delta_content = 1;
+  string finish_reason = 2;
+  int32  token_index   = 3;
+  repeated int32 token_ids = 4 [packed = true];
+}

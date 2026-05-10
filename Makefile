@@ -16,6 +16,15 @@ proto:
 		proto/vllm_grpc/v1/health.proto \
 		proto/vllm_grpc/v1/chat.proto \
 		proto/vllm_grpc/v1/completions.proto
+	# M4 schema candidates (US3) — isolated namespace; not wired into production.
+	mkdir -p packages/gen/src/vllm_grpc/v1/m4_candidates
+	touch packages/gen/src/vllm_grpc/v1/m4_candidates/__init__.py
+	uv run python -m grpc_tools.protoc \
+		-I proto \
+		--python_out=packages/gen/src \
+		proto/vllm_grpc/v1/m4-candidates/packed_token_ids.proto \
+		proto/vllm_grpc/v1/m4-candidates/oneof_flattened_input.proto \
+		proto/vllm_grpc/v1/m4-candidates/chunk_granularity.proto
 
 bootstrap:
 	uv sync --all-packages

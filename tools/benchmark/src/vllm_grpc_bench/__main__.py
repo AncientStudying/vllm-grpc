@@ -7,6 +7,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vllm_grpc_bench.compare import compare, compare_cross, compare_three_way
 from vllm_grpc_bench.corpus import load_corpus
@@ -27,6 +28,9 @@ from vllm_grpc_bench.reporter import (
     write_three_way_md,
 )
 from vllm_grpc_bench.runner import run_grpc_target_streaming, run_target, run_target_streaming
+
+if TYPE_CHECKING:
+    from vllm_grpc_bench.m3_types import M4SweepConfig
 
 _DEFAULT_CORPUS = Path(__file__).parent.parent.parent / "corpus" / "chat_nonstreaming.json"
 
@@ -143,6 +147,78 @@ def _build_parser() -> argparse.ArgumentParser:
             "<stem>-time.json. Per FR-014, embed cells use metric=time; "
             "chat_stream cells use metric=ttft."
         ),
+    )
+
+    # ---- M4 mode (time-axis sweep with shared baseline + schema candidates) ----
+    parser.add_argument(
+        "--m4",
+        action="store_true",
+        help="Run the M4 time-axis sweep (see specs/016-m4-time-axis-tuning).",
+    )
+    pacing_group = parser.add_mutually_exclusive_group()
+    pacing_group.add_argument(
+        "--no-pacing",
+        dest="m4_pacing",
+        action="store_const",
+        const="no_pacing",
+        help="M4: disable inter-token pacing in the mock engine (default).",
+    )
+    pacing_group.add_argument(
+        "--paced",
+        dest="m4_pacing",
+        action="store_const",
+        const="paced",
+        help="M4: keep M3-style inter-token pacing (compatibility).",
+    )
+    baseline_group = parser.add_mutually_exclusive_group()
+    baseline_group.add_argument(
+        "--shared-baseline",
+        dest="m4_shared_baseline",
+        action="store_const",
+        const=True,
+        help="M4: share the M1_BASELINE cohort across all axes (default).",
+    )
+    baseline_group.add_argument(
+        "--per-axis-baseline",
+        dest="m4_shared_baseline",
+        action="store_const",
+        const=False,
+        help="M4: re-measure the M1_BASELINE per axis (M3-compat; not defensible).",
+    )
+    parser.add_argument("--baseline-n", type=int, default=100)
+    parser.add_argument("--candidate-n", type=int, default=100)
+    parser.add_argument("--expand-n", type=int, default=250)
+    parser.add_argument("--baseline-cv-max", type=float, default=0.05)
+    parser.add_argument(
+        "--widths",
+        default="2048,4096,8192",
+        help="M4: csv list of hidden_size values (default 2048,4096,8192).",
+    )
+    parser.add_argument(
+        "--paths",
+        default="embed,chat_stream",
+        help="M4: csv list of paths (default embed,chat_stream).",
+    )
+    parser.add_argument(
+        "--axes",
+        default="max_message_size,keepalive,compression,http2_framing",
+        help="M4: csv list of channel axes to sweep.",
+    )
+    parser.add_argument(
+        "--schema-candidates",
+        default="packed_token_ids,oneof_flattened_input,chunk_granularity",
+        help="M4 / US3: csv list of named schema candidates.",
+    )
+    parser.add_argument(
+        "--skip-schema",
+        action="store_true",
+        help="M4: skip US3 schema-candidate measurement entirely.",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=Path("bench-results/m4-full"),
+        help="M4: output directory for transient per-iteration JSON.",
     )
 
     # ---- run (default) ----
@@ -533,9 +609,107 @@ def _run_m3_reanalyze(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_m4_config(args: argparse.Namespace) -> M4SweepConfig:
+    from vllm_grpc_bench.m3_types import M4SweepConfig, PacingMode
+
+    pacing_raw = args.m4_pacing or "no_pacing"
+    if pacing_raw not in ("paced", "no_pacing"):
+        raise ValueError(f"--no-pacing/--paced expected, got {pacing_raw!r}")
+    pacing_mode: PacingMode = pacing_raw  # type: ignore[assignment]
+    shared_baseline = True if args.m4_shared_baseline is None else args.m4_shared_baseline
+    try:
+        widths = tuple(int(w.strip()) for w in str(args.widths).split(",") if w.strip())
+        paths = tuple(p.strip() for p in str(args.paths).split(",") if p.strip())
+        axes = tuple(a.strip() for a in str(args.axes).split(",") if a.strip())
+        schema_candidates = tuple(
+            s.strip() for s in str(args.schema_candidates).split(",") if s.strip()
+        )
+    except ValueError as exc:
+        raise SystemExit(2) from exc
+
+    canonical_width = 4096 if 4096 in widths else widths[0]
+    return M4SweepConfig(
+        pacing_mode=pacing_mode,
+        shared_baseline=shared_baseline,
+        baseline_n=int(args.baseline_n),
+        candidate_n=int(args.candidate_n),
+        expand_n=int(args.expand_n),
+        baseline_cv_max=float(args.baseline_cv_max),
+        widths=widths,
+        paths=paths,  # type: ignore[arg-type]
+        axes=axes,
+        schema_candidates=schema_candidates,
+        schema_canonical_width=canonical_width,
+        skip_schema=bool(args.skip_schema),
+        seed=int(args.seed),
+    )
+
+
+def _run_m4(args: argparse.Namespace) -> int:
+    from vllm_grpc_bench import m4_sweep
+
+    if args.m4_pacing is None:
+        args.m4_pacing = "no_pacing"
+    if args.m4_shared_baseline is None:
+        args.m4_shared_baseline = True
+    if args.expand_n <= args.candidate_n:
+        print(
+            "Error: --expand-n must be greater than --candidate-n "
+            f"(got expand_n={args.expand_n}, candidate_n={args.candidate_n})",
+            file=sys.stderr,
+        )
+        return 2
+    if args.baseline_n < 100:
+        print(
+            "Error: --baseline-n must be >= 100 (FR-002)",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        config = _build_m4_config(args)
+    except (ValueError, SystemExit) as exc:
+        print(f"Error: invalid M4 sweep configuration: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        run = asyncio.run(m4_sweep.run_m4_sweep(config, progress=True))
+    except m4_sweep.BaselineCVError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 3
+    try:
+        m4_sweep.validate_run(run)
+    except ValueError as exc:
+        print(f"Error: M4 run validation failed: {exc}", file=sys.stderr)
+        return 4
+
+    out_dir: Path = args.out
+    out_dir.mkdir(parents=True, exist_ok=True)
+    docs_dir = Path("docs/benchmarks")
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    json_path = docs_dir / "m4-time-axis-tuning.json"
+    md_path = docs_dir / "m4-time-axis-tuning.md"
+
+    from vllm_grpc_bench.reporter import write_m4_json, write_m4_markdown
+
+    write_m4_json(run, json_path)
+    write_m4_markdown(run, md_path)
+    n_recommend = sum(1 for r in run.recommendations if r.verdict == "recommend")
+    n_no_winner = sum(1 for r in run.recommendations if r.verdict == "no_winner")
+    n_client_bound = sum(1 for r in run.recommendations if r.verdict == "client_bound")
+    n_super = len(run.supersedes)
+    print(
+        f"M4 sweep complete: {n_recommend} recommend, {n_no_winner} no_winner, "
+        f"{n_client_bound} client_bound. {n_super} M3 cells superseded."
+    )
+    return 0
+
+
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+
+    if getattr(args, "m4", False):
+        sys.exit(_run_m4(args))
 
     if getattr(args, "m3", False):
         sys.exit(_run_m3(args))

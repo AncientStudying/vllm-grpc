@@ -4,8 +4,15 @@ import csv
 import dataclasses
 import json
 from collections import defaultdict
+from dataclasses import asdict
 from pathlib import Path
 
+from vllm_grpc_bench.m3_types import (
+    Run,
+    RunCohort,
+    SchemaCandidateResult,
+    SupersessionEntry,
+)
 from vllm_grpc_bench.metrics import (
     BenchmarkRun,
     CrossRunReport,
@@ -395,6 +402,241 @@ def write_wire_size_comparison_md(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines))
     return output_path
+
+
+# ---------------------------------------------------------------------------
+# M4 report (strict-superset JSON + companion markdown)
+# ---------------------------------------------------------------------------
+
+
+def _cohort_to_m4_dict(c: RunCohort) -> dict[str, object]:
+    """Strict-superset JSON shape per ``m4-report-schema.md``.
+
+    Every M3 per-cohort field is preserved verbatim; M4-only fields are
+    additive.
+    """
+    expansion = asdict(c.expansion_record) if c.expansion_record is not None else None
+    ttft = c.time_to_first_token_seconds
+    return {
+        "cell_id": c.cell.cell_id,
+        "path": c.cell.path,
+        "hidden_size": c.cell.hidden_size,
+        "config_name": c.cell.channel_config.name,
+        "config_axis": c.cell.channel_config.axis,
+        "corpus_subset": c.cell.corpus_subset,
+        "iterations": c.cell.iterations,
+        "n_successful": c.n_successful,
+        "measurable": c.measurable,
+        "off_canonical": c.cell.off_canonical,
+        "bytes": {
+            "mean": c.bytes_mean,
+            "ci_low": c.bytes_ci_low,
+            "ci_high": c.bytes_ci_high,
+        },
+        "time_seconds": {
+            "mean": c.time_mean,
+            "ci_low": c.time_ci_low,
+            "ci_high": c.time_ci_high,
+        },
+        "is_baseline": c.is_baseline,
+        "baseline_role": c.baseline_role,
+        "expansion_record": expansion,
+        "client_bound": c.client_bound,
+        "time_to_first_token_seconds": (
+            {"mean": ttft[0], "ci_low": ttft[1], "ci_high": ttft[2]} if ttft is not None else None
+        ),
+    }
+
+
+def _supersession_to_dict(entry: SupersessionEntry) -> dict[str, object]:
+    return {
+        "m3_cell_id": entry.m3_cell_id,
+        "m3_verdict": entry.m3_verdict,
+        "m4_cell_id": entry.m4_cell_id,
+        "m4_verdict": entry.m4_verdict,
+        "rationale": entry.rationale,
+    }
+
+
+def _schema_candidate_to_dict(result: SchemaCandidateResult) -> dict[str, object]:
+    return {
+        "candidate_name": result.candidate_name,
+        "proto_file": result.proto_file,
+        "measured_widths": list(result.measured_widths),
+        "per_width": [
+            {
+                "hidden_size": pw.hidden_size,
+                "frozen_baseline_cohort_id": pw.frozen_baseline_cohort_id,
+                "candidate_cohort_id": pw.candidate_cohort_id,
+                "bytes_verdict": pw.bytes_verdict,
+                "time_verdict": pw.time_verdict,
+                "primary_metric": pw.primary_metric,
+                "delta_bytes_pct": pw.delta_bytes_pct,
+                "delta_time_pct": pw.delta_time_pct,
+                "ci_overlap_initial": pw.ci_overlap_initial,
+                "expanded": pw.expanded,
+            }
+            for pw in result.per_width
+        ],
+        "is_negative_result": result.is_negative_result,
+        "notes": result.notes,
+    }
+
+
+def write_m4_json(run: Run, path: Path) -> Path:
+    """Write the M4 report JSON in the strict-superset schema (FR-015 / R-7)."""
+    payload: dict[str, object] = {
+        "mode": run.mode,
+        "axes": list(run.axes),
+        "widths": list(run.widths),
+        "paths": list(run.paths),
+        "iterations_per_cell": run.iterations_per_cell,
+        "seed": run.seed,
+        "p2_revision": run.p2_revision,
+        "frozen_channel": run.frozen_channel,
+        "cohorts": [_cohort_to_m4_dict(c) for c in run.cohorts],
+        "pacing_mode": run.pacing_mode,
+        "shared_baseline_cohort_ids": run.shared_baseline_cohort_ids,
+        "frozen_channel_baselines": (
+            {
+                p: {
+                    "path": fb.path,
+                    "cohort_id": fb.cohort_id,
+                    "channel_config_name": fb.channel_config_name,
+                    "per_axis_winners": dict(fb.per_axis_winners),
+                    "measured_at_hidden_size": fb.measured_at_hidden_size,
+                }
+                for p, fb in run.frozen_channel_baselines.items()
+            }
+            if run.frozen_channel_baselines is not None
+            else None
+        ),
+        "supersedes": [_supersession_to_dict(e) for e in run.supersedes],
+        "candidate_sizing_policy": run.candidate_sizing_policy,
+        "loopback_caveat_axes": (
+            list(run.loopback_caveat_axes) if run.loopback_caveat_axes is not None else None
+        ),
+        "schema_candidate_results": [
+            _schema_candidate_to_dict(r) for r in run.schema_candidate_results
+        ],
+        "recommendations": [
+            {
+                "axis": r.axis,
+                "applies_to_path": r.applies_to_path,
+                "applies_to_widths": sorted(r.applies_to_widths),
+                "verdict": r.verdict,
+                "winning_config": (r.winning_config.name if r.winning_config is not None else None),
+                "winning_delta_pct": r.winning_delta_pct,
+                "winning_metric": r.winning_metric,
+                "baseline_ci_upper": r.baseline_ci_upper,
+                "candidate_ci_lower": r.candidate_ci_lower,
+                "citation": r.citation,
+                "notes": r.notes,
+                "corpus_subset": r.corpus_subset,
+            }
+            for r in run.recommendations
+        ],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, default=str))
+    return path
+
+
+def write_m4_markdown(run: Run, path: Path) -> Path:
+    """Write the human-readable M4 report companion."""
+    lines: list[str] = [
+        "# M4: Time-Axis Channel & Schema Tuning",
+        "",
+        "## Methodology",
+        "",
+        f"- Pacing mode: `{run.pacing_mode}`",
+        f"- Shared baseline cohort ids: `{run.shared_baseline_cohort_ids}`",
+        f"- Sample policy: {run.candidate_sizing_policy}",
+        f"- Loopback caveat axes: {run.loopback_caveat_axes}",
+        f"- Seed: {run.seed}",
+        "",
+        "## Verdicts",
+        "",
+        "| axis | path | hidden_size | verdict | winning_config | Δ% | citation |",
+        "|------|------|-------------|---------|----------------|----|----------|",
+    ]
+    for r in run.recommendations:
+        widths = ",".join(str(w) for w in sorted(r.applies_to_widths))
+        winning = r.winning_config.name if r.winning_config is not None else "-"
+        delta = f"{r.winning_delta_pct:+.2f}%" if r.winning_delta_pct is not None else "-"
+        lines.append(
+            f"| {r.axis} | {r.applies_to_path} | {widths} | {r.verdict} "
+            f"| {winning} | {delta} | {r.citation} |"
+        )
+
+    if run.frozen_channel_baselines:
+        lines += ["", "## Per-path frozen-channel baselines", ""]
+        for path_name, fb in run.frozen_channel_baselines.items():
+            lines.append(
+                f"- **{path_name}** → cohort `{fb.cohort_id}` "
+                f"@ hidden_size={fb.measured_at_hidden_size}; "
+                f"per-axis winners: {fb.per_axis_winners}"
+            )
+
+    if run.supersedes:
+        lines += [
+            "",
+            "## Supersedes M3",
+            "",
+            "| M3 cell | M3 verdict | M4 cell | M4 verdict | rationale |",
+            "|---------|------------|---------|------------|-----------|",
+        ]
+        for entry in run.supersedes:
+            lines.append(
+                f"| {entry.m3_cell_id} | {entry.m3_verdict} "
+                f"| {entry.m4_cell_id} | {entry.m4_verdict} | {entry.rationale} |"
+            )
+
+    if run.loopback_caveat_axes:
+        lines += [
+            "",
+            "## Loopback caveat",
+            "",
+            "These axes' verdicts apply to single-host loopback runs only — "
+            "RTT-bounded behaviour cannot manifest on `127.0.0.1` (R-6):",
+            "",
+        ]
+        for axis in run.loopback_caveat_axes:
+            lines.append(f"- `{axis}`")
+
+    if run.schema_candidate_results:
+        lines += ["", "## Schema candidates", ""]
+        for sc in run.schema_candidate_results:
+            lines.append(
+                f"### `{sc.candidate_name}` "
+                f"({'negative result' if sc.is_negative_result else 'measured'})"
+            )
+            if sc.notes:
+                lines.append(f"> {sc.notes}")
+            lines.append("")
+            if sc.per_width:
+                lines.append("| width | bytes | time | primary | Δbytes% | Δtime% | expanded |")
+                lines.append("|-------|-------|------|---------|---------|--------|----------|")
+                for pw in sc.per_width:
+                    lines.append(
+                        f"| {pw.hidden_size} | {pw.bytes_verdict} | "
+                        f"{pw.time_verdict} | {pw.primary_metric} | "
+                        f"{pw.delta_bytes_pct} | {pw.delta_time_pct} | "
+                        f"{pw.expanded} |"
+                    )
+                lines.append("")
+        negatives = [r for r in run.schema_candidate_results if r.is_negative_result]
+        if negatives:
+            lines += ["", "## Negative results", ""]
+            for sc in negatives:
+                lines.append(
+                    f"- `{sc.candidate_name}` — bytes and time both `no_winner` "
+                    f"at every measured width (FR-014)."
+                )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+    return path
 
 
 def write_three_way_md(report: ThreeWayReport, path: Path) -> None:

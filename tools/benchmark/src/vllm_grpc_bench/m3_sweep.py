@@ -674,20 +674,10 @@ def _build_recommendations_bytes(cohorts: list[RunCohort], *, axis: Axis) -> lis
 
 
 def _ttft_estimate_for_cohort(cohort: RunCohort) -> tuple[float, float, float, int] | None:
-    """TTFT mean + 95% CI bounds + n from ``samples[i].time_to_first_token_seconds``.
+    """Delegate to ``vllm_grpc_bench.ttft.ttft_estimate`` (R-10 shared math)."""
+    from vllm_grpc_bench.ttft import ttft_estimate
 
-    Returns ``None`` if fewer than the ci.py-supported floor (n=10) of samples
-    carry a TTFT (non-streaming paths or failed RPCs both contribute None).
-    """
-    ttfts = [
-        s.time_to_first_token_seconds
-        for s in cohort.samples
-        if s.time_to_first_token_seconds is not None and s.error is None
-    ]
-    if len(ttfts) < 10:
-        return None
-    est = estimate(ttfts)
-    return est.mean, est.ci_low, est.ci_high, est.n
+    return ttft_estimate(cohort)
 
 
 def _metric_estimate(cohort: RunCohort, metric: str) -> tuple[float, float, float] | None:

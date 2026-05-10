@@ -135,6 +135,8 @@ Re-frame the M3 measurements around wall-clock time as a first-class success met
 - Re-run the four-axis channel sweep under the new methodology.
 - Measure protobuf-shape candidates (packed scalars on token-id fields, `oneof` flattening on the input union, alternative streaming chunk granularity) against the new frozen-channel baseline using both bytes and time verdicts.
 
+**Status (active):** harness redesign + sweep machinery merged on `016-m4-time-axis-tuning`. Drive the sweep with `python -m vllm_grpc_bench --m4` (default no-pacing, shared baseline, n=100→250 cascade, baseline-CV gate at 5%). The published `docs/benchmarks/m4-time-axis-tuning.{md,json}` lands when the operator runs the full sweep on a quiet host.
+
 ### Milestone 5 — Corpus Expansion
 
 Re-run all three access paths against a larger, more varied prompt corpus covering short and long prompts, multi-turn conversations, and domain-specific content (code, structured data). Determine whether the Milestone 1 wire-size and latency findings hold across input diversity.
