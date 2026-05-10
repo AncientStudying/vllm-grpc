@@ -10,7 +10,7 @@ This contract defines the user-facing CLI entrypoint for the M3 sweep. It augmen
 ```text
 python -m vllm_grpc_bench --m3 \
     [--axis {max_message_size,keepalive,compression,http2_framing,all}] \
-    [--width {2048,4096,8192,all}] \
+    [--width {2048|4096|8192|all|<positive_integer>}] \
     [--path {embed,chat_stream,both}] \
     [--iters-per-cell N]                  (default: 30) \
     [--out-dir docs/benchmarks]           (default; report files written here) \
@@ -34,7 +34,7 @@ Exit codes 0 and 3 both produce a complete report; the difference is whether any
 
 ## Behaviour
 
-1. Constructs the cartesian product of `axis × width × path`, restricted by CLI flags. `--axis all` (default) expands to the four P1 axes.
+1. Constructs the cartesian product of `axis × width × path`, restricted by CLI flags. `--axis all` (default) expands to the four P1 axes. `--width` accepts the three canonical values (2048, 4096, 8192), `all` (their union), or **any positive integer** for exploratory off-canonical runs (per spec Edge Case "Embedding width above the canonical set"); off-canonical widths produce `Sample`s and `RunCohort`s flagged as `off_canonical=True` so the report can mark them as exploratory and not used as primary recommendations.
 2. For each cell:
     a. Spawns a `MockEngine` with the cell's `MockEngineConfig`.
     b. Brings up `frontend.main`'s servicers in-process with the cell's `ChannelConfig.server_options`.

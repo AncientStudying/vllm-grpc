@@ -72,7 +72,11 @@ A single iteration's measurement.
 | `wall_clock_seconds` | `float` | End-to-end RPC time |
 | `tokens_emitted` | `int \| None` | None for embed; present for streaming |
 | `time_to_first_token_seconds` | `float \| None` | streaming only |
+| `mean_inter_token_seconds` | `float \| None` | streaming only; mean of per-yield-arrival deltas across this stream's tokens (not including time-to-first-token). Required to satisfy spec AS US1-3 ("per-token decode-time variance") |
+| `inter_token_seconds_stddev` | `float \| None` | streaming only; sample stddev of the same per-yield-arrival deltas. The harness records per-yield receive timestamps via `time.perf_counter()` at each `async for` boundary (mock-engine timing parity is enough — see `contracts/mock-engine-interface.md`); these two scalars summarize within-stream variance without exploding the on-disk Sample size with full timestamp arrays |
+| `off_canonical` | `bool` | True iff `BenchmarkCell.hidden_size` is outside `{2048, 4096, 8192}`. Propagated through `RunCohort` so the report can mark exploratory rows accordingly (spec Edge Case "Embedding width above the canonical set") |
 | `error` | `str \| None` | If the RPC failed; non-None samples are excluded from CI math but recorded |
+| `error_kind` | `Literal["rpc_aborted","max_msg_exceeded","timeout","other"] \| None` | Typed error category so the report can group by failure mode without substring-matching `error`. Required by spec Edge Case "`max_message_size` becomes binding mid-run" — distinguishes "rejected at the boundary" (`max_msg_exceeded`) from "succeeded slow" (`error is None` but `wall_clock_seconds` elevated) cleanly |
 
 ### `RunCohort`
 
