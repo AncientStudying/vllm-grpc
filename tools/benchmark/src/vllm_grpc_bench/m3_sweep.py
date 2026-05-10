@@ -55,6 +55,7 @@ from vllm_grpc_bench.m3_types import (
     Recommendation,
     RunCohort,
     Sample,
+    WinningMetric,
 )
 from vllm_grpc_bench.mock_engine import MockEngine, MockEngineConfig
 
@@ -529,10 +530,31 @@ def build_recommendations(
 ) -> list[Recommendation]:
     """Compare each candidate cohort against the M1_BASELINE cohort within the axis.
 
-    Emits one ``Recommendation`` per (path, width-set) combination on the axis.
+    Dispatches by ``metric``:
+
+    - ``"bytes"`` (PR #17 / SC-003 bytes path): groups by ``(path, hidden_size)``;
+      pairs each candidate with the *first* M1_BASELINE in that group. Robust
+      because the bytes metric exhibits ~0.01% cross-batch drift on this harness.
+    - ``"time"`` / ``"ttft"`` (Phase A / US3 / SC-006): groups by
+      ``(path, hidden_size, corpus_subset)`` so the long-stream cohort gets its
+      own verdict; pairs each candidate with the **immediate-predecessor**
+      M1_BASELINE in cohort run-order (per ``research.md`` R-12). For
+      ``metric="ttft"``, only chat_stream cells are emitted (TTFT is undefined
+      off the streaming path); per-cohort TTFT mean+CI is computed from
+      ``samples[i].time_to_first_token_seconds``. Emits a ``noise_bounded``
+      verdict (per ``spec.md`` FR-005) when the predecessor pairing claims a win
+      but at least one alternative same-cell M1_BASELINE would NOT — the
+      conclusion is unstable across baselines and re-measures under M4.
     """
-    if metric not in ("bytes", "time"):
-        raise ValueError(f"metric must be 'bytes' or 'time', got {metric!r}")
+    if metric not in ("bytes", "time", "ttft"):
+        raise ValueError(f"metric must be 'bytes', 'time', or 'ttft', got {metric!r}")
+    if metric == "bytes":
+        return _build_recommendations_bytes(cohorts, axis=axis)
+    return _build_recommendations_time_axis(cohorts, axis=axis, metric=metric)
+
+
+def _build_recommendations_bytes(cohorts: list[RunCohort], *, axis: Axis) -> list[Recommendation]:
+    """SC-003 bytes-axis recommendation builder (PR #17 path, preserved verbatim)."""
     recs: list[Recommendation] = []
     citation = CITATIONS[axis]
 
@@ -566,14 +588,9 @@ def build_recommendations(
             )
             continue
 
-        if metric == "bytes":
-            base_mean = baseline.bytes_mean
-            base_low = baseline.bytes_ci_low
-            base_high = baseline.bytes_ci_high
-        else:
-            base_mean = baseline.time_mean
-            base_low = baseline.time_ci_low
-            base_high = baseline.time_ci_high
+        base_mean = baseline.bytes_mean
+        base_low = baseline.bytes_ci_low
+        base_high = baseline.bytes_ci_high
 
         candidates = [c for c in group if c.cell.channel_config.name != M1_BASELINE.name]
         if not candidates:
@@ -590,31 +607,22 @@ def build_recommendations(
             )
             continue
 
-        # SC-003 rule for *minimizing* metrics (bytes/time, smaller is better):
-        # candidate WINS iff candidate_ci_high < baseline_ci_low.
-        #
-        # ci.is_winner(baseline_ci_high, candidate_ci_low) tests
-        # ``candidate_ci_low > baseline_ci_high`` (maximizing-metric framing
-        # from research.md R-1). To reuse it for our minimizing metric we
-        # negate both inputs: ``is_winner(-cand_ci_high, -base_ci_low)`` is
-        # True iff -base_ci_low > -cand_ci_high iff cand_ci_high < base_ci_low.
-        #
-        # The Recommendation schema's invariant
-        # ``candidate_ci_lower > baseline_ci_upper`` is also written for the
-        # maximizing framing; we satisfy it by storing the *negated* CIs so
-        # the dataclass validator stays meaningful.
+        # SC-003 rule for *minimizing* metrics (bytes, smaller is better):
+        # candidate WINS iff candidate_ci_high < baseline_ci_low. We reuse
+        # ``ci.is_winner`` (maximizing-metric framing) by negating both inputs.
+        # The dataclass invariant ``candidate_ci_lower > baseline_ci_upper`` is
+        # satisfied by storing the negated CIs.
         winner: RunCohort | None = None
         for cand in candidates:
             if not cand.measurable:
                 continue
-            cand_high = cand.bytes_ci_high if metric == "bytes" else cand.time_ci_high
+            cand_high = cand.bytes_ci_high
             if is_winner(baseline_ci_high=-base_low, candidate_ci_low=-cand_high):
-                cand_mean = cand.bytes_mean if metric == "bytes" else cand.time_mean
+                cand_mean = cand.bytes_mean
                 if winner is None:
                     winner = cand
                 else:
-                    winner_mean = winner.bytes_mean if metric == "bytes" else winner.time_mean
-                    if cand_mean < winner_mean:
+                    if cand_mean < winner.bytes_mean:
                         winner = cand
 
         if winner is None:
@@ -630,11 +638,8 @@ def build_recommendations(
                         f"no candidate cleared the SC-003 threshold "
                         f"(baseline_ci_low={base_low:.4g}); "
                         + "; ".join(
-                            "{name}: mean={m:.4g}, ci_high={h:.4g}".format(
-                                name=c.cell.channel_config.name,
-                                m=c.bytes_mean if metric == "bytes" else c.time_mean,
-                                h=c.bytes_ci_high if metric == "bytes" else c.time_ci_high,
-                            )
+                            f"{c.cell.channel_config.name}: mean={c.bytes_mean:.4g}, "
+                            f"ci_high={c.bytes_ci_high:.4g}"
                             for c in candidates
                         )
                     ),
@@ -642,8 +647,8 @@ def build_recommendations(
             )
             continue
 
-        win_mean = winner.bytes_mean if metric == "bytes" else winner.time_mean
-        win_high = winner.bytes_ci_high if metric == "bytes" else winner.time_ci_high
+        win_mean = winner.bytes_mean
+        win_high = winner.bytes_ci_high
         delta_pct = ((win_mean - base_mean) / base_mean * 100.0) if base_mean else 0.0
         recs.append(
             Recommendation(
@@ -653,10 +658,7 @@ def build_recommendations(
                 verdict="recommend",
                 winning_config=winner.cell.channel_config,
                 winning_delta_pct=delta_pct,
-                winning_metric="bytes" if metric == "bytes" else "time",
-                # Negated values preserve the dataclass invariant
-                # ``candidate_ci_lower > baseline_ci_upper`` for our
-                # minimizing-metric framing. See SC-003 comment above.
+                winning_metric="bytes",
                 baseline_ci_upper=-base_low,
                 candidate_ci_lower=-win_high,
                 citation=citation,
@@ -665,6 +667,292 @@ def build_recommendations(
                     f"baseline_ci=[{base_low:.4g},{base_high:.4g}], "
                     f"candidate_ci_high={win_high:.4g}"
                 ),
+            )
+        )
+
+    return recs
+
+
+def _ttft_estimate_for_cohort(cohort: RunCohort) -> tuple[float, float, float, int] | None:
+    """TTFT mean + 95% CI bounds + n from ``samples[i].time_to_first_token_seconds``.
+
+    Returns ``None`` if fewer than the ci.py-supported floor (n=10) of samples
+    carry a TTFT (non-streaming paths or failed RPCs both contribute None).
+    """
+    ttfts = [
+        s.time_to_first_token_seconds
+        for s in cohort.samples
+        if s.time_to_first_token_seconds is not None and s.error is None
+    ]
+    if len(ttfts) < 10:
+        return None
+    est = estimate(ttfts)
+    return est.mean, est.ci_low, est.ci_high, est.n
+
+
+def _metric_estimate(cohort: RunCohort, metric: str) -> tuple[float, float, float] | None:
+    """``(mean, ci_low, ci_high)`` for the given metric; None if unavailable."""
+    if metric == "time":
+        return cohort.time_mean, cohort.time_ci_low, cohort.time_ci_high
+    if metric == "ttft":
+        ttft = _ttft_estimate_for_cohort(cohort)
+        if ttft is None:
+            return None
+        mean, low, high, _n = ttft
+        return mean, low, high
+    raise ValueError(f"unknown metric {metric!r}")
+
+
+def _build_recommendations_time_axis(
+    cohorts: list[RunCohort], *, axis: Axis, metric: str
+) -> list[Recommendation]:
+    """SC-006 time/TTFT recommendation builder (Phase A / US3).
+
+    Differs from the bytes builder in three ways:
+
+    1. **Grouping key** is ``(path, hidden_size, corpus_subset)`` so long-stream
+       cohorts get their own verdicts (different workload, different baseline).
+    2. **Baseline pairing** is *immediate-predecessor* in cohort run-order
+       rather than "first M1_BASELINE in group" — kills the cross-batch drift
+       documented in research.md R-12 (~13% spread on this harness).
+    3. **noise_bounded verdict** is emitted (per FR-005) when the predecessor
+       verdict claims a win but at least one alternative same-cell M1_BASELINE
+       would NOT — the conclusion is unstable across baselines.
+
+    For ``metric="ttft"``, embed cells are skipped (TTFT is undefined off the
+    streaming path).
+    """
+    recs: list[Recommendation] = []
+    citation = CITATIONS[axis]
+
+    # Walk cohorts in run-order, building:
+    #   - predecessor_for[id(candidate_cohort)] -> baseline RunCohort
+    #   - all_baselines_at[(path, width, corpus_subset)] -> list[RunCohort]
+    predecessor_for: dict[int, RunCohort] = {}
+    all_baselines_at: dict[tuple[Path_, int, str], list[RunCohort]] = {}
+    last_baseline_at: dict[tuple[Path_, int, str], RunCohort] = {}
+
+    for c in cohorts:
+        key = (c.cell.path, c.cell.hidden_size, c.cell.corpus_subset)
+        if c.cell.channel_config.name == M1_BASELINE.name:
+            last_baseline_at[key] = c
+            all_baselines_at.setdefault(key, []).append(c)
+        elif c.cell.channel_config.axis == axis:
+            if key in last_baseline_at:
+                predecessor_for[id(c)] = last_baseline_at[key]
+
+    # Group axis-relevant cohorts (baseline + this-axis candidates) by cell.
+    by_cell: dict[tuple[Path_, int, str], list[RunCohort]] = {}
+    for c in cohorts:
+        if c.cell.channel_config.axis not in (axis, "baseline"):
+            continue
+        if metric == "ttft" and c.cell.path != "chat_stream":
+            continue
+        key = (c.cell.path, c.cell.hidden_size, c.cell.corpus_subset)
+        by_cell.setdefault(key, []).append(c)
+
+    for (path, width, corpus), group in sorted(by_cell.items()):
+        candidates = [c for c in group if c.cell.channel_config.name != M1_BASELINE.name]
+        baselines_at_cell = all_baselines_at.get((path, width, corpus), [])
+        baseline = next(
+            (c for c in group if c.cell.channel_config.name == M1_BASELINE.name),
+            None,
+        )
+
+        if baseline is None or not baseline.measurable:
+            recs.append(
+                Recommendation(
+                    axis=axis,
+                    applies_to_path=path,
+                    applies_to_widths=frozenset({width}),
+                    verdict="not_measurable",
+                    baseline_ci_upper=0.0,
+                    citation=citation,
+                    notes=(f"baseline cohort missing or unmeasurable for {path}/h{width}/{corpus}"),
+                    corpus_subset=corpus,  # type: ignore[arg-type]
+                )
+            )
+            continue
+
+        base_est = _metric_estimate(baseline, metric)
+        if base_est is None:
+            recs.append(
+                Recommendation(
+                    axis=axis,
+                    applies_to_path=path,
+                    applies_to_widths=frozenset({width}),
+                    verdict="not_measurable",
+                    baseline_ci_upper=0.0,
+                    citation=citation,
+                    notes=(
+                        f"insufficient {metric} data for baseline cohort "
+                        f"{baseline.cell.cell_id} (need n>=10 valid samples)"
+                    ),
+                    corpus_subset=corpus,  # type: ignore[arg-type]
+                )
+            )
+            continue
+        base_mean, base_low, base_high = base_est
+
+        if not candidates:
+            recs.append(
+                Recommendation(
+                    axis=axis,
+                    applies_to_path=path,
+                    applies_to_widths=frozenset({width}),
+                    verdict="no_winner",
+                    baseline_ci_upper=base_high,
+                    citation=citation,
+                    notes=f"no candidates evaluated for {path}/h{width}/{corpus}",
+                    corpus_subset=corpus,  # type: ignore[arg-type]
+                )
+            )
+            continue
+
+        # Find the best winner using each candidate's *immediate-predecessor*
+        # baseline (R-12). This is the candidate-specific pairing; we then
+        # check it for noise-bounded instability against the OTHER baselines
+        # at the same cell.
+        winner: RunCohort | None = None
+        winner_predecessor: RunCohort | None = None
+        winner_est: tuple[float, float, float] | None = None
+
+        candidate_notes: list[str] = []
+        for cand in candidates:
+            if not cand.measurable:
+                continue
+            cand_est = _metric_estimate(cand, metric)
+            if cand_est is None:
+                candidate_notes.append(
+                    f"{cand.cell.channel_config.name}: insufficient {metric} data"
+                )
+                continue
+            cand_mean, cand_low, cand_high = cand_est
+            candidate_notes.append(
+                f"{cand.cell.channel_config.name}: mean={cand_mean:.4g}, ci_high={cand_high:.4g}"
+            )
+
+            pred = predecessor_for.get(id(cand), baseline)
+            pred_est = _metric_estimate(pred, metric)
+            if pred_est is None:
+                continue
+            _pred_mean, pred_low, _pred_high = pred_est
+
+            # Minimizing-metric win: cand_ci_high < pred_ci_low.
+            # Among multiple winners, keep the one with the smallest mean.
+            if is_winner(baseline_ci_high=-pred_low, candidate_ci_low=-cand_high) and (
+                winner is None or cand_mean < (winner_est[0] if winner_est else float("inf"))
+            ):
+                winner = cand
+                winner_predecessor = pred
+                winner_est = cand_est
+
+        if winner is None:
+            recs.append(
+                Recommendation(
+                    axis=axis,
+                    applies_to_path=path,
+                    applies_to_widths=frozenset({width}),
+                    verdict="no_winner",
+                    baseline_ci_upper=base_high,
+                    citation=citation,
+                    notes=(
+                        f"no candidate cleared the SC-006 {metric} threshold "
+                        f"against its immediate-predecessor M1_BASELINE for "
+                        f"{path}/h{width}/{corpus}: " + "; ".join(candidate_notes)
+                    ),
+                    corpus_subset=corpus,  # type: ignore[arg-type]
+                )
+            )
+            continue
+
+        # Noise-bounded check: would this win survive against ALL same-cell
+        # M1_BASELINE cohorts, not just the predecessor? Per FR-005 / R-12, an
+        # apparent win that depends on which baseline we pair with cannot be
+        # defensibly emitted — the cross-batch drift exceeds the candidate's
+        # signal.
+        assert winner is not None and winner_est is not None
+        win_mean, _win_low, win_high = winner_est
+        unstable_baselines: list[str] = []
+        for alt_baseline in baselines_at_cell:
+            if alt_baseline is winner_predecessor or not alt_baseline.measurable:
+                continue
+            alt_est = _metric_estimate(alt_baseline, metric)
+            if alt_est is None:
+                continue
+            _alt_mean, alt_low, _alt_high = alt_est
+            if not is_winner(baseline_ci_high=-alt_low, candidate_ci_low=-win_high):
+                unstable_baselines.append(
+                    f"alt_baseline_mean={_alt_mean:.4g}, ci_low={alt_low:.4g}"
+                )
+
+        if unstable_baselines:
+            # Compute the cross-baseline drift magnitude to surface in notes.
+            baseline_means = [
+                _metric_estimate(b, metric)[0]  # type: ignore[index]
+                for b in baselines_at_cell
+                if _metric_estimate(b, metric) is not None
+            ]
+            spread = (
+                (max(baseline_means) - min(baseline_means)) / min(baseline_means) * 100.0
+                if baseline_means and min(baseline_means) > 0
+                else 0.0
+            )
+            recs.append(
+                Recommendation(
+                    axis=axis,
+                    applies_to_path=path,
+                    applies_to_widths=frozenset({width}),
+                    verdict="noise_bounded",
+                    baseline_ci_upper=base_high,
+                    citation=citation,
+                    notes=(
+                        f"cross-batch baseline drift dominates the candidate's signal "
+                        f"({metric}; cross-baseline spread {spread:.1f}% across "
+                        f"{len(baseline_means)} M1_BASELINE cohorts at "
+                        f"{path}/h{width}/{corpus}). Predecessor pairing claimed "
+                        f"{winner.cell.channel_config.name} as winner "
+                        f"(mean={win_mean:.4g}, ci_high={win_high:.4g}) but the win "
+                        f"does not survive {len(unstable_baselines)} alternative "
+                        f"same-cell baseline(s). Re-measure under M4's shared-baseline "
+                        f"mode (FR-013)."
+                    ),
+                    corpus_subset=corpus,  # type: ignore[arg-type]
+                )
+            )
+            continue
+
+        # Stable win: emit recommend.
+        delta_pct = ((win_mean - base_mean) / base_mean * 100.0) if base_mean else 0.0
+        win_metric_label: WinningMetric = "ttft" if metric == "ttft" else "time"
+        # The winning_predecessor may differ from the group's first baseline; report
+        # its CI in notes for traceability.
+        assert winner_predecessor is not None
+        pred_est = _metric_estimate(winner_predecessor, metric)
+        assert pred_est is not None
+        pred_mean, pred_low, pred_high = pred_est
+        recs.append(
+            Recommendation(
+                axis=axis,
+                applies_to_path=path,
+                applies_to_widths=frozenset({width}),
+                verdict="recommend",
+                winning_config=winner.cell.channel_config,
+                winning_delta_pct=delta_pct,
+                winning_metric=win_metric_label,
+                # Negated CIs preserve the dataclass invariant
+                # ``candidate_ci_lower > baseline_ci_upper`` for our minimizing metric.
+                baseline_ci_upper=-pred_low,
+                candidate_ci_lower=-win_high,
+                citation=citation,
+                notes=(
+                    f"{metric}: predecessor_baseline_mean={pred_mean:.4g}, "
+                    f"candidate_mean={win_mean:.4g}, "
+                    f"predecessor_baseline_ci=[{pred_low:.4g},{pred_high:.4g}], "
+                    f"candidate_ci_high={win_high:.4g}; "
+                    f"win survives {len(baselines_at_cell)} same-cell baseline(s)"
+                ),
+                corpus_subset=corpus,  # type: ignore[arg-type]
             )
         )
 
@@ -777,11 +1065,51 @@ def _sample_to_dict(s: Sample) -> dict[str, Any]:
     return d
 
 
+def cohort_from_dict(d: dict[str, Any]) -> RunCohort:
+    """Inverse of ``cohort_to_dict``: reconstruct a ``RunCohort`` from its
+    JSON-serialized form. Used by the Phase A ``--reanalyze`` path to re-run
+    ``build_recommendations`` against an already-collected sweep JSON without
+    re-executing the benchmark.
+
+    Slim cohorts (no ``samples`` field, e.g. the docs/benchmarks/ companion JSON
+    that strips per-iteration data) are accepted: ``samples`` becomes an empty
+    tuple. TTFT-metric verdicts require non-empty samples and will return
+    ``not_measurable`` if asked to verdict a slim cohort.
+    """
+    from vllm_grpc_bench.channel_config import preset_by_name
+
+    cfg = preset_by_name(d["config_name"])
+    cell = BenchmarkCell(
+        path=d["path"],
+        hidden_size=int(d["hidden_size"]),
+        channel_config=cfg,
+        corpus_subset=d["corpus_subset"],
+        iterations=int(d["iterations"]),
+    )
+    samples_raw = d.get("samples", []) or []
+    samples = tuple(Sample(**s) for s in samples_raw)
+    bytes_d = d["bytes"]
+    time_d = d["time_seconds"]
+    return RunCohort(
+        cell=cell,
+        samples=samples,
+        n_successful=int(d["n_successful"]),
+        bytes_mean=float(bytes_d["mean"]),
+        bytes_ci_low=float(bytes_d["ci_low"]),
+        bytes_ci_high=float(bytes_d["ci_high"]),
+        time_mean=float(time_d["mean"]),
+        time_ci_low=float(time_d["ci_low"]),
+        time_ci_high=float(time_d["ci_high"]),
+        measurable=bool(d["measurable"]),
+    )
+
+
 def recommendation_to_dict(r: Recommendation) -> dict[str, Any]:
     return {
         "axis": r.axis,
         "applies_to_path": r.applies_to_path,
         "applies_to_widths": sorted(r.applies_to_widths),
+        "corpus_subset": r.corpus_subset,
         "verdict": r.verdict,
         "winning_config": r.winning_config.name if r.winning_config else None,
         "winning_delta_pct": r.winning_delta_pct,

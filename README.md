@@ -113,7 +113,14 @@ The milestone splits into two axes:
 - How do `max_message_size`, keepalive, compression, and HTTP/2 framing settings affect wire size and decode time across `hidden_size` 2048 / 4096 / 8192?
 - At what `hidden_size` does grpcio's default `max_message_size` become binding for embed requests?
 
-Bytes-verdict report shipped 2026-05-10 in PR #17 (`docs/benchmarks/m3-channel-tuning.{md,json}`). Wall-clock-time re-analysis (Phase A / US3) on the same data closes the milestone; defensible time verdicts are deferred to Milestone 4 per the methodology constraints documented in `specs/015-m3-protobuf-grpc-tuning/research.md` R-11..R-14. Tuning decisions in this milestone lean on cloned vLLM and grpcio source as ground truth — see [`ground-truth-workflow-for-associated-projects.md`](ground-truth-workflow-for-associated-projects.md).
+**Status:** bytes-verdict report shipped 2026-05-10 in PR #17 ([`m3-channel-tuning.{md,json}`](docs/benchmarks/m3-channel-tuning.md)) — `no_winner` across all 24 cells on the bytes metric. Wall-clock-time re-analysis (Phase A / US3) on the same data, shipped on this branch ([`m3-channel-tuning-time.{md,json}`](docs/benchmarks/m3-channel-tuning-time.md)), surfaced **four real time-axis wins** the bytes evaluation missed:
+
+- **`max-msg-16mib` reduces TTFT by −31% on chat_stream/h=4096** and −29% on chat_stream/h=2048 (and −2.4% on embed/h=4096 wall-clock) — surprising because the 4 MiB default never binds at canonical widths, so the mechanism is not wire-byte size.
+- **`keepalive-aggressive` reduces TTFT by −24% on chat_stream/h=2048**.
+
+`max-msg-16mib` is the time-axis frozen config for the `max_message_size` axis; the other three axes default to baseline (one `noise_bounded` cell each on keepalive and HTTP/2 framing flags those cells for M4 re-measurement). Defensible verdicts for the cells M3's harness cannot resolve (chat_stream total wall-clock under any axis; the two `noise_bounded` cells) are deferred to **Milestone 4** per the methodology constraints documented in `specs/015-m3-protobuf-grpc-tuning/research.md` R-11..R-14 and `docs/decisions/0005-m3-statistical-methodology.md`.
+
+Tuning decisions in this milestone lean on cloned vLLM and grpcio source as ground truth — see [`ground-truth-workflow-for-associated-projects.md`](ground-truth-workflow-for-associated-projects.md).
 
 ### Milestone 4 — Time-Axis Channel & Schema Tuning
 

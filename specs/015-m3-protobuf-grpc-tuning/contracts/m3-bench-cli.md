@@ -17,7 +17,8 @@ python -m vllm_grpc_bench --m3 \
     [--smoke]                             (default: off; runs 1 iter/cell, no CI math, exits success on any non-error) \
     [--seed N]                            (default: 0) \
     [--p2-revision NAME]                  (P2 only; activates --frozen-channel automatically) \
-    [--frozen-channel NAME]               (P2 only; required when --p2-revision is set)
+    [--frozen-channel NAME]               (P2 only; required when --p2-revision is set) \
+    [--reanalyze EXISTING_JSON]           (Phase A / US3; see § Reanalyze mode)
 ```
 
 ## Exit codes
@@ -48,6 +49,26 @@ Exit codes 0 and 3 both produce a complete report; the difference is whether any
 ## Smoke mode
 
 `--smoke` runs exactly one iteration per cell and **does not compute CI**. It exists for CI use (`make check` in PRs that touch the bench) to catch wiring regressions cheaply. Smoke runs do not produce a `Recommendation` and do not write to `docs/benchmarks/`; they write a transient report to `bench-results/m3-smoke-<timestamp>.json` (gitignored) and exit 0 if all cells return at least one non-error sample.
+
+## Reanalyze mode (Phase A / US3)
+
+`--reanalyze <existing-json>` reads a previously-collected M3 sweep JSON, computes time-axis verdicts using the new metric paths (`metric="time"` for embed cohorts; `metric="ttft"` for chat_stream cohorts per FR-014), and writes a sibling `<stem>-time.json` next to the input with the new recommendations and a `p1_frozen_config_time` field paralleling `p1_frozen_config`. **No new sweeps are executed**; this is a pure data re-analysis of cohort-level statistics already present in the input JSON.
+
+Behaviour:
+
+1. The input JSON MUST be the FULL sweep output (with per-iteration `samples` arrays preserved) — TTFT verdicts are computed from `samples[i].time_to_first_token_seconds`. Slim JSONs (the `docs/benchmarks/` companion files that strip samples) work for the embed `metric="time"` path but produce `not_measurable` chat_stream verdicts. The full data is normally retained under `bench-results/m3-full/`.
+2. Recommendations are produced via `build_recommendations(metric="time")` filtered to embed cells, concatenated with `build_recommendations(metric="ttft")` (chat_stream-only). Per FR-005 / R-12, the time-axis builder uses **immediate-predecessor M1_BASELINE pairing** in cohort run-order rather than the bytes path's "first M1_BASELINE in group" — this works around the cross-batch baseline drift documented in `research.md` R-12.
+3. Per FR-005, the time-axis builder may emit a new `noise_bounded` verdict when the predecessor pairing claims a win but the win does not survive at least one alternative same-cell M1_BASELINE — the conclusion is unstable across baselines and re-measures under M4's shared-baseline harness (FR-013).
+4. `p1_frozen_config_time` is computed as the union of each axis's winning config if `recommend`, else `default` for that axis. Any axis with at least one `noise_bounded` verdict falls back to `default` (we cannot freeze a config we couldn't defensibly verdict).
+5. Output filename: `<stem>-time.json` next to the input. Cohort `samples` arrays are stripped from the output (slim format) to match the publishable companion JSON shape.
+
+Exit codes for `--reanalyze`:
+
+| Code | Meaning |
+|---|---|
+| 0 | Re-analysis completed; sibling JSON written |
+| 3 | Input JSON not found, malformed, or has no cohorts/axes |
+| 4 | I/O error writing the output JSON |
 
 ## CLI compatibility / non-goals
 

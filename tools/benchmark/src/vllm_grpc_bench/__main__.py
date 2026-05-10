@@ -132,6 +132,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Frozen ChannelConfig preset name for P2 (required with --p2-revision).",
     )
+    parser.add_argument(
+        "--reanalyze",
+        type=Path,
+        default=None,
+        metavar="EXISTING_JSON",
+        help=(
+            "Phase A (US3) re-analysis mode: read an existing M3 sweep JSON, "
+            "compute time/TTFT-metric verdicts (no re-sweep), and write a sibling "
+            "<stem>-time.json. Per FR-014, embed cells use metric=time; "
+            "chat_stream cells use metric=ttft."
+        ),
+    )
 
     # ---- run (default) ----
     parser.add_argument("--proxy-url", required=False, default=None)
@@ -326,6 +338,9 @@ def _run_m3(args: argparse.Namespace) -> int:
     from vllm_grpc_bench import m3_sweep
     from vllm_grpc_bench.channel_config import preset_by_name
 
+    if args.reanalyze is not None:
+        return _run_m3_reanalyze(args)
+
     if args.p2_revision is not None and args.frozen_channel is None:
         print(
             "Error: --p2-revision requires --frozen-channel to be set",
@@ -402,6 +417,120 @@ def _run_m3(args: argparse.Namespace) -> int:
 
     has_unmeasurable = any(not c.measurable for c in cohorts)
     return 3 if has_unmeasurable else 0
+
+
+def _run_m3_reanalyze(args: argparse.Namespace) -> int:
+    """Phase A (US3) — read an existing M3 sweep JSON, compute time/TTFT
+    verdicts using ``build_recommendations(metric=...)``, and write a sibling
+    ``<stem>-time.json`` with the time-axis recommendations and a
+    ``p1_frozen_config_time`` field.
+
+    Per FR-014: embed cells use ``metric="time"``; chat_stream cells use
+    ``metric="ttft"``. The two builds are concatenated into a single
+    recommendations list in the output. Cohorts and metadata are passed
+    through unchanged from the input JSON; per-iteration ``samples`` arrays
+    are stripped (slim format).
+    """
+    from vllm_grpc_bench import m3_sweep
+
+    in_path: Path = args.reanalyze
+    if not in_path.exists():
+        print(f"Error: --reanalyze input not found: {in_path}", file=sys.stderr)
+        return 3
+    try:
+        payload = json.loads(in_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error reading {in_path}: {exc}", file=sys.stderr)
+        return 3
+
+    try:
+        cohorts = [m3_sweep.cohort_from_dict(c) for c in payload.get("cohorts", [])]
+    except (KeyError, ValueError, TypeError) as exc:
+        print(f"Error reconstructing cohorts from {in_path}: {exc}", file=sys.stderr)
+        return 3
+
+    if not cohorts:
+        print(f"Error: no cohorts in {in_path}", file=sys.stderr)
+        return 3
+
+    axes_in_input = list(payload.get("axes", []))
+    if not axes_in_input:
+        print(f"Error: no axes recorded in {in_path}", file=sys.stderr)
+        return 3
+
+    recs: list[dict[str, object]] = []
+    for axis in axes_in_input:
+        # Embed cells: metric="time" (total per-RPC wall-clock).
+        for r in m3_sweep.build_recommendations(cohorts, axis=axis, metric="time"):
+            if r.applies_to_path == "embed":
+                recs.append(m3_sweep.recommendation_to_dict(r))
+        # chat_stream cells: metric="ttft" (per FR-014). The ttft path filters
+        # to chat_stream internally, so all returned recs are chat_stream.
+        for r in m3_sweep.build_recommendations(cohorts, axis=axis, metric="ttft"):
+            recs.append(m3_sweep.recommendation_to_dict(r))
+
+    # FR-008-equivalent for the time metric: union of each axis's winning config
+    # if recommend, else M1_BASELINE for that axis. If any axis has any
+    # noise_bounded verdict, fall back to M1_BASELINE for that axis (we cannot
+    # freeze a config we couldn't defensibly verdict).
+    p1_frozen_config_time: dict[str, str] = {}
+    for axis in ("max_message_size", "keepalive", "compression", "http2_framing"):
+        axis_recs = [r for r in recs if r["axis"] == axis]
+        verdicts = {str(r["verdict"]) for r in axis_recs}
+        winners: set[str] = {
+            str(r["winning_config"])
+            for r in axis_recs
+            if r["verdict"] == "recommend" and r.get("winning_config")
+        }
+        if "noise_bounded" in verdicts or not winners:
+            p1_frozen_config_time[axis] = "default"
+        elif len(winners) == 1:
+            p1_frozen_config_time[axis] = next(iter(winners))
+        else:
+            # Multiple winning configs across width/path/corpus — record as
+            # "split" so the report's reader knows the axis didn't converge on
+            # one config; revisit in M4.
+            p1_frozen_config_time[axis] = "split"
+
+    has_recommend = any(r["verdict"] == "recommend" for r in recs)
+    has_noise_bounded = any(r["verdict"] == "noise_bounded" for r in recs)
+    p1_frozen_config_time["rationale"] = (
+        f"Time-metric Phase A re-analysis (US3) of {in_path.name}; "
+        f"recommend={has_recommend}, noise_bounded={has_noise_bounded}. "
+        "Cells with noise_bounded verdicts re-measure under M4's shared-baseline "
+        "harness (FR-013)."
+    )
+
+    # Build the output payload: same shape as input, slim cohorts, new
+    # recommendations, time-axis frozen config field.
+    slim_cohorts = []
+    for c in payload.get("cohorts", []):
+        cc = dict(c)
+        cc.pop("samples", None)
+        slim_cohorts.append(cc)
+
+    out_payload = dict(payload)
+    out_payload["mode"] = "p1-time-reanalysis"
+    out_payload["cohorts"] = slim_cohorts
+    out_payload["recommendations"] = recs
+    out_payload["p1_frozen_config_time"] = p1_frozen_config_time
+    out_payload["reanalyze_source"] = str(in_path)
+
+    out_path = in_path.with_name(in_path.stem + "-time.json")
+    try:
+        out_path.write_text(json.dumps(out_payload, indent=2, default=str))
+    except OSError as exc:
+        print(f"Error writing {out_path}: {exc}", file=sys.stderr)
+        return 4
+    print(f"Phase A re-analysis written to {out_path}")
+    print(
+        f"  recommendations: {len(recs)} "
+        f"(recommend={sum(1 for r in recs if r['verdict'] == 'recommend')}, "
+        f"no_winner={sum(1 for r in recs if r['verdict'] == 'no_winner')}, "
+        f"noise_bounded={sum(1 for r in recs if r['verdict'] == 'noise_bounded')}, "
+        f"not_measurable={sum(1 for r in recs if r['verdict'] == 'not_measurable')})"
+    )
+    return 0
 
 
 def main() -> None:

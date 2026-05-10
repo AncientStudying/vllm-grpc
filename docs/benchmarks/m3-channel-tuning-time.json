@@ -1,0 +1,1912 @@
+{
+  "mode": "p1-time-reanalysis",
+  "axes": [
+    "max_message_size",
+    "keepalive",
+    "compression",
+    "http2_framing"
+  ],
+  "widths": [
+    2048,
+    4096,
+    8192
+  ],
+  "paths": [
+    "embed",
+    "chat_stream"
+  ],
+  "iterations_per_cell": 30,
+  "seed": 0,
+  "p2_revision": null,
+  "frozen_channel": null,
+  "cohorts": [
+    {
+      "cell_id": "embed|h2048|m1-baseline|m1_embed",
+      "path": "embed",
+      "hidden_size": 2048,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 131143.43333333332,
+        "ci_low": 131142.05113019605,
+        "ci_high": 131144.8155364706
+      },
+      "time_seconds": {
+        "mean": 0.05233103193434848,
+        "ci_low": 0.05210317437167377,
+        "ci_high": 0.05255888949702319
+      }
+    },
+    {
+      "cell_id": "chat_stream|h2048|m1-baseline|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 2048,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 330.8,
+        "ci_low": 328.50154776406725,
+        "ci_high": 333.09845223593277
+      },
+      "time_seconds": {
+        "mean": 0.18438955970026047,
+        "ci_low": 0.18307678405735836,
+        "ci_high": 0.18570233534316258
+      }
+    },
+    {
+      "cell_id": "embed|h4096|m1-baseline|m1_embed",
+      "path": "embed",
+      "hidden_size": 4096,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 262213.3333333333,
+        "ci_low": 262211.911183981,
+        "ci_high": 262214.75548268564
+      },
+      "time_seconds": {
+        "mean": 0.05425841666728957,
+        "ci_low": 0.05383391065356108,
+        "ci_high": 0.054682922681018056
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|m1-baseline|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 330.6333333333333,
+        "ci_low": 328.1730604862884,
+        "ci_high": 333.09360618037823
+      },
+      "time_seconds": {
+        "mean": 0.18819990273259463,
+        "ci_low": 0.1860835365420946,
+        "ci_high": 0.19031626892309464
+      }
+    },
+    {
+      "cell_id": "embed|h8192|m1-baseline|m1_embed",
+      "path": "embed",
+      "hidden_size": 8192,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 524357.6,
+        "ci_low": 524356.3419263363,
+        "ci_high": 524358.8580736637
+      },
+      "time_seconds": {
+        "mean": 0.054481479199360666,
+        "ci_low": 0.05398531828456851,
+        "ci_high": 0.05497764011415282
+      }
+    },
+    {
+      "cell_id": "chat_stream|h8192|m1-baseline|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 8192,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 329.6,
+        "ci_low": 327.1808815730623,
+        "ci_high": 332.0191184269377
+      },
+      "time_seconds": {
+        "mean": 0.18227386803312887,
+        "ci_low": 0.1812357743741545,
+        "ci_high": 0.18331196169210323
+      }
+    },
+    {
+      "cell_id": "embed|h2048|max-msg-16mib|m1_embed",
+      "path": "embed",
+      "hidden_size": 2048,
+      "config_name": "max-msg-16mib",
+      "config_axis": "max_message_size",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 131143.13333333333,
+        "ci_low": 131141.5961587622,
+        "ci_high": 131144.67050790446
+      },
+      "time_seconds": {
+        "mean": 0.052924558300098096,
+        "ci_low": 0.05270381316865167,
+        "ci_high": 0.05314530343154452
+      }
+    },
+    {
+      "cell_id": "chat_stream|h2048|max-msg-16mib|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 2048,
+      "config_name": "max-msg-16mib",
+      "config_axis": "max_message_size",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 333.1,
+        "ci_low": 330.3537118306666,
+        "ci_high": 335.84628816933343
+      },
+      "time_seconds": {
+        "mean": 0.18065847916756564,
+        "ci_low": 0.17988433029934014,
+        "ci_high": 0.18143262803579113
+      }
+    },
+    {
+      "cell_id": "embed|h4096|max-msg-16mib|m1_embed",
+      "path": "embed",
+      "hidden_size": 4096,
+      "config_name": "max-msg-16mib",
+      "config_axis": "max_message_size",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 262214.36666666664,
+        "ci_low": 262212.7901178301,
+        "ci_high": 262215.9432155032
+      },
+      "time_seconds": {
+        "mean": 0.05294168613327201,
+        "ci_low": 0.052736731656124004,
+        "ci_high": 0.05314664061042002
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|max-msg-16mib|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "max-msg-16mib",
+      "config_axis": "max_message_size",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 329.8666666666667,
+        "ci_low": 327.09531230912665,
+        "ci_high": 332.6380210242067
+      },
+      "time_seconds": {
+        "mean": 0.18078396659960466,
+        "ci_low": 0.1801895403002485,
+        "ci_high": 0.18137839289896082
+      }
+    },
+    {
+      "cell_id": "embed|h8192|max-msg-16mib|m1_embed",
+      "path": "embed",
+      "hidden_size": 8192,
+      "config_name": "max-msg-16mib",
+      "config_axis": "max_message_size",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 524358.4666666667,
+        "ci_low": 524356.6539295511,
+        "ci_high": 524360.2794037822
+      },
+      "time_seconds": {
+        "mean": 0.05388042073294249,
+        "ci_low": 0.05363652567394975,
+        "ci_high": 0.05412431579193523
+      }
+    },
+    {
+      "cell_id": "chat_stream|h8192|max-msg-16mib|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 8192,
+      "config_name": "max-msg-16mib",
+      "config_axis": "max_message_size",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 330.06666666666666,
+        "ci_low": 327.37236973579246,
+        "ci_high": 332.76096359754087
+      },
+      "time_seconds": {
+        "mean": 0.18253754039954703,
+        "ci_low": 0.1816904585463766,
+        "ci_high": 0.18338462225271746
+      }
+    },
+    {
+      "cell_id": "embed|h2048|max-msg-unlimited|m1_embed",
+      "path": "embed",
+      "hidden_size": 2048,
+      "config_name": "max-msg-unlimited",
+      "config_axis": "max_message_size",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 131142.2,
+        "ci_low": 131140.19900263843,
+        "ci_high": 131144.2009973616
+      },
+      "time_seconds": {
+        "mean": 0.05281948879977184,
+        "ci_low": 0.05248334319208123,
+        "ci_high": 0.053155634407462446
+      }
+    },
+    {
+      "cell_id": "chat_stream|h2048|max-msg-unlimited|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 2048,
+      "config_name": "max-msg-unlimited",
+      "config_axis": "max_message_size",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 330.6333333333333,
+        "ci_low": 327.67770624823237,
+        "ci_high": 333.5889604184343
+      },
+      "time_seconds": {
+        "mean": 0.18707481523282088,
+        "ci_low": 0.18558673423198288,
+        "ci_high": 0.18856289623365888
+      }
+    },
+    {
+      "cell_id": "embed|h4096|max-msg-unlimited|m1_embed",
+      "path": "embed",
+      "hidden_size": 4096,
+      "config_name": "max-msg-unlimited",
+      "config_axis": "max_message_size",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 262213.6,
+        "ci_low": 262212.64624522824,
+        "ci_high": 262214.5537547717
+      },
+      "time_seconds": {
+        "mean": 0.053763680633225404,
+        "ci_low": 0.05339229029172335,
+        "ci_high": 0.05413507097472746
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|max-msg-unlimited|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "max-msg-unlimited",
+      "config_axis": "max_message_size",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 330.93333333333334,
+        "ci_low": 328.15297242566083,
+        "ci_high": 333.71369424100584
+      },
+      "time_seconds": {
+        "mean": 0.1866073819003456,
+        "ci_low": 0.1851233362061714,
+        "ci_high": 0.18809142759451977
+      }
+    },
+    {
+      "cell_id": "embed|h8192|max-msg-unlimited|m1_embed",
+      "path": "embed",
+      "hidden_size": 8192,
+      "config_name": "max-msg-unlimited",
+      "config_axis": "max_message_size",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 524358.8333333334,
+        "ci_low": 524356.9316718981,
+        "ci_high": 524360.7349947686
+      },
+      "time_seconds": {
+        "mean": 0.05476324023281146,
+        "ci_low": 0.05432729372972368,
+        "ci_high": 0.05519918673589924
+      }
+    },
+    {
+      "cell_id": "chat_stream|h8192|max-msg-unlimited|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 8192,
+      "config_name": "max-msg-unlimited",
+      "config_axis": "max_message_size",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 333.6,
+        "ci_low": 331.4977654684336,
+        "ci_high": 335.70223453156643
+      },
+      "time_seconds": {
+        "mean": 0.1842032347332861,
+        "ci_low": 0.18290775247322627,
+        "ci_high": 0.1854987169933459
+      }
+    },
+    {
+      "cell_id": "embed|h2048|m1-baseline|m1_embed",
+      "path": "embed",
+      "hidden_size": 2048,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 131141.86666666667,
+        "ci_low": 131140.18034160355,
+        "ci_high": 131143.55299172978
+      },
+      "time_seconds": {
+        "mean": 0.05351452630008377,
+        "ci_low": 0.05327213430214067,
+        "ci_high": 0.05375691829802687
+      }
+    },
+    {
+      "cell_id": "chat_stream|h2048|m1-baseline|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 2048,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 328.96666666666664,
+        "ci_low": 326.4332223186078,
+        "ci_high": 331.50011101472546
+      },
+      "time_seconds": {
+        "mean": 0.1824172096334223,
+        "ci_low": 0.18141173448395223,
+        "ci_high": 0.1834226847828924
+      }
+    },
+    {
+      "cell_id": "embed|h4096|m1-baseline|m1_embed",
+      "path": "embed",
+      "hidden_size": 4096,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 262212.7,
+        "ci_low": 262211.061637603,
+        "ci_high": 262214.33836239704
+      },
+      "time_seconds": {
+        "mean": 0.05354137640000166,
+        "ci_low": 0.05322076284212562,
+        "ci_high": 0.0538619899578777
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|m1-baseline|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 332.1333333333333,
+        "ci_low": 329.95885051683655,
+        "ci_high": 334.3078161498301
+      },
+      "time_seconds": {
+        "mean": 0.18243896656761838,
+        "ci_low": 0.1814732116074604,
+        "ci_high": 0.18340472152777634
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|m1-baseline|m3_long_stream",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m3_long_stream",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 9127.3,
+        "ci_low": 9111.483416824578,
+        "ci_high": 9143.11658317542
+      },
+      "time_seconds": {
+        "mean": 52.723957640266356,
+        "ci_low": 52.67663970168342,
+        "ci_high": 52.77127557884929
+      }
+    },
+    {
+      "cell_id": "embed|h8192|m1-baseline|m1_embed",
+      "path": "embed",
+      "hidden_size": 8192,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 524357.8333333334,
+        "ci_low": 524356.4497395328,
+        "ci_high": 524359.216927134
+      },
+      "time_seconds": {
+        "mean": 0.05300510969949149,
+        "ci_low": 0.05268584618692456,
+        "ci_high": 0.053324373212058414
+      }
+    },
+    {
+      "cell_id": "chat_stream|h8192|m1-baseline|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 8192,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 331.5,
+        "ci_low": 328.8747237697961,
+        "ci_high": 334.1252762302039
+      },
+      "time_seconds": {
+        "mean": 0.182209944499967,
+        "ci_low": 0.1810197982696716,
+        "ci_high": 0.1834000907302624
+      }
+    },
+    {
+      "cell_id": "embed|h2048|keepalive-aggressive|m1_embed",
+      "path": "embed",
+      "hidden_size": 2048,
+      "config_name": "keepalive-aggressive",
+      "config_axis": "keepalive",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 131142.46666666667,
+        "ci_low": 131141.07735109364,
+        "ci_high": 131143.8559822397
+      },
+      "time_seconds": {
+        "mean": 0.05246994726597525,
+        "ci_low": 0.05221085833321421,
+        "ci_high": 0.05272903619873629
+      }
+    },
+    {
+      "cell_id": "chat_stream|h2048|keepalive-aggressive|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 2048,
+      "config_name": "keepalive-aggressive",
+      "config_axis": "keepalive",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 333.5,
+        "ci_low": 330.6634593216303,
+        "ci_high": 336.3365406783697
+      },
+      "time_seconds": {
+        "mean": 0.1812799556653772,
+        "ci_low": 0.18053311898962002,
+        "ci_high": 0.18202679234113436
+      }
+    },
+    {
+      "cell_id": "embed|h4096|keepalive-aggressive|m1_embed",
+      "path": "embed",
+      "hidden_size": 4096,
+      "config_name": "keepalive-aggressive",
+      "config_axis": "keepalive",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 262213.93333333335,
+        "ci_low": 262212.5677525815,
+        "ci_high": 262215.2989140852
+      },
+      "time_seconds": {
+        "mean": 0.053004670833130756,
+        "ci_low": 0.052653937645262855,
+        "ci_high": 0.053355404020998656
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|keepalive-aggressive|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "keepalive-aggressive",
+      "config_axis": "keepalive",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 331.06666666666666,
+        "ci_low": 328.7608353059254,
+        "ci_high": 333.3724980274079
+      },
+      "time_seconds": {
+        "mean": 0.1840016568331824,
+        "ci_low": 0.18204056794878704,
+        "ci_high": 0.18596274571757776
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|keepalive-aggressive|m3_long_stream",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "keepalive-aggressive",
+      "config_axis": "keepalive",
+      "corpus_subset": "m3_long_stream",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 9129.533333333333,
+        "ci_low": 9114.865032972004,
+        "ci_high": 9144.201633694662
+      },
+      "time_seconds": {
+        "mean": 52.72566091386689,
+        "ci_low": 52.63022006235497,
+        "ci_high": 52.821101765378806
+      }
+    },
+    {
+      "cell_id": "embed|h8192|keepalive-aggressive|m1_embed",
+      "path": "embed",
+      "hidden_size": 8192,
+      "config_name": "keepalive-aggressive",
+      "config_axis": "keepalive",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 524358.0,
+        "ci_low": 524356.54884697,
+        "ci_high": 524359.45115303
+      },
+      "time_seconds": {
+        "mean": 0.05372528763327864,
+        "ci_low": 0.05340056868974009,
+        "ci_high": 0.054050006576817196
+      }
+    },
+    {
+      "cell_id": "chat_stream|h8192|keepalive-aggressive|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 8192,
+      "config_name": "keepalive-aggressive",
+      "config_axis": "keepalive",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 330.5,
+        "ci_low": 328.21760600733637,
+        "ci_high": 332.78239399266363
+      },
+      "time_seconds": {
+        "mean": 0.1826190678992134,
+        "ci_low": 0.18204873967585,
+        "ci_high": 0.1831893961225768
+      }
+    },
+    {
+      "cell_id": "embed|h2048|keepalive-relaxed|m1_embed",
+      "path": "embed",
+      "hidden_size": 2048,
+      "config_name": "keepalive-relaxed",
+      "config_axis": "keepalive",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 131142.46666666667,
+        "ci_low": 131140.73255027854,
+        "ci_high": 131144.2007830548
+      },
+      "time_seconds": {
+        "mean": 0.05252280136677048,
+        "ci_low": 0.05237102913602916,
+        "ci_high": 0.052674573597511806
+      }
+    },
+    {
+      "cell_id": "chat_stream|h2048|keepalive-relaxed|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 2048,
+      "config_name": "keepalive-relaxed",
+      "config_axis": "keepalive",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 331.3666666666667,
+        "ci_low": 328.4968733905564,
+        "ci_high": 334.23645994277695
+      },
+      "time_seconds": {
+        "mean": 0.1817970985340556,
+        "ci_low": 0.1812169640236122,
+        "ci_high": 0.182377233044499
+      }
+    },
+    {
+      "cell_id": "embed|h4096|keepalive-relaxed|m1_embed",
+      "path": "embed",
+      "hidden_size": 4096,
+      "config_name": "keepalive-relaxed",
+      "config_axis": "keepalive",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 262213.76666666666,
+        "ci_low": 262212.56295141025,
+        "ci_high": 262214.9703819231
+      },
+      "time_seconds": {
+        "mean": 0.05333774016665605,
+        "ci_low": 0.053098264830033964,
+        "ci_high": 0.05357721550327814
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|keepalive-relaxed|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "keepalive-relaxed",
+      "config_axis": "keepalive",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 331.3333333333333,
+        "ci_low": 328.97106127088114,
+        "ci_high": 333.6956053957855
+      },
+      "time_seconds": {
+        "mean": 0.18162933073350965,
+        "ci_low": 0.18122742281536805,
+        "ci_high": 0.18203123865165124
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|keepalive-relaxed|m3_long_stream",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "keepalive-relaxed",
+      "config_axis": "keepalive",
+      "corpus_subset": "m3_long_stream",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 9131.666666666666,
+        "ci_low": 9115.21851174017,
+        "ci_high": 9148.114821593163
+      },
+      "time_seconds": {
+        "mean": 52.835755502932926,
+        "ci_low": 52.70160373310087,
+        "ci_high": 52.969907272764985
+      }
+    },
+    {
+      "cell_id": "embed|h8192|keepalive-relaxed|m1_embed",
+      "path": "embed",
+      "hidden_size": 8192,
+      "config_name": "keepalive-relaxed",
+      "config_axis": "keepalive",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 524360.0666666667,
+        "ci_low": 524358.359937197,
+        "ci_high": 524361.7733961364
+      },
+      "time_seconds": {
+        "mean": 0.06171038740018654,
+        "ci_low": 0.061184250864725474,
+        "ci_high": 0.06223652393564761
+      }
+    },
+    {
+      "cell_id": "chat_stream|h8192|keepalive-relaxed|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 8192,
+      "config_name": "keepalive-relaxed",
+      "config_axis": "keepalive",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 333.8,
+        "ci_low": 331.8975381223292,
+        "ci_high": 335.7024618776708
+      },
+      "time_seconds": {
+        "mean": 0.20640361799960374,
+        "ci_low": 0.20546676384561846,
+        "ci_high": 0.20734047215358903
+      }
+    },
+    {
+      "cell_id": "embed|h2048|m1-baseline|m1_embed",
+      "path": "embed",
+      "hidden_size": 2048,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 131141.83333333334,
+        "ci_low": 131140.10102001805,
+        "ci_high": 131143.56564664864
+      },
+      "time_seconds": {
+        "mean": 0.05848742219944446,
+        "ci_low": 0.057971029592850304,
+        "ci_high": 0.05900381480603861
+      }
+    },
+    {
+      "cell_id": "chat_stream|h2048|m1-baseline|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 2048,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 333.3333333333333,
+        "ci_low": 330.7124866632695,
+        "ci_high": 335.95418000339714
+      },
+      "time_seconds": {
+        "mean": 0.2049351403999026,
+        "ci_low": 0.2035398190155827,
+        "ci_high": 0.20633046178422249
+      }
+    },
+    {
+      "cell_id": "embed|h4096|m1-baseline|m1_embed",
+      "path": "embed",
+      "hidden_size": 4096,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 262213.0333333333,
+        "ci_low": 262211.67995366844,
+        "ci_high": 262214.3867129982
+      },
+      "time_seconds": {
+        "mean": 0.05898970966712416,
+        "ci_low": 0.05838181159921009,
+        "ci_high": 0.059597607735038235
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|m1-baseline|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 331.26666666666665,
+        "ci_low": 328.00563039316444,
+        "ci_high": 334.52770294016887
+      },
+      "time_seconds": {
+        "mean": 0.20511697083250813,
+        "ci_low": 0.2037296505414772,
+        "ci_high": 0.20650429112353905
+      }
+    },
+    {
+      "cell_id": "embed|h8192|m1-baseline|m1_embed",
+      "path": "embed",
+      "hidden_size": 8192,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 524359.0,
+        "ci_low": 524357.6236646369,
+        "ci_high": 524360.3763353631
+      },
+      "time_seconds": {
+        "mean": 0.06131957633333514,
+        "ci_low": 0.060791689201315786,
+        "ci_high": 0.06184746346535449
+      }
+    },
+    {
+      "cell_id": "chat_stream|h8192|m1-baseline|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 8192,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 333.76666666666665,
+        "ci_low": 330.6032932898587,
+        "ci_high": 336.9300400434746
+      },
+      "time_seconds": {
+        "mean": 0.2076791778007949,
+        "ci_low": 0.2061951442644589,
+        "ci_high": 0.2091632113371309
+      }
+    },
+    {
+      "cell_id": "embed|h2048|compression-gzip|m1_embed",
+      "path": "embed",
+      "hidden_size": 2048,
+      "config_name": "compression-gzip",
+      "config_axis": "compression",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 131141.3,
+        "ci_low": 131139.78672990916,
+        "ci_high": 131142.81327009082
+      },
+      "time_seconds": {
+        "mean": 0.07032391116590589,
+        "ci_low": 0.06918165452239128,
+        "ci_high": 0.0714661678094205
+      }
+    },
+    {
+      "cell_id": "chat_stream|h2048|compression-gzip|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 2048,
+      "config_name": "compression-gzip",
+      "config_axis": "compression",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 331.9,
+        "ci_low": 328.87862707616506,
+        "ci_high": 334.9213729238349
+      },
+      "time_seconds": {
+        "mean": 0.20761472093314903,
+        "ci_low": 0.20632165557242657,
+        "ci_high": 0.2089077862938715
+      }
+    },
+    {
+      "cell_id": "embed|h4096|compression-gzip|m1_embed",
+      "path": "embed",
+      "hidden_size": 4096,
+      "config_name": "compression-gzip",
+      "config_axis": "compression",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 262215.4,
+        "ci_low": 262213.71976827236,
+        "ci_high": 262217.0802317277
+      },
+      "time_seconds": {
+        "mean": 0.08327224999981506,
+        "ci_low": 0.08203488362184239,
+        "ci_high": 0.08450961637778773
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|compression-gzip|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "compression-gzip",
+      "config_axis": "compression",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 332.6333333333333,
+        "ci_low": 330.30974284331387,
+        "ci_high": 334.9569238233528
+      },
+      "time_seconds": {
+        "mean": 0.20619646240011208,
+        "ci_low": 0.20486076087993843,
+        "ci_high": 0.20753216392028573
+      }
+    },
+    {
+      "cell_id": "embed|h8192|compression-gzip|m1_embed",
+      "path": "embed",
+      "hidden_size": 8192,
+      "config_name": "compression-gzip",
+      "config_axis": "compression",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 524358.3,
+        "ci_low": 524356.8417411278,
+        "ci_high": 524359.7582588723
+      },
+      "time_seconds": {
+        "mean": 0.08530287350076833,
+        "ci_low": 0.08373928913967409,
+        "ci_high": 0.08686645786186258
+      }
+    },
+    {
+      "cell_id": "chat_stream|h8192|compression-gzip|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 8192,
+      "config_name": "compression-gzip",
+      "config_axis": "compression",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 331.1666666666667,
+        "ci_low": 329.2324172724284,
+        "ci_high": 333.100916060905
+      },
+      "time_seconds": {
+        "mean": 0.2044412944659901,
+        "ci_low": 0.2029190131438181,
+        "ci_high": 0.2059635757881621
+      }
+    },
+    {
+      "cell_id": "embed|h2048|m1-baseline|m1_embed",
+      "path": "embed",
+      "hidden_size": 2048,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 131142.5,
+        "ci_low": 131141.13506487123,
+        "ci_high": 131143.86493512877
+      },
+      "time_seconds": {
+        "mean": 0.0593981250662182,
+        "ci_low": 0.0584503552950361,
+        "ci_high": 0.0603458948374003
+      }
+    },
+    {
+      "cell_id": "chat_stream|h2048|m1-baseline|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 2048,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 331.0,
+        "ci_low": 327.70221409063595,
+        "ci_high": 334.29778590936405
+      },
+      "time_seconds": {
+        "mean": 0.20790510553342756,
+        "ci_low": 0.20558505794617427,
+        "ci_high": 0.21022515312068085
+      }
+    },
+    {
+      "cell_id": "embed|h4096|m1-baseline|m1_embed",
+      "path": "embed",
+      "hidden_size": 4096,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 262213.86666666664,
+        "ci_low": 262212.619596401,
+        "ci_high": 262215.1137369323
+      },
+      "time_seconds": {
+        "mean": 0.059912679199624105,
+        "ci_low": 0.05927293909262264,
+        "ci_high": 0.06055241930662557
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|m1-baseline|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 332.3666666666667,
+        "ci_low": 329.6553816975099,
+        "ci_high": 335.07795163582347
+      },
+      "time_seconds": {
+        "mean": 0.2033914916338593,
+        "ci_low": 0.20236831704242908,
+        "ci_high": 0.20441466622528953
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|m1-baseline|m3_long_stream",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m3_long_stream",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 9123.5,
+        "ci_low": 9109.89307165791,
+        "ci_high": 9137.10692834209
+      },
+      "time_seconds": {
+        "mean": 53.443415684634,
+        "ci_low": 53.42473313567561,
+        "ci_high": 53.462098233592386
+      }
+    },
+    {
+      "cell_id": "embed|h8192|m1-baseline|m1_embed",
+      "path": "embed",
+      "hidden_size": 8192,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 524357.5333333333,
+        "ci_low": 524355.9079835664,
+        "ci_high": 524359.1586831002
+      },
+      "time_seconds": {
+        "mean": 0.06119281669986473,
+        "ci_low": 0.060817059218889004,
+        "ci_high": 0.06156857418084046
+      }
+    },
+    {
+      "cell_id": "chat_stream|h8192|m1-baseline|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 8192,
+      "config_name": "m1-baseline",
+      "config_axis": "baseline",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 331.4,
+        "ci_low": 328.4166594678733,
+        "ci_high": 334.3833405321267
+      },
+      "time_seconds": {
+        "mean": 0.1995897916002529,
+        "ci_low": 0.19896196672791203,
+        "ci_high": 0.20021761647259376
+      }
+    },
+    {
+      "cell_id": "embed|h2048|http2-bdp-probe|m1_embed",
+      "path": "embed",
+      "hidden_size": 2048,
+      "config_name": "http2-bdp-probe",
+      "config_axis": "http2_framing",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 131141.86666666667,
+        "ci_low": 131139.81739598975,
+        "ci_high": 131143.91593734358
+      },
+      "time_seconds": {
+        "mean": 0.058852208333701125,
+        "ci_low": 0.05852843167042281,
+        "ci_high": 0.05917598499697944
+      }
+    },
+    {
+      "cell_id": "chat_stream|h2048|http2-bdp-probe|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 2048,
+      "config_name": "http2-bdp-probe",
+      "config_axis": "http2_framing",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 332.9,
+        "ci_low": 330.61634245640397,
+        "ci_high": 335.183657543596
+      },
+      "time_seconds": {
+        "mean": 0.20029578749915042,
+        "ci_low": 0.1992355803739685,
+        "ci_high": 0.20135599462433235
+      }
+    },
+    {
+      "cell_id": "embed|h4096|http2-bdp-probe|m1_embed",
+      "path": "embed",
+      "hidden_size": 4096,
+      "config_name": "http2-bdp-probe",
+      "config_axis": "http2_framing",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 262213.36666666664,
+        "ci_low": 262211.5921268159,
+        "ci_high": 262215.14120651735
+      },
+      "time_seconds": {
+        "mean": 0.059850666666413116,
+        "ci_low": 0.059521253666018986,
+        "ci_high": 0.060180079666807246
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|http2-bdp-probe|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "http2-bdp-probe",
+      "config_axis": "http2_framing",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 333.0,
+        "ci_low": 329.9161780070753,
+        "ci_high": 336.0838219929247
+      },
+      "time_seconds": {
+        "mean": 0.19878869013385458,
+        "ci_low": 0.1981536433416942,
+        "ci_high": 0.19942373692601498
+      }
+    },
+    {
+      "cell_id": "chat_stream|h4096|http2-bdp-probe|m3_long_stream",
+      "path": "chat_stream",
+      "hidden_size": 4096,
+      "config_name": "http2-bdp-probe",
+      "config_axis": "http2_framing",
+      "corpus_subset": "m3_long_stream",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 9143.166666666666,
+        "ci_low": 9126.371766899956,
+        "ci_high": 9159.961566433376
+      },
+      "time_seconds": {
+        "mean": 53.420593852734356,
+        "ci_low": 53.412432062626266,
+        "ci_high": 53.42875564284245
+      }
+    },
+    {
+      "cell_id": "embed|h8192|http2-bdp-probe|m1_embed",
+      "path": "embed",
+      "hidden_size": 8192,
+      "config_name": "http2-bdp-probe",
+      "config_axis": "http2_framing",
+      "corpus_subset": "m1_embed",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 524358.4666666667,
+        "ci_low": 524356.8178223096,
+        "ci_high": 524360.1155110238
+      },
+      "time_seconds": {
+        "mean": 0.06157379303331254,
+        "ci_low": 0.06111057843982243,
+        "ci_high": 0.06203700762680266
+      }
+    },
+    {
+      "cell_id": "chat_stream|h8192|http2-bdp-probe|m1_chat",
+      "path": "chat_stream",
+      "hidden_size": 8192,
+      "config_name": "http2-bdp-probe",
+      "config_axis": "http2_framing",
+      "corpus_subset": "m1_chat",
+      "iterations": 30,
+      "n_successful": 30,
+      "measurable": true,
+      "off_canonical": false,
+      "bytes": {
+        "mean": 330.2,
+        "ci_low": 327.47294912896984,
+        "ci_high": 332.92705087103013
+      },
+      "time_seconds": {
+        "mean": 0.20079720700038403,
+        "ci_low": 0.1996005352920543,
+        "ci_high": 0.20199387870871377
+      }
+    }
+  ],
+  "recommendations": [
+    {
+      "axis": "max_message_size",
+      "applies_to_path": "embed",
+      "applies_to_widths": [
+        2048
+      ],
+      "corpus_subset": "m1_embed",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.05255888949702319,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_channel.py (channel-args plumbing); ~/.graphify/repos/grpc/grpc/src/core/lib/channel/channel_args.cc (defaults)",
+      "notes": "no candidate cleared the SC-006 time threshold against its immediate-predecessor M1_BASELINE for embed/h2048/m1_embed: max-msg-16mib: mean=0.05292, ci_high=0.05315; max-msg-unlimited: mean=0.05282, ci_high=0.05316"
+    },
+    {
+      "axis": "max_message_size",
+      "applies_to_path": "embed",
+      "applies_to_widths": [
+        4096
+      ],
+      "corpus_subset": "m1_embed",
+      "verdict": "recommend",
+      "winning_config": "max-msg-16mib",
+      "winning_delta_pct": -2.426776553565308,
+      "winning_metric": "time",
+      "baseline_ci_upper": -0.05383391065356108,
+      "candidate_ci_lower": -0.05314664061042002,
+      "citation": "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_channel.py (channel-args plumbing); ~/.graphify/repos/grpc/grpc/src/core/lib/channel/channel_args.cc (defaults)",
+      "notes": "time: predecessor_baseline_mean=0.05426, candidate_mean=0.05294, predecessor_baseline_ci=[0.05383,0.05468], candidate_ci_high=0.05315; win survives 4 same-cell baseline(s)"
+    },
+    {
+      "axis": "max_message_size",
+      "applies_to_path": "embed",
+      "applies_to_widths": [
+        8192
+      ],
+      "corpus_subset": "m1_embed",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.05497764011415282,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_channel.py (channel-args plumbing); ~/.graphify/repos/grpc/grpc/src/core/lib/channel/channel_args.cc (defaults)",
+      "notes": "no candidate cleared the SC-006 time threshold against its immediate-predecessor M1_BASELINE for embed/h8192/m1_embed: max-msg-16mib: mean=0.05388, ci_high=0.05412; max-msg-unlimited: mean=0.05476, ci_high=0.0552"
+    },
+    {
+      "axis": "max_message_size",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        2048
+      ],
+      "corpus_subset": "m1_chat",
+      "verdict": "recommend",
+      "winning_config": "max-msg-16mib",
+      "winning_delta_pct": -28.66443368200795,
+      "winning_metric": "ttft",
+      "baseline_ci_upper": -0.0013984456639231132,
+      "candidate_ci_lower": -0.0012046201152520234,
+      "citation": "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_channel.py (channel-args plumbing); ~/.graphify/repos/grpc/grpc/src/core/lib/channel/channel_args.cc (defaults)",
+      "notes": "ttft: predecessor_baseline_mean=0.001527, candidate_mean=0.00109, predecessor_baseline_ci=[0.001398,0.001657], candidate_ci_high=0.001205; win survives 4 same-cell baseline(s)"
+    },
+    {
+      "axis": "max_message_size",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        4096
+      ],
+      "corpus_subset": "m1_chat",
+      "verdict": "recommend",
+      "winning_config": "max-msg-16mib",
+      "winning_delta_pct": -31.391063585017392,
+      "winning_metric": "ttft",
+      "baseline_ci_upper": -0.0014812527438953637,
+      "candidate_ci_lower": -0.0012343194505186523,
+      "citation": "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_channel.py (channel-args plumbing); ~/.graphify/repos/grpc/grpc/src/core/lib/channel/channel_args.cc (defaults)",
+      "notes": "ttft: predecessor_baseline_mean=0.001608, candidate_mean=0.001103, predecessor_baseline_ci=[0.001481,0.001734], candidate_ci_high=0.001234; win survives 4 same-cell baseline(s)"
+    },
+    {
+      "axis": "max_message_size",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        4096
+      ],
+      "corpus_subset": "m3_long_stream",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.0022174995427542013,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_channel.py (channel-args plumbing); ~/.graphify/repos/grpc/grpc/src/core/lib/channel/channel_args.cc (defaults)",
+      "notes": "no candidates evaluated for chat_stream/h4096/m3_long_stream"
+    },
+    {
+      "axis": "max_message_size",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        8192
+      ],
+      "corpus_subset": "m1_chat",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.001785415862585026,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_channel.py (channel-args plumbing); ~/.graphify/repos/grpc/grpc/src/core/lib/channel/channel_args.cc (defaults)",
+      "notes": "no candidate cleared the SC-006 ttft threshold against its immediate-predecessor M1_BASELINE for chat_stream/h8192/m1_chat: max-msg-16mib: mean=0.001355, ci_high=0.001529; max-msg-unlimited: mean=0.0015, ci_high=0.001688"
+    },
+    {
+      "axis": "keepalive",
+      "applies_to_path": "embed",
+      "applies_to_widths": [
+        2048
+      ],
+      "corpus_subset": "m1_embed",
+      "verdict": "noise_bounded",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.05255888949702319,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/chttp2_transport.cc (keepalive timer logic)",
+      "notes": "cross-batch baseline drift dominates the candidate's signal (time; cross-baseline spread 13.5% across 4 M1_BASELINE cohorts at embed/h2048/m1_embed). Predecessor pairing claimed keepalive-aggressive as winner (mean=0.05247, ci_high=0.05273) but the win does not survive 1 alternative same-cell baseline(s). Re-measure under M4's shared-baseline mode (FR-013)."
+    },
+    {
+      "axis": "keepalive",
+      "applies_to_path": "embed",
+      "applies_to_widths": [
+        4096
+      ],
+      "corpus_subset": "m1_embed",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.054682922681018056,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/chttp2_transport.cc (keepalive timer logic)",
+      "notes": "no candidate cleared the SC-006 time threshold against its immediate-predecessor M1_BASELINE for embed/h4096/m1_embed: keepalive-aggressive: mean=0.053, ci_high=0.05336; keepalive-relaxed: mean=0.05334, ci_high=0.05358"
+    },
+    {
+      "axis": "keepalive",
+      "applies_to_path": "embed",
+      "applies_to_widths": [
+        8192
+      ],
+      "corpus_subset": "m1_embed",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.05497764011415282,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/chttp2_transport.cc (keepalive timer logic)",
+      "notes": "no candidate cleared the SC-006 time threshold against its immediate-predecessor M1_BASELINE for embed/h8192/m1_embed: keepalive-aggressive: mean=0.05373, ci_high=0.05405; keepalive-relaxed: mean=0.06171, ci_high=0.06224"
+    },
+    {
+      "axis": "keepalive",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        2048
+      ],
+      "corpus_subset": "m1_chat",
+      "verdict": "recommend",
+      "winning_config": "keepalive-aggressive",
+      "winning_delta_pct": -24.202272676310553,
+      "winning_metric": "ttft",
+      "baseline_ci_upper": -0.0013061365630596252,
+      "candidate_ci_lower": -0.0013038955405834077,
+      "citation": "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/chttp2_transport.cc (keepalive timer logic)",
+      "notes": "ttft: predecessor_baseline_mean=0.001459, candidate_mean=0.001158, predecessor_baseline_ci=[0.001306,0.001613], candidate_ci_high=0.001304; win survives 4 same-cell baseline(s)"
+    },
+    {
+      "axis": "keepalive",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        4096
+      ],
+      "corpus_subset": "m1_chat",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.0017338448561943327,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/chttp2_transport.cc (keepalive timer logic)",
+      "notes": "no candidate cleared the SC-006 ttft threshold against its immediate-predecessor M1_BASELINE for chat_stream/h4096/m1_chat: keepalive-aggressive: mean=0.001408, ci_high=0.001622; keepalive-relaxed: mean=0.001345, ci_high=0.001508"
+    },
+    {
+      "axis": "keepalive",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        4096
+      ],
+      "corpus_subset": "m3_long_stream",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.0022174995427542013,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/chttp2_transport.cc (keepalive timer logic)",
+      "notes": "no candidate cleared the SC-006 ttft threshold against its immediate-predecessor M1_BASELINE for chat_stream/h4096/m3_long_stream: keepalive-aggressive: mean=0.00152, ci_high=0.001725; keepalive-relaxed: mean=0.001716, ci_high=0.001937"
+    },
+    {
+      "axis": "keepalive",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        8192
+      ],
+      "corpus_subset": "m1_chat",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.001785415862585026,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/chttp2_transport.cc (keepalive timer logic)",
+      "notes": "no candidate cleared the SC-006 ttft threshold against its immediate-predecessor M1_BASELINE for chat_stream/h8192/m1_chat: keepalive-aggressive: mean=0.001446, ci_high=0.001579; keepalive-relaxed: mean=0.002045, ci_high=0.002321"
+    },
+    {
+      "axis": "compression",
+      "applies_to_path": "embed",
+      "applies_to_widths": [
+        2048
+      ],
+      "corpus_subset": "m1_embed",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.05255888949702319,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_channel.py (compression argument); ~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/frame_data.cc (frame-level compression handling)",
+      "notes": "no candidate cleared the SC-006 time threshold against its immediate-predecessor M1_BASELINE for embed/h2048/m1_embed: compression-gzip: mean=0.07032, ci_high=0.07147"
+    },
+    {
+      "axis": "compression",
+      "applies_to_path": "embed",
+      "applies_to_widths": [
+        4096
+      ],
+      "corpus_subset": "m1_embed",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.054682922681018056,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_channel.py (compression argument); ~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/frame_data.cc (frame-level compression handling)",
+      "notes": "no candidate cleared the SC-006 time threshold against its immediate-predecessor M1_BASELINE for embed/h4096/m1_embed: compression-gzip: mean=0.08327, ci_high=0.08451"
+    },
+    {
+      "axis": "compression",
+      "applies_to_path": "embed",
+      "applies_to_widths": [
+        8192
+      ],
+      "corpus_subset": "m1_embed",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.05497764011415282,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_channel.py (compression argument); ~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/frame_data.cc (frame-level compression handling)",
+      "notes": "no candidate cleared the SC-006 time threshold against its immediate-predecessor M1_BASELINE for embed/h8192/m1_embed: compression-gzip: mean=0.0853, ci_high=0.08687"
+    },
+    {
+      "axis": "compression",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        2048
+      ],
+      "corpus_subset": "m1_chat",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.0016565016019469798,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_channel.py (compression argument); ~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/frame_data.cc (frame-level compression handling)",
+      "notes": "no candidate cleared the SC-006 ttft threshold against its immediate-predecessor M1_BASELINE for chat_stream/h2048/m1_chat: compression-gzip: mean=0.001928, ci_high=0.002091"
+    },
+    {
+      "axis": "compression",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        4096
+      ],
+      "corpus_subset": "m1_chat",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.0017338448561943327,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_channel.py (compression argument); ~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/frame_data.cc (frame-level compression handling)",
+      "notes": "no candidate cleared the SC-006 ttft threshold against its immediate-predecessor M1_BASELINE for chat_stream/h4096/m1_chat: compression-gzip: mean=0.002555, ci_high=0.002789"
+    },
+    {
+      "axis": "compression",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        4096
+      ],
+      "corpus_subset": "m3_long_stream",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.0022174995427542013,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_channel.py (compression argument); ~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/frame_data.cc (frame-level compression handling)",
+      "notes": "no candidates evaluated for chat_stream/h4096/m3_long_stream"
+    },
+    {
+      "axis": "compression",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        8192
+      ],
+      "corpus_subset": "m1_chat",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.001785415862585026,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_channel.py (compression argument); ~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/frame_data.cc (frame-level compression handling)",
+      "notes": "no candidate cleared the SC-006 ttft threshold against its immediate-predecessor M1_BASELINE for chat_stream/h8192/m1_chat: compression-gzip: mean=0.002308, ci_high=0.002645"
+    },
+    {
+      "axis": "http2_framing",
+      "applies_to_path": "embed",
+      "applies_to_widths": [
+        2048
+      ],
+      "corpus_subset": "m1_embed",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.05255888949702319,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/flow_control.cc (chttp2 stream/transport flow-control state); ~/.graphify/repos/grpc/grpc/src/core/lib/transport/bdp_estimator.cc (BDP probe state machine)",
+      "notes": "no candidate cleared the SC-006 time threshold against its immediate-predecessor M1_BASELINE for embed/h2048/m1_embed: http2-bdp-probe: mean=0.05885, ci_high=0.05918"
+    },
+    {
+      "axis": "http2_framing",
+      "applies_to_path": "embed",
+      "applies_to_widths": [
+        4096
+      ],
+      "corpus_subset": "m1_embed",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.054682922681018056,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/flow_control.cc (chttp2 stream/transport flow-control state); ~/.graphify/repos/grpc/grpc/src/core/lib/transport/bdp_estimator.cc (BDP probe state machine)",
+      "notes": "no candidate cleared the SC-006 time threshold against its immediate-predecessor M1_BASELINE for embed/h4096/m1_embed: http2-bdp-probe: mean=0.05985, ci_high=0.06018"
+    },
+    {
+      "axis": "http2_framing",
+      "applies_to_path": "embed",
+      "applies_to_widths": [
+        8192
+      ],
+      "corpus_subset": "m1_embed",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.05497764011415282,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/flow_control.cc (chttp2 stream/transport flow-control state); ~/.graphify/repos/grpc/grpc/src/core/lib/transport/bdp_estimator.cc (BDP probe state machine)",
+      "notes": "no candidate cleared the SC-006 time threshold against its immediate-predecessor M1_BASELINE for embed/h8192/m1_embed: http2-bdp-probe: mean=0.06157, ci_high=0.06204"
+    },
+    {
+      "axis": "http2_framing",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        2048
+      ],
+      "corpus_subset": "m1_chat",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.0016565016019469798,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/flow_control.cc (chttp2 stream/transport flow-control state); ~/.graphify/repos/grpc/grpc/src/core/lib/transport/bdp_estimator.cc (BDP probe state machine)",
+      "notes": "no candidate cleared the SC-006 ttft threshold against its immediate-predecessor M1_BASELINE for chat_stream/h2048/m1_chat: http2-bdp-probe: mean=0.001865, ci_high=0.002023"
+    },
+    {
+      "axis": "http2_framing",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        4096
+      ],
+      "corpus_subset": "m1_chat",
+      "verdict": "noise_bounded",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.0017338448561943327,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/flow_control.cc (chttp2 stream/transport flow-control state); ~/.graphify/repos/grpc/grpc/src/core/lib/transport/bdp_estimator.cc (BDP probe state machine)",
+      "notes": "cross-batch baseline drift dominates the candidate's signal (ttft; cross-baseline spread 35.2% across 4 M1_BASELINE cohorts at chat_stream/h4096/m1_chat). Predecessor pairing claimed http2-bdp-probe as winner (mean=0.00164, ci_high=0.001806) but the win does not survive 3 alternative same-cell baseline(s). Re-measure under M4's shared-baseline mode (FR-013)."
+    },
+    {
+      "axis": "http2_framing",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        4096
+      ],
+      "corpus_subset": "m3_long_stream",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.0022174995427542013,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/flow_control.cc (chttp2 stream/transport flow-control state); ~/.graphify/repos/grpc/grpc/src/core/lib/transport/bdp_estimator.cc (BDP probe state machine)",
+      "notes": "no candidate cleared the SC-006 ttft threshold against its immediate-predecessor M1_BASELINE for chat_stream/h4096/m3_long_stream: http2-bdp-probe: mean=0.002216, ci_high=0.002339"
+    },
+    {
+      "axis": "http2_framing",
+      "applies_to_path": "chat_stream",
+      "applies_to_widths": [
+        8192
+      ],
+      "corpus_subset": "m1_chat",
+      "verdict": "no_winner",
+      "winning_config": null,
+      "winning_delta_pct": null,
+      "winning_metric": null,
+      "baseline_ci_upper": 0.001785415862585026,
+      "candidate_ci_lower": null,
+      "citation": "~/.graphify/repos/grpc/grpc/src/core/ext/transport/chttp2/transport/flow_control.cc (chttp2 stream/transport flow-control state); ~/.graphify/repos/grpc/grpc/src/core/lib/transport/bdp_estimator.cc (BDP probe state machine)",
+      "notes": "no candidate cleared the SC-006 ttft threshold against its immediate-predecessor M1_BASELINE for chat_stream/h8192/m1_chat: http2-bdp-probe: mean=0.001831, ci_high=0.001962"
+    }
+  ],
+  "p1_frozen_config_time": {
+    "max_message_size": "max-msg-16mib",
+    "keepalive": "default",
+    "compression": "default",
+    "http2_framing": "default",
+    "rationale": "Time-metric Phase A re-analysis (US3) of m3-channel-tuning.json; recommend=True, noise_bounded=True. Cells with noise_bounded verdicts re-measure under M4's shared-baseline harness (FR-013)."
+  },
+  "reanalyze_source": "bench-results/m3-full/m3-channel-tuning.json"
+}
