@@ -1,6 +1,6 @@
 # Project Plan: Protobuf/gRPC Frontend for vLLM
 
-**Status:** Draft v3 — updated 2026-05-10: inserted new M4 (Time-Axis Channel & Schema Tuning); renumbered Corpus Expansion → M5 and Model Expansion → M6
+**Status:** Draft v4 — updated 2026-05-10: marked M3 + M4 delivered; inserted new M5 (Cross-Host Time-Axis Validation on Modal); renumbered Corpus Expansion → M6 and Model Expansion → M7
 **Repo:** Private GitHub repo (already provisioned), MIT license
 
 ---
@@ -13,9 +13,9 @@ When working with Claude Code on this project, point it at this file plus the ac
 
 ---
 
-## Milestone Roadmap (canonical, M1–M6)
+## Milestone Roadmap (canonical, M1–M7)
 
-This section mirrors the milestone framing in [`README.md`](../README.md). M1 and M2 are delivered, M3 is the active milestone (P1 channel-tuning shipped on 2026-05-10 in PR #17; Phase A wall-clock re-analysis is the in-flight US3 closing M3), and M4–M6 are upcoming research directions. The Phase 1–7 plan below this section is preserved as completed-work history (see the boundary heading further down) — it captures decisions and trade-offs that still inform future work, but the milestones above are the canonical forward view.
+This section mirrors the milestone framing in [`README.md`](../README.md). M1–M4 are delivered; M5–M7 are upcoming research directions. The Phase 1–7 plan below this section is preserved as completed-work history (see the boundary heading further down) — it captures decisions and trade-offs that still inform future work, but the milestones above are the canonical forward view.
 
 ### M1 — Foundation (delivered)
 
@@ -25,16 +25,16 @@ Three access paths (REST via proxy, gRPC via proxy, gRPC-direct) implemented and
 
 Formalize the practice of consulting cloned vLLM (the inference engine) and grpcio (the wire stack) as authoritative references when making proto, channel, or decode-tuning decisions in M3 and beyond. Tooling, merge process, and rebuild cadence are documented in [`../ground-truth-workflow-for-associated-projects.md`](../ground-truth-workflow-for-associated-projects.md), and the project-local `/ground-truth-refresh` skill drives the documented cadence in one invocation. **Known gap:** graphify does not parse `.proto` files, so proto-shape questions are answered by reading [`../proto/`](../proto) directly; graphify is leaned on for vLLM internals and grpcio channel implementation.
 
-### M3 — Protobuf & gRPC Tuning (active)
+### M3 — Protobuf & gRPC Tuning (delivered)
 
 Drive wire-size and decode tuning from a mock model that exposes a configurable `hidden_size` (canonical values: 2048, 4096, 8192) and emits embeddings of the matching shape with dummy weights. Per upstream guidance, embed payload size is determined by `hidden_size` rather than total parameter count — Llama 3.1 8B and Llama 3.3 70B both use `hidden_size=8192` and produce identically-sized embed payloads, so a real model is not required for this milestone. GPU cost is removed from the loop. Tuning decisions lean on cloned vLLM and grpcio source as ground truth via `cross-repo.json`.
 
 The milestone splits into two axes:
 
 - **Schema-level (protobuf):** can refinements to message shape (packed scalars, streaming chunk granularity, `oneof` layout for the input union) reduce response or request bytes below the M1 baseline? (Originally scoped as US2 in `specs/015-m3-protobuf-grpc-tuning/`. **Deferred to M4** per the 2026-05-10 clarifications session, since the proto-shape candidates are most likely to manifest as wall-clock-time wins and time becomes a defensible verdict metric only under the M4 harness redesign.)
-- **Channel-level (grpcio):** how do `max_message_size`, keepalive, compression, and HTTP/2 framing settings affect wire size and decode time across `hidden_size` 2048 / 4096 / 8192? At what `hidden_size` does grpcio's default `max_message_size` become binding for embed requests? (Bytes verdicts shipped 2026-05-10 in PR #17. Phase A time re-analysis on the same data closes M3 as US3.)
+- **Channel-level (grpcio):** how do `max_message_size`, keepalive, compression, and HTTP/2 framing settings affect wire size and decode time across `hidden_size` 2048 / 4096 / 8192? At what `hidden_size` does grpcio's default `max_message_size` become binding for embed requests? (Bytes verdicts shipped 2026-05-10 in PR #17 → [`benchmarks/m3-channel-tuning.{md,json}`](benchmarks/m3-channel-tuning.md). Phase A time re-analysis closed M3 → [`benchmarks/m3-channel-tuning-time.{md,json}`](benchmarks/m3-channel-tuning-time.md).)
 
-### M4 — Time-Axis Channel & Schema Tuning (active)
+### M4 — Time-Axis Channel & Schema Tuning (delivered)
 
 Re-frame the M3 measurements around wall-clock time as a first-class success metric (TTFT for streaming, total per-RPC wall-clock for embed), and run the protobuf message-shape candidates deferred from M3 under that methodology. M3's bytes verdicts stand; M4 closes the gap that became visible in M3's published report — the existing harness's mock-pacing and per-axis fresh-baseline pairing prevent a defensible time-metric verdict on chat_stream wall-clock, which is exactly the metric the project's wire-overhead thesis cares about most.
 
@@ -45,21 +45,31 @@ The milestone splits into two axes, both gated on M3 closure:
 
 Outputs supersede M3's bytes-only verdicts where the new methodology produces a different result; M3's report stays in place as the bytes baseline for traceability. Citations follow the M2 ground-truth workflow.
 
-**Implementation status (2026-05-10):** harness redesign + definitive sweep machinery merged on `016-m4-time-axis-tuning`. US1 (no-pacing mode, shared-baseline orchestrator, borderline-expand cascade, `client_bound` detection, baseline-CV gate, TTFT-first-class verdicts) and US2 (per-path frozen-channel baselines, loopback caveat tagging, `validate_run` invariants, `m4_supersede` Supersedes-M3 builder, strict-superset M4 JSON+markdown reports) are landed. US3 schema-candidate proto files (`packed_token_ids`, `oneof_flattened_input`, `chunk_granularity`) live under `proto/vllm_grpc/v1/m4-candidates/` with stubs regenerated by `make proto`; the cascade rule, frozen-baseline pairing, and Negative-results classifier are merged. The published `docs/benchmarks/m4-time-axis-tuning.{md,json}` lands when the operator runs the full sweep on a quiet host.
+**Status (delivered 2026-05-10):** harness redesign + definitive sweep merged on `016-m4-time-axis-tuning`. US1 (no-pacing mode, shared-baseline orchestrator, borderline-expand cascade, `client_bound` detection, per-cohort CV recording, TTFT-first-class verdicts) and US2 (per-path frozen-channel baselines, loopback caveat tagging, `validate_run` invariants, `m4_supersede` Supersedes-M3 builder, strict-superset M4 JSON+markdown reports) are landed. US3 schema-candidate proto files (`packed_token_ids`, `oneof_flattened_input`, `chunk_granularity`) live under `proto/vllm_grpc/v1/m4-candidates/` with stubs regenerated by `make proto`; the cascade rule, frozen-baseline pairing, and Negative-results classifier are merged. Published report at [`benchmarks/m4-time-axis-tuning.{md,json}`](benchmarks/m4-time-axis-tuning.md). FR-005 reworked late-stage from abort-on-CV to record-and-report (research.md R-11); per-cohort CV is surfaced in the report so the reader adjudicates trust on noisy baselines. M5 addresses the loopback caveat axes (`keepalive`, `http2_framing`) by re-running the same sweep on Modal.
 
-### M5 — Corpus Expansion (upcoming)
+### M5 — Cross-Host Time-Axis Validation (upcoming)
+
+Re-run the M4 four-axis channel sweep and the M4 schema-candidate sweep with the gRPC server deployed on Modal and the benchmark client running locally, so the transmission crosses real wire instead of `127.0.0.1`. M4's published verdicts on the `keepalive` and `http2_framing` axes carry the loopback caveat (FR-010) because RTT-bounded behavior cannot manifest on a single host; `max_message_size` and `compression` verdicts also benefit from a real-network sanity check. The local-to-Modal split (real RTT ~30–100ms, real bandwidth-delay product) exposes transport-layer behavior that loopback masks.
+
+Approach reuses the existing M4 harness (`vllm_grpc_bench --m4`) unchanged: deploy the mock gRPC server (M4's `MockEngine` + `M3CompletionsServicer` + `M3ChatServicer`) as a Modal app exposing the same proto surface, add a connection-string flag so the harness's client points at the Modal endpoint instead of `serve_in_process`, and run the same axis × width × path matrix as M4 (no_pacing, shared baseline, n=100→250 cascade, per-cohort CV recorded per FR-005). M3/M4's strict-superset JSON schema is preserved.
+
+Outputs land at `docs/benchmarks/m5-cross-host-time-axis.{md,json}` plus a "Supersedes M4" table for axes whose verdicts shift under real-wire conditions. M4's published report stays in place as the loopback baseline for traceability.
+
+Out of scope: real model (deferred to M7), corpus diversity (deferred to M6), Modal-side observability beyond what's needed to record per-RPC wall-clock and TTFT, and any non-`mock-engine` workload.
+
+### M6 — Corpus Expansion (upcoming)
 
 Re-run all three access paths against a larger, more varied prompt corpus covering short and long prompts, multi-turn conversations, and domain-specific content (code, structured data). Determine whether the M1 wire-size and latency findings hold across input diversity — do wire-size deltas change with longer prompts or multi-turn context windows, and does streaming TPOT variance increase with structurally different prompt types?
 
-### M6 — Model Expansion (upcoming)
+### M7 — Model Expansion (upcoming)
 
-Repeat the M1 and M3/M4 benchmarks with at least two additional models of different sizes and architecture families. Determine whether the wire-overhead thesis is model-agnostic or depends on tokeniser and output characteristics, and validate that the mock-derived findings from M3 and M4 hold against real models.
+Repeat the M1, M3, M4, and M5 benchmarks with at least two additional models of different sizes and architecture families. Determine whether the wire-overhead thesis is model-agnostic or depends on tokeniser and output characteristics, and validate that the mock-derived findings from M3–M5 hold against real models.
 
 ---
 
 ## Phase History (preserved as completed-work record)
 
-The content below predates the milestone overlay above and is retained for the decisions and trade-offs it records. New phases of work are tracked under M3–M5 in the milestone roadmap; the Phase 1–7 framing here is read as history.
+The content below predates the milestone overlay above and is retained for the decisions and trade-offs it records. New phases of work are tracked under M3–M7 in the milestone roadmap; the Phase 1–7 framing here is read as history.
 
 ---
 
