@@ -12,9 +12,9 @@ from vllm_grpc_bench.channel_config import Axis, ChannelConfig
 
 Path_ = Literal["embed", "chat_stream"]
 CorpusSubset = Literal["m1_chat", "m1_embed", "m3_long_stream"]
-Verdict = Literal["recommend", "no_winner", "not_measurable"]
+Verdict = Literal["recommend", "no_winner", "not_measurable", "noise_bounded"]
 ErrorKind = Literal["rpc_aborted", "max_msg_exceeded", "timeout", "other"]
-WinningMetric = Literal["bytes", "time"]
+WinningMetric = Literal["bytes", "time", "ttft"]
 AppliesPath = Literal["embed", "chat_stream", "both"]
 
 CANONICAL_WIDTHS: frozenset[int] = frozenset({2048, 4096, 8192})
@@ -99,6 +99,7 @@ class Recommendation:
     winning_metric: WinningMetric | None = None
     candidate_ci_lower: float | None = None
     notes: str = ""
+    corpus_subset: CorpusSubset | None = None
 
     def __post_init__(self) -> None:
         if not self.applies_to_widths:
@@ -124,6 +125,11 @@ class Recommendation:
                     "Recommendation(verdict=recommend) requires "
                     "candidate_ci_lower > baseline_ci_upper (SC-003)"
                 )
+        if self.verdict == "noise_bounded" and not self.notes:
+            raise ValueError(
+                "Recommendation(verdict=noise_bounded) requires a populated "
+                "notes field naming the dominating noise source (FR-005)"
+            )
 
 
 @dataclass(frozen=True)

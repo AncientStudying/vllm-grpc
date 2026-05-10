@@ -130,8 +130,11 @@ Numbers are drawn from committed JSON files in `docs/benchmarks/`.
 
 **Methodology** (CPU-only, mock vLLM engine — distinct from §1–§3 GPU runs above)
 - Sweep: 4 channel axes × 3 canonical widths × 2 paths × 30 iters/cell
-- Source: [`m3-channel-tuning.md`](./m3-channel-tuning.md) | [`m3-channel-tuning.json`](./m3-channel-tuning.json)
-- SC-003 win bar: candidate bytes 95% CI strictly below baseline 95% CI
+- Bytes verdicts: [`m3-channel-tuning.md`](./m3-channel-tuning.md) | [`m3-channel-tuning.json`](./m3-channel-tuning.json)
+- Time verdicts (Phase A / US3): [`m3-channel-tuning-time.md`](./m3-channel-tuning-time.md) | [`m3-channel-tuning-time.json`](./m3-channel-tuning-time.json)
+- SC-003 win bar: candidate 95% CI strictly below baseline 95% CI (same statistical bar on both metrics)
+
+### Bytes axis (PR #17)
 
 | Axis | Width range | Path | Verdict | Notes |
 |---|---|---|---|---|
@@ -140,6 +143,20 @@ Numbers are drawn from committed JSON files in `docs/benchmarks/`.
 | `compression` | 2048 / 4096 / 8192 | embed + chat_stream | no_winner (all 6 cells) | gzip costs +18–39% time on dense-float embeds with no wire-byte win |
 | `http2_framing` | 2048 / 4096 / 8192 | embed + chat_stream | no_winner (all 6 cells) | BDP-probe cannot manifest a win on loopback CPU-only mock |
 
-**P1 frozen channel config (FR-008):** `M1_BASELINE` (all axes default — no candidate cleared SC-003). This is the configuration US2 (P2 schema-level tuning) measures against.
+### Time axis — Phase A re-analysis (US3, PR #19)
 
-**Cross-comparison caveat:** the M3 numbers above are **not** comparable to §1–§3 above. M3 runs CPU-only with a mock engine to isolate channel/protocol effects from model-execution effects, while §1–§3 benchmark the live vLLM engine on Modal A10G. M3's "delta vs M1" is computed against the M3 in-batch baseline (also CPU-mock), not against the GPU numbers in §2.
+Phase A re-evaluates the same n=30 sweep data on TTFT (chat_stream) and total per-RPC wall-clock (embed) per FR-014, with immediate-predecessor M1_BASELINE pairing per `research.md` R-12. Surfaces 4 wins the bytes axis missed plus 2 cells flagged for M4 re-measurement.
+
+| Axis | Path | Width | Metric | Verdict | Δ% |
+|---|---|---|---|---|---:|
+| `max_message_size` | chat_stream | 2048 | TTFT | **recommend `max-msg-16mib`** | **−28.66%** |
+| `max_message_size` | chat_stream | 4096 | TTFT | **recommend `max-msg-16mib`** | **−31.39%** |
+| `max_message_size` | embed | 4096 | wall-clock | **recommend `max-msg-16mib`** | −2.43% |
+| `keepalive` | chat_stream | 2048 | TTFT | **recommend `keepalive-aggressive`** | **−24.20%** |
+| `keepalive` | embed | 2048 | wall-clock | noise_bounded → M4 | (13.5% baseline drift) |
+| `http2_framing` | chat_stream | 4096 | TTFT | noise_bounded → M4 | (35.2% baseline drift) |
+| (other 22 cells) | — | — | — | no_winner | — |
+
+**P1 frozen channel config (time-axis):** `max_message_size = max-msg-16mib` (the rest default to M1_BASELINE; see `m3-channel-tuning-time.md` for the per-axis rationale and `p1_frozen_config_time` in the JSON companion).
+
+**Cross-comparison caveat:** the M3 numbers above are **not** comparable to §1–§3 above. M3 runs CPU-only with a mock engine to isolate channel/protocol effects from model-execution effects, while §1–§3 benchmark the live vLLM engine on Modal A10G. M3's "delta vs M1" is computed against the M3 in-batch baseline (also CPU-mock), not against the GPU numbers in §2. The `noise_bounded` cells re-measure under M4's shared-baseline harness.
