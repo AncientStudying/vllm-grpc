@@ -10,12 +10,12 @@ description: "Task list for M3 — Protobuf & gRPC Tuning"
 
 **Tests**: Test tasks are included because both contract files (`contracts/mock-engine-interface.md`, `contracts/m3-bench-cli.md`) explicitly enumerate test obligations — those obligations are treated as binding here.
 
-**Organization**: Tasks are grouped by user story so US1 (P1) can ship as the milestone MVP and US2 (P2) is unblocked only after FR-008's four-axis closure gate is satisfied.
+**Organization**: Tasks are grouped by user story. US1 (P1, bytes-axis) shipped as the milestone MVP in PR #17. US2 (P2, schema-level) is deferred to M4 per the 2026-05-10 spec clarifications. US3 (P1.5, Phase A wall-clock re-analysis) is the in-flight closure work for M3.
 
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies on incomplete tasks)
-- **[Story]**: Which user story this task belongs to (US1 or US2)
+- **[Story]**: Which user story this task belongs to (US1, US2, or US3)
 - File paths are absolute or repo-relative as noted
 
 ## Path Conventions
@@ -97,13 +97,15 @@ This is a Python `uv` workspace. Touched roots:
 
 ---
 
-## Phase 4: User Story 2 — Schema-level (protobuf) message-shape tuning (Priority: P2)
+## Phase 4: User Story 2 — Schema-level (protobuf) message-shape tuning (Priority: P2) — DEFERRED to M4
 
-**Goal**: With the P1 channel configuration frozen, measure whether at least one protobuf message-shape candidate moves wire bytes or decode time below the P1 baseline at hidden_size=4096. Document the result honestly even if the candidate loses.
+**Status (2026-05-10)**: ⛔ This phase is **deferred to milestone M4** (`docs/PLAN.md`) per the 2026-05-10 clarifications session in `spec.md`. Rationale: US2 candidates (`packed`, `oneof` flattening, alternative streaming chunk granularity) are most likely to manifest as TTFT wins, and TTFT becomes a defensible verdict metric only under the M4 harness changes (FR-012 / FR-013 / FR-014). Running US2 against the current harness would replicate the bytes-only verdict pattern that motivated the M4 split. T028–T034 below remain as drafted for traceability and will be re-spec'd as part of feature 016 (M4) when that milestone is opened — they will not execute on this branch.
 
-**Independent Test**: A reviewer reads `docs/benchmarks/m3-schema-tuning.md` and finds (a) the candidate proto change documented with the actual `.proto` diff, (b) the P1 channel config it was measured against (linked from `p1_frozen_config` in T027), (c) a verdict block with CI bounds, (d) a citation per FR-009, and (e) explicit notes on whether existing M1 clients must regenerate stubs.
+**Goal (preserved as drafted)**: With the P1 channel configuration frozen, measure whether at least one protobuf message-shape candidate moves wire bytes or decode time below the P1 baseline at hidden_size=4096. Document the result honestly even if the candidate loses.
 
-**Gate**: ⛔ CANNOT START until T027 has confirmed all four P1 axes are closed (FR-008).
+**Independent Test (preserved as drafted)**: A reviewer reads `docs/benchmarks/m3-schema-tuning.md` and finds (a) the candidate proto change documented with the actual `.proto` diff, (b) the P1 channel config it was measured against (linked from `p1_frozen_config` in T027), (c) a verdict block with CI bounds, (d) a citation per FR-009, and (e) explicit notes on whether existing M1 clients must regenerate stubs.
+
+**Gate (preserved as drafted)**: ⛔ Originally gated on T027 (FR-008). T027 is now closed (PR #17), so the gate-on-P1 condition is met. The deferral to M4 is a scope decision, not a gating issue.
 
 ### Implementation for User Story 2
 
@@ -121,13 +123,36 @@ This is a Python `uv` workspace. Touched roots:
 
 ## Phase 5: Polish & Cross-Cutting Concerns
 
-**Purpose**: Cleanup, documentation, and merge readiness.
+**Purpose**: Cleanup, documentation, and merge readiness. **Note (2026-05-10)**: Phase 5 now runs *after* Phase 6 (US3 / Phase A) lands. T037 and T039 are scoped to the US1+US3 deliverables on this branch (US2 deferred to M4); T036's ADR also covers the Phase A immediate-predecessor-baseline pairing rule and the `noise_bounded` verdict literal added under FR-005.
 
-- [ ] T035 [P] Update the README.md "Milestone 3 — Protobuf & gRPC Tuning" section if findings changed the project's narrative (e.g. if a channel-axis recommendation graduates into the project's reference configuration, or if a candidate is rejected and that influences M5 planning). Cross-link the two M3 reports.
-- [ ] T036 Add an ADR at `docs/decisions/ADR-NNN-m3-statistical-methodology.md` documenting the n=30 / 95%-CI / lower-CI-vs-upper-CI win rule chosen in `/speckit-clarify` and `research.md` R-1 — per Constitution Workflow ("`docs/decisions/` MUST receive an ADR for any non-obvious architectural choice"). The 95%-CI win bar is non-obvious and worth recording.
-- [ ] T037 Run `quickstart.md` end-to-end as a fresh-eyes walkthrough (smoke run + one narrowed axis sweep + one P2 invocation if US2 closed). Capture any documentation drift and patch quickstart.md inline.
-- [ ] T038 [P] Run `make check` once more on the merged branch state — confirm 145+ passed, 0 new skips, 0 regressions vs. the M2-merge baseline.
-- [ ] T039 Author the PR description summarizing US1 + US2 findings, linking both M3 reports, calling out any client-compat decisions from T033, and flagging the deferred items (anything moved from "P1" to "follow-up" during the sweep). Confirm the M3 reports and `summary.md` cross-link land in the same PR so reviewers can verify SC-005 citation discipline against the actual report.
+- [ ] T035 [P] Update the README.md "Milestone 3 — Protobuf & gRPC Tuning" section if findings changed the project's narrative (e.g. if a channel-axis recommendation graduates into the project's reference configuration, or if a candidate is rejected and that influences M5 planning). Cross-link both M3 reports (bytes + time). The 2026-05-10 milestone-roadmap renumbering (M4 = Time-Axis, M5 = Corpus, M6 = Models) has already landed; only the M3-section internals need a touch-up here.
+- [ ] T036 Add an ADR at `docs/decisions/ADR-NNN-m3-statistical-methodology.md` documenting (a) the n=30 / 95%-CI / lower-CI-vs-upper-CI win rule chosen in `/speckit-clarify` and `research.md` R-1, (b) the immediate-predecessor M1_BASELINE pairing rule used in Phase A per `research.md` R-12, and (c) the `noise_bounded` verdict literal added under FR-005 — per Constitution Workflow ("`docs/decisions/` MUST receive an ADR for any non-obvious architectural choice"). The 95%-CI win bar and the noise-bounded verdict are both non-obvious and worth recording.
+- [ ] T037 Run `quickstart.md` end-to-end as a fresh-eyes walkthrough (smoke run + one narrowed axis sweep + one Phase A `--reanalyze` invocation). Capture any documentation drift and patch quickstart.md inline. (US2 / `--p2-revision` invocation is removed from the walkthrough since US2 is deferred to M4.)
+- [ ] T038 [P] Run `make check` once more on the merged branch state — confirm 189+ passed, 0 new skips, 0 regressions vs. the M2-merge baseline (PR #17 already lifted the baseline from the original 145).
+- [ ] T039 Author the PR description summarizing US1 + US3 findings (US2 explicitly deferred), linking both M3 reports (bytes from PR #17 plus time from this branch), and flagging the M4 hand-off (the `noise_bounded` cells listed in `m3-channel-tuning-time.md`'s Limitations section are M4's input). Confirm the M3 time report and the `summary.md` cross-link update land in the same PR so reviewers can verify SC-006 citation discipline against the actual report.
+
+---
+
+## Phase 6: User Story 3 — Phase A wall-clock time re-analysis (Priority: P1.5)
+
+**Goal**: Extend the published P1 channel-tuning report to cover wall-clock time deltas using the data already in `bench-results/m3-full/m3-channel-tuning.json` — no new sweeps. Defensible time verdicts where the existing harness produced clean signal (compression both paths; embed total wall-clock across all axes; TTFT for chat_stream); honest `noise_bounded` verdicts where the harness can't (chat_stream total wall-clock under any axis, per `research.md` R-11), with explicit M4 hand-off in the Limitations section.
+
+**Independent Test**: A reviewer reads `docs/benchmarks/m3-channel-tuning-time.md` and confirms (a) every axis × width × path cell has a time-metric verdict in `{recommend, no_winner, not_measurable, noise_bounded}`, (b) every chat_stream verdict is computed on TTFT and labeled as such, (c) every `recommend` carries CI-bounded supporting numbers and a citation, (d) the Limitations section names the specific cells M4 must re-measure under the harness redesign.
+
+**Gate**: ⛔ Phase 6 starts after PR #17 merges to `main` (the bytes-axis closure) so the time report has the bytes report to cross-link from.
+
+### Implementation for User Story 3
+
+- [ ] T040 [P] [US3] Extend `tools/benchmark/src/vllm_grpc_bench/m3_sweep.build_recommendations` with two new metric paths: `metric="time"` (uses cohort `time_seconds` mean+CI; intended for embed cells) and `metric="ttft"` (computes per-cohort TTFT mean + 95% CI from `samples[i].time_to_first_token_seconds`; intended for chat_stream cells). Both new paths use **immediate-predecessor M1_BASELINE pairing** (sort cohorts by run-order via the existing JSON layout, pair each candidate with the most recent preceding M1_BASELINE at matching path/width/corpus_subset) per `research.md` R-12. Add a `noise_bounded` verdict literal: emitted when σ_baseline_drift (computed from the spread of consecutive M1_BASELINE cohorts at the same cell) exceeds the candidate's expected effect size. Update the `Recommendation` dataclass invariants to allow `verdict="noise_bounded"` with a populated `notes` field naming the dominating noise source. Depends on the existing T011 m3_sweep module.
+- [ ] T041 [P] [US3] Add tests at `tools/benchmark/tests/test_m3_sweep_metrics.py` covering: TTFT computation correctness against a hand-checked sample, immediate-predecessor pairing (when multiple baselines exist, the pre-candidate one is chosen), noise_bounded emission when σ_baseline_drift > expected_win, no regression on existing `metric="bytes"` behaviour for PR-#17-style verdicts. Depends on T040.
+- [ ] T042 [US3] Add a `--reanalyze <existing-json>` flag to `python -m vllm_grpc_bench --m3` in `__main__.py` that reads an existing sweep JSON, runs `build_recommendations` with `metric="time"` for embed cohorts and `metric="ttft"` for chat_stream cohorts, and writes a sibling `<existing-json-stem>-time.json`. Exit codes match the existing `--m3` mode contract. Update `contracts/m3-bench-cli.md` with the new flag. Depends on T040.
+- [ ] T043 [US3] Run `python -m vllm_grpc_bench --m3 --reanalyze bench-results/m3-full/m3-channel-tuning.json` to produce `bench-results/m3-full/m3-channel-tuning-time.json`. Inspect the verdicts, record observations (which cells produced clean verdicts, which fell to `noise_bounded`, the breakdown of `recommend` / `no_winner` / `not_measurable` by axis × path). Depends on T042.
+- [ ] T044 [US3] Author `docs/benchmarks/m3-channel-tuning-time.md` per the M3 report style: per-axis time-metric verdicts (TTFT for chat_stream cells, total wall-clock for embed cells), each with cohort-pair baseline, candidate CIs, citation, and verdict. Methodology section explicitly cites R-11 / R-12 / R-13 / R-14 (mock-pacing dilution, baseline drift, TTFT rationale, Phase A vs. M4 split). Limitations section names every `noise_bounded` cell as an M4 input. Cross-link to `m3-channel-tuning.md` (the bytes report from PR #17). Depends on T043.
+- [ ] T045 [US3] Emit `docs/benchmarks/m3-channel-tuning-time.json` from the same data, slim format (no per-iteration samples, mirroring the bytes JSON). Add a `p1_frozen_config_time` field paralleling the existing `p1_frozen_config`: union of each axis's time-metric winner if `recommend`, else M1_BASELINE for that axis (also M1_BASELINE if any axis emitted `noise_bounded` since we cannot freeze a config we couldn't verdict). Depends on T043.
+- [ ] T046 [US3] Update `docs/benchmarks/summary.md` §4: add a sub-table for the time-metric verdicts (rows: axis, time-metric verdict, supporting Δ%, citation), tagged TTFT-for-chat_stream / wall-clock-for-embed where applicable, and a cross-link to `m3-channel-tuning-time.md`. Note the M4 hand-off explicitly. Depends on T044, T045.
+- [ ] T047 [US3] Verify SC-006 (per-axis time-metric recommendations exist for each canonical width OR are explicitly recorded as `noise_bounded` with supporting σ_baseline_drift numbers), FR-014 (every chat_stream verdict labeled TTFT), and the new `noise_bounded` verdict literal's notes-field invariant (every `noise_bounded` cell names its dominating noise source). Spot-check one TTFT computation by hand: pull `time_to_first_token_seconds` for one chat_stream baseline cohort's 30 samples, compute mean and CI manually, compare to the JSON. Depends on T044, T045.
+
+**Checkpoint**: Phase 6 closes — Phase A re-analysis published. Outstanding `noise_bounded` cells documented in the report's Limitations section as inputs to M4. M3 closes after Phase 5 polish runs over the combined US1+US3 deliverables.
 
 ---
 
@@ -149,7 +174,8 @@ This is a Python `uv` workspace. Touched roots:
 ### Within Each User Story
 
 - US1: each axis sweep (T019–T022) is independent of the others — they could be parallelized by separate operators, but in practice are run by the same harness sequentially since they share the same machine. The report tasks (T023, T024) require all four axes done.
-- US2: T028 → T029 → T030 → T031/T032/T033 → T034 is a strict chain.
+- US2: T028 → T029 → T030 → T031/T032/T033 → T034 is a strict chain. **Status (2026-05-10)**: deferred to M4; this chain does not execute on the 015 branch.
+- US3 (Phase A): T040 [P] T041 → T042 → T043 → T044 [P] T045 → T046 → T047. The `--reanalyze` path (T042) requires the new metric paths in `build_recommendations` (T040). Report authoring (T044, T045) waits on the re-analysis run (T043). Verification (T047) gates Phase 5 polish on the US3 deliverables.
 
 ### Parallel Opportunities
 
@@ -158,6 +184,7 @@ This is a Python `uv` workspace. Touched roots:
 - **Phase 2 — test block**: T013, T014, T015, T016, T017, T018 are all [P] once their respective implementation tasks land.
 - **Phase 3**: T019 / T020 / T021 / T022 *could* run in parallel on multiple machines, but operationally run sequentially on one host. T025 [P] runs alongside T026 once T023 is published.
 - **Phase 5**: T035 [P] alongside T036; T038 [P] alongside T039.
+- **Phase 6 (US3)**: T040 [P] (recommendation builder extensions) runs alongside T041 [P] (the matching unit tests). T044 [P] (markdown report) runs alongside T045 [P] (JSON companion) once the re-analysis (T043) is done.
 
 ### Critical-Path Sketch
 
@@ -176,11 +203,13 @@ T001 → T002  (Setup)
        │                              │
        │                              └──► T019,T020,T021,T022 (US1 axis sweeps, sequential on one host)
        │                                       │
-       │                                       └──► T023,T024 → T025,T026 → T027 (P1 closes)
+       │                                       └──► T023,T024 → T025,T026 → T027 (P1 closes — shipped in PR #17)
        │                                                                          │
-       │                                                                          └──► T028 → T029 → T030 → T031,T032,T033 → T034 (US2)
-       │                                                                                                                         │
-       │                                                                                                                         └──► T035–T039 (Polish)
+       │                                                                          ├──► T028 → T029 → T030 → T031,T032,T033 → T034 (US2 — DEFERRED to M4)
+       │                                                                          │
+       │                                                                          └──► T040,T041 → T042 → T043 → T044,T045 → T046 → T047 (US3 / Phase A)
+       │                                                                                                                              │
+       │                                                                                                                              └──► T035–T039 (Polish, scoped to US1+US3)
 ```
 
 ---
@@ -189,27 +218,24 @@ T001 → T002  (Setup)
 
 ### MVP (User Story 1 only — P1 channel-level tuning)
 
-If you want to ship M3 in two PRs:
+The original two-PR plan was Phases 1–3 (US1) then Phase 4+5 (US2+Polish). **Updated 2026-05-10** after PR #17 merged:
 
-- **PR 1** = Phases 1–3 (Setup + Foundational + US1) → publishes the channel-tuning report, closes P1, opens the door for P2.
-- **PR 2** = Phase 4 + Phase 5 (US2 + Polish) → publishes the schema-tuning report, finishes the milestone.
+- **PR 1 (shipped 2026-05-10, PR #17)** = Phases 1–3 (Setup + Foundational + US1, bytes-axis closure) → published `docs/benchmarks/m3-channel-tuning.{md,json}`, closed P1 on the bytes metric, opened FR-008 gate.
+- **PR 2 (next, this branch)** = Phase 6 (US3 / Phase A wall-clock re-analysis) + Phase 5 (Polish, scoped to US1+US3 deliverables) → publishes `docs/benchmarks/m3-channel-tuning-time.{md,json}`, closes M3.
+- **PR 3 (deferred to M4)** = US2 (proto-shape candidates) + Phase B harness redesign — re-spec'd as feature 016 in `docs/PLAN.md`'s M4 entry.
 
-This split reflects the spec's gated sequencing (FR-008) and gets the channel-tuning numbers in front of reviewers earlier. The README "M3 — Protobuf & gRPC Tuning" framing already supports a partial-milestone update covering only the channel-level axis if needed.
+This split reflects the 2026-05-10 spec clarifications (wall-clock as primary metric) and the empirical finding that the M3 harness cannot defensibly verdict chat_stream total wall-clock without the M4 redesign. Bytes-axis numbers are already in front of reviewers; the time-axis interim numbers ship next.
 
 ### Single-PR option
 
-If you prefer one PR for the whole milestone, the dependency graph above is a strict topological order. Total estimated effort:
-
-- Foundational (T003–T018): roughly the largest implementation block (new dataclasses, mock engine, sweep orchestrator, CLI mode, six test files). Bulk of the engineering.
-- US1 sweeps (T019–T022): roughly 0.7–4 hours of *machine* time per `research.md` R-2's budget; *engineering* time is spent on report authoring (T023) and citation verification (T026).
-- US2 (T028–T034): one proto edit + one `make proto` + one sweep + one report. Smaller than US1 in person-time.
-- Polish: low.
+No longer applicable: PR #17 already closed the bytes-axis chunk. Remaining work flows as PR 2 above.
 
 ### Test discipline
 
 - All Foundational tests (T013–T018) MUST pass green before any US1 sweep is run — otherwise sweep results are unattributable to channel tuning vs. plumbing bugs.
 - Foundational tests are CPU-only and CI-eligible (per the smoke mode); they should run in `make check` going forward.
 - US1 and US2 sweep results are not unit tests — they're benchmark artefacts. Do not gate `make check` on them.
+- US3 (Phase A) tests (T041) are CPU-only and DO run in `make check` — they're unit tests for the recommendation builder's new metric paths and the `noise_bounded` verdict logic. The Phase A re-analysis output (T043) is a benchmark artefact and is not in `make check`.
 
 ---
 
@@ -220,5 +246,6 @@ Spot-check confirms every task above adheres to `- [ ] TXXX [P?] [Story?] descri
 - Setup tasks: T001, T002 — no story label ✅
 - Foundational tasks: T003–T018 — no story label (T016 carries `[US1-prep]` for human readability, not as a Story label proper; it lives in Foundational because it verifies foundational artefacts) ✅
 - US1 tasks: T019–T027 — all carry `[US1]` ✅
-- US2 tasks: T028–T034 — all carry `[US2]` ✅
+- US2 tasks: T028–T034 — all carry `[US2]` ✅ (deferred to M4)
 - Polish tasks: T035–T039 — no story label ✅
+- US3 tasks: T040–T047 — all carry `[US3]` ✅

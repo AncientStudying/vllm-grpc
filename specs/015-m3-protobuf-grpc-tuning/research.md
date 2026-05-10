@@ -128,6 +128,51 @@ Rolled into R-1 + R-2: 30 iterations × 1 RPC each per cell, with cell sweep dim
 - The chat completion's token-id field is currently `repeated int32`; protobuf packed encoding (`[packed=true]` for proto2 / default-on for proto3) typically reduces wire bytes for sequences of small ints. Concrete win or loss is measured, not assumed.
 - Source for proto3 packing semantics: protobuf language guide; grpcio's serialization path: `~/.graphify/repos/grpc/grpc/src/python/grpcio/grpc/_runtime_protos.py`.
 
+## R-11 — Why total chat_stream wall-clock is dominated by mock pacing (added 2026-05-10)
+
+**Decision**: For the chat_stream path under the M3 P1 sweep harness (the harness used in PR #17), total wall-clock is **not** a defensible time-metric signal for channel-tuning verdicts. TTFT (per-sample `time_to_first_token_seconds`) is.
+
+**Empirical justification** (from `bench-results/m3-full/m3-channel-tuning.json`): at the mock's default pacing (~200 tokens/second), ~32 tokens emitted per RPC corresponds to ~32 × 5 ms = ~160 ms of deliberate `time.sleep` between yields. The observed total wall-clock for the same cell is ~184 ms. Pacing therefore accounts for ~87% of total chat_stream wall-clock; transport+serialization is the remaining ~13%. Channel-axis effects on transport+serialization are diluted to <5% of total signal — well below the 10–15% cross-batch noise documented in R-12 and well below the typical channel-tuning effect size we expect to detect.
+
+**Implication**:
+
+- Phase A / US3 (this milestone): use TTFT per-sample for chat_stream time-metric verdicts. Total chat_stream wall-clock cells are marked `noise_bounded` (FR-005) and listed in the report's Limitations section as inputs to M4.
+- M4: add a no-pacing mode to the mock engine (FR-012) so a clean chat_stream total-wall-clock verdict becomes possible.
+
+## R-12 — Cross-batch baseline drift in wall-clock time (added 2026-05-10)
+
+**Decision**: The M3 P1 orchestrator's "fresh M1_BASELINE per axis batch" pattern is unsafe for the time metric. Phase A's re-analysis pairs each candidate with its immediate-predecessor M1_BASELINE in cohort run-order; M4 will replace per-axis fresh baselines with a single shared up-front baseline (FR-013).
+
+**Empirical justification**: the same cell (chat_stream h=2048 m1_chat M1_BASELINE) measured at four different points in the M3 sweep run-order showed mean wall-clock of 184.4 / 182.4 / 204.9 / 207.9 ms — a 13% spread driven by ambient system load between axis batches. The bytes metric for the same baseline cohorts varied by <0.01% across all four. The bytes-axis SC-003 evaluation in PR #17 was therefore robust to this drift; a time-axis SC-003 evaluation against any of those baselines would be CI-bound to ±13% noise, larger than any expected channel-axis time win.
+
+**Implication**:
+
+- Phase A / US3: pair candidates with the immediate-predecessor baseline in cohort run-order (matched via `cell_id` ordering and the run-order embedded in the JSON). Where the spread between consecutive baselines for the same cell exceeds the candidate's expected effect size, mark the cell `noise_bounded`.
+- M4: implement FR-013's shared-baseline mode — measure one M1_BASELINE cohort (n≥100) up front, reuse across all axes.
+
+## R-13 — TTFT as the diagnostic streaming time metric (added 2026-05-10)
+
+**Decision**: For chat_stream cells, the recommendation builder's time-metric path evaluates `time_to_first_token_seconds` (per-sample), not total wall-clock. Per FR-014, TTFT is the primary streaming time metric; total wall-clock is a secondary diagnostic; mean inter-token latency is reported but is not used as a primary verdict metric because it is mock-pacing-bounded.
+
+**Rationale**: TTFT isolates connection-establishment and first-byte transport time from the mock's per-token pacing. For each axis, the channel-tuning hypothesis maps to TTFT or to embed total wall-clock as follows:
+
+- `KEEPALIVE_*`: TTFT (ping-frame interleaving on a still-warming connection affects first-byte timing under contention).
+- `HTTP2_BDP_PROBE`: TTFT (initial flow-control window sizing affects first-byte send) plus embed total wall-clock (window opening over the body of a single large embed response).
+- `MAX_MSG_*`: irrelevant for TTFT (the limit binds at body, not at headers); embed total wall-clock would be the natural metric except the candidates don't bind at canonical widths (per the published M3 report's SC-002 finding).
+- Compression: both — encoder/decoder setup contributes to TTFT, and the encode/decode tax dominates embed total wall-clock (the +18–39% gzip tax already in the M3 bytes report).
+
+TTFT semantics are already documented in the project's M1 streaming methodology (`docs/benchmarks/phase-5-streaming-comparison.md`).
+
+**Implementation note**: `time_to_first_token_seconds` is already populated per-sample for chat_stream cohorts in the existing JSON. No re-sweep is needed to compute TTFT-based verdicts in Phase A.
+
+## R-14 — Phase A vs. M4 (Phase B) scope demarcation (added 2026-05-10)
+
+**Phase A — lands in this milestone (M3) as US3**: Code-only re-analysis. Inputs: the existing `bench-results/m3-full/m3-channel-tuning.json`. Outputs: `docs/benchmarks/m3-channel-tuning-time.{md,json}` with per-axis time-metric verdicts using `metric=time` for embed cells, `metric=ttft` for chat_stream cells, and immediate-predecessor M1_BASELINE pairing throughout. Adds a `--reanalyze <existing-json>` mode to `python -m vllm_grpc_bench --m3` plus the corresponding helper paths in `m3_sweep.build_recommendations` and supporting tests. **No new sweeps, no harness behavior changes beyond the re-analysis path.**
+
+**M4 — separate feature (016 when scoped)**: Harness redesign. Adds `--no-pacing` to the mock engine (FR-012), `--shared-baseline` to the orchestrator (FR-013), TTFT-as-primary in the streaming verdict path (FR-014). Re-runs the four-axis channel sweep under the new methodology and publishes a definitive time-axis report that supersedes Phase A's interim conclusions where they were `noise_bounded`. Also runs the deferred US2 schema-level candidates against the new frozen-channel baseline. Optionally adds a cross-host transport mode for keepalive / `http2_framing` axes that don't manifest savings on loopback.
+
+**Why split this way**: Phase A is bounded (~1 day, code-only, no new measurement) and lands cheap defensible value on the M3 milestone before it closes. M4 is a real harness redesign that warrants its own `/speckit-specify` → `/speckit-plan` → `/speckit-tasks` lifecycle, has its own constitution-check pass (no-pacing mode is a behavior change to a fixture some future test might depend on), and will generate enough new data that combining with Phase A would muddle the milestone story.
+
 ## Summary of unresolved items
 
-None. All Technical Context fields in plan.md are concrete and all `/speckit-clarify`-deferred items are addressed above. Phase 1 (data-model.md, contracts/, quickstart.md) can proceed.
+None blocking M3. Phase A (US3) tasks are enumerated in `tasks.md` Phase 6 (T040..T046). M4 remains to be specified via `/speckit-specify` once M3 closes.
