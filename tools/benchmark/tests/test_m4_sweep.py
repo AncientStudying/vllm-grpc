@@ -216,3 +216,76 @@ class TestBorderlineExpand:
         assert expanded.expansion_record.expanded is True
         assert expanded.expansion_record.final_n == 250
         assert expanded.expansion_record.expansion_reason == "ci_overlap"
+
+
+class TestEndpointProviderDefaultPreservesM4:
+    """T010 — bit-identical-M4-reproduction guard for the endpoint_provider refactor.
+
+    Calling ``run_m4_sweep(config)`` without an explicit ``endpoint_provider``
+    must produce a Run with the same *deterministic* structural fingerprint
+    (cohort cell-id set, recommendation count, shared-baseline mapping,
+    M5-field defaults) as passing ``serve_in_process_adapter`` explicitly.
+
+    Per-cohort sample counts deliberately are not part of the fingerprint:
+    the borderline-expand cascade (R-4) is timing-dependent, so a candidate
+    whose initial CI happens to overlap the baseline gets re-measured at
+    ``expand_n``, and that overlap is a property of the measurement noise on
+    the host rather than of the endpoint provider.
+    """
+
+    @pytest.mark.asyncio
+    async def test_default_run_m4_sweep_matches_explicit_adapter_fingerprint(self) -> None:
+        from vllm_grpc_bench.m3_sweep import serve_in_process_adapter
+        from vllm_grpc_bench.m3_types import M4SweepConfig
+        from vllm_grpc_bench.m4_sweep import run_m4_sweep
+
+        config = M4SweepConfig(
+            axes=("max_message_size",),
+            widths=(4096,),
+            paths=("embed",),
+            schema_canonical_width=4096,
+            skip_schema=True,
+            baseline_n=100,
+            candidate_n=100,
+            expand_n=250,
+            warmup_n=0,
+            seed=0,
+        )
+        run_default = await run_m4_sweep(config, progress=False, is_loopback=True)
+        run_explicit = await run_m4_sweep(
+            config,
+            progress=False,
+            is_loopback=True,
+            endpoint_provider=serve_in_process_adapter,
+        )
+
+        # Same cohort set (cell_id is deterministic from config + channel preset).
+        assert {c.cell.cell_id for c in run_default.cohorts} == {
+            c.cell.cell_id for c in run_explicit.cohorts
+        }
+        # Same recommendation count (one per axis × path × width).
+        assert len(run_default.recommendations) == len(run_explicit.recommendations)
+        # Same axes/widths/paths recommendation coverage (deterministic from config).
+        default_rec_keys = {
+            (r.axis, r.applies_to_path, tuple(sorted(r.applies_to_widths)))
+            for r in run_default.recommendations
+        }
+        explicit_rec_keys = {
+            (r.axis, r.applies_to_path, tuple(sorted(r.applies_to_widths)))
+            for r in run_explicit.recommendations
+        }
+        assert default_rec_keys == explicit_rec_keys
+        # Same shared-baseline mapping.
+        assert run_default.shared_baseline_cohort_ids == run_explicit.shared_baseline_cohort_ids
+        # M5 fields default to absent / False on M4-default runs (FR-014 strict
+        # superset; non-M5 cohorts must remain zero-valued so M4 readers keep
+        # working without code changes).
+        for cohort in (*run_default.cohorts, *run_explicit.cohorts):
+            assert cohort.rtt_record is None
+            assert cohort.server_bound is False
+            assert cohort.low_rtt_caveat is False
+            assert cohort.discarded is False
+            assert cohort.server_overhead_estimate_ms is None
+        assert run_default.m5_metadata is None
+        assert run_default.m5_cross_host_baselines == {}
+        assert run_default.supersedes_m4 == []
