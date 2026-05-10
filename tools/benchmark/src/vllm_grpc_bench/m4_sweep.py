@@ -6,13 +6,11 @@ is invoked from ``__main__.py`` via ``--m4``.
 
 Public surface used by callers and tests:
 
-- :class:`BaselineCVError` — raised when a shared-baseline cohort fails
-  ``check_baseline_cv`` (FR-005 / R-11). Mapped to exit code 3 by ``__main__``.
 - :func:`collect_shared_baseline_cohort_ids` — invariant #2 helper.
 - :func:`detect_ci_overlap` — borderline-expand trigger (FR-002 / R-4).
 - :func:`expand_cohort` — replace-not-append re-measurement (R-4).
 - :func:`is_client_bound` — FR-004 / R-5 jitter-floor classifier.
-- :func:`check_baseline_cv` — FR-005 / R-11 acceptance check.
+- :func:`flag_noisy_baseline` — FR-005 / R-11 record-and-flag (never aborts).
 - :func:`build_recommendations` — TTFT-first-class verdicts (FR-003 / R-10).
 - :func:`validate_run` — the seven invariants from ``data-model.md``.
 - :func:`run_m4_sweep` — top-level entry point.
@@ -21,6 +19,7 @@ Public surface used by callers and tests:
 from __future__ import annotations
 
 import statistics
+import sys
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
 from typing import Any
@@ -54,19 +53,6 @@ from vllm_grpc_bench.m3_types import (
 )
 from vllm_grpc_bench.mock_engine import MockEngine, MockEngineConfig
 from vllm_grpc_bench.ttft import ttft_estimate
-
-
-class BaselineCVError(RuntimeError):
-    """Raised when a shared-baseline cohort exceeds ``baseline_cv_max`` (FR-005)."""
-
-    def __init__(self, cohort_id: str, observed_cv: float, threshold: float) -> None:
-        super().__init__(
-            f"shared baseline cohort {cohort_id!r} CV={observed_cv:.4f} "
-            f"exceeds --baseline-cv-max={threshold:.4f}"
-        )
-        self.cohort_id = cohort_id
-        self.observed_cv = observed_cv
-        self.threshold = threshold
 
 
 # ---------------------------------------------------------------------------
@@ -149,17 +135,55 @@ def is_client_bound(baseline: RunCohort, candidate: RunCohort) -> bool:
     return abs(delta) < base_stdev
 
 
-def check_baseline_cv(cohort: RunCohort, *, max_cv: float) -> None:
-    """FR-005 / R-11: ``stddev/mean`` on the time metric must be ≤ ``max_cv``."""
-    values = [s.wall_clock_seconds for s in cohort.samples if s.error is None]
-    if len(values) < 2:
-        return
-    mean = statistics.fmean(values)
-    if mean <= 0:
-        return
-    cv = statistics.stdev(values) / mean
-    if cv > max_cv:
-        raise BaselineCVError(cohort.cell.cell_id, cv, max_cv)
+def verdict_metric_cv(cohort: RunCohort) -> tuple[str, float | None]:
+    """Return ``(metric_name, cv)`` for the cohort's verdict metric.
+
+    The verdict metric is path-specific (FR-003): chat_stream cohorts are
+    judged on TTFT, embed cohorts on total per-RPC wall-clock. The CV value
+    reuses the per-cohort fields populated by ``_aggregate`` (``time_cv``)
+    and ``_attach_ttft`` (``ttft_cv``); ``None`` means there were too few
+    samples to compute it.
+    """
+    if cohort.cell.path == "chat_stream":
+        return "ttft", cohort.ttft_cv
+    return "time", cohort.time_cv
+
+
+def flag_noisy_baseline(
+    cohort: RunCohort, *, baseline_cv_warn: float
+) -> RunCohort:
+    """FR-005 / R-11: tag a baseline cohort whose verdict-metric CV exceeds
+    ``baseline_cv_warn``. Never raises — the run always continues; the flag is
+    a reader-facing signal in the published report.
+    """
+    _metric, cv = verdict_metric_cv(cohort)
+    if cv is None:
+        return cohort
+    if cv > baseline_cv_warn:
+        return replace(cohort, noisy_baseline=True)
+    return cohort
+
+
+def emit_noisy_baseline_warning(
+    cohorts: Iterable[RunCohort], *, baseline_cv_warn: float
+) -> list[str]:
+    """Print a closing stderr warning for any baseline cohort whose verdict-metric
+    CV exceeded ``baseline_cv_warn``. Returns the list of warned cohort ids so
+    callers can include them in summaries / tests.
+    """
+    warned: list[str] = []
+    for c in cohorts:
+        if not c.is_baseline or not c.noisy_baseline:
+            continue
+        metric, cv = verdict_metric_cv(c)
+        warned.append(c.cell.cell_id)
+        print(
+            f"WARNING: baseline cohort {c.cell.cell_id!r} CV({metric})="
+            f"{cv:.4f} exceeds --baseline-cv-warn={baseline_cv_warn:.4f}; "
+            "verdicts derived from this baseline carry extra uncertainty (FR-005).",
+            file=sys.stderr,
+        )
+    return warned
 
 
 def _metric_ci(cohort: RunCohort, metric: str) -> tuple[float, float] | None:
@@ -444,8 +468,8 @@ async def _measure_cell(
     cold-start cost (channel establishment, first-RPC HTTP/2 negotiation,
     protobuf descriptor caches, asyncio event-loop priming) is paid before
     the first measured sample. Without this, the first ~5–10 RPCs against
-    a fresh process can dominate within-cohort variance and trip the
-    FR-005 baseline-CV cap on commodity hosts.
+    a fresh process can dominate within-cohort variance and inflate the
+    per-cohort CV that FR-005 records and surfaces to the report reader.
 
     The returned cohort has exactly ``cell.iterations`` samples; the
     discarded warmup samples are not visible to ``_aggregate`` and never
@@ -475,13 +499,22 @@ async def _measure_cell(
 
 
 def _attach_ttft(cohort: RunCohort) -> RunCohort:
-    if cohort.cell.path != "chat_stream" or not cohort.measurable:
+    if cohort.cell.path != "chat_stream":
         return cohort
+    from vllm_grpc_bench.m3_sweep import _coefficient_of_variation
+    from vllm_grpc_bench.ttft import ttft_samples
+
+    ttfts = ttft_samples(cohort)
+    ttft_cv = _coefficient_of_variation(ttfts)
+    if not cohort.measurable:
+        return replace(cohort, ttft_cv=ttft_cv)
     est = ttft_estimate(cohort)
     if est is None:
-        return cohort
+        return replace(cohort, ttft_cv=ttft_cv)
     mean, low, high, _n = est
-    return replace(cohort, time_to_first_token_seconds=(mean, low, high))
+    return replace(
+        cohort, time_to_first_token_seconds=(mean, low, high), ttft_cv=ttft_cv
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -620,12 +653,18 @@ async def run_m4_sweep(
             seed=config.seed,
             config=config,
         )
-        check_baseline_cv(baseline, max_cv=config.baseline_cv_max)
+        baseline = flag_noisy_baseline(
+            baseline, baseline_cv_warn=config.baseline_cv_warn
+        )
         cohorts.append(baseline)
         shared_baselines[path] = baseline
         if progress:
+            metric, cv = verdict_metric_cv(baseline)
+            cv_str = f"{cv:.4f}" if cv is not None else "n/a"
+            noise_tag = " noisy_baseline=True" if baseline.noisy_baseline else ""
             print(
-                f"[baseline] path={path} cohort={baseline.cell.cell_id} n={baseline.n_successful}",
+                f"[baseline] path={path} cohort={baseline.cell.cell_id} "
+                f"n={baseline.n_successful} CV({metric})={cv_str}{noise_tag}",
                 flush=True,
             )
 
@@ -697,7 +736,57 @@ async def run_m4_sweep(
         schema_candidate_results=schema_results,
     )
     run.recommendations.extend(build_recommendations(cohorts, shared_baselines=shared_baselines))
+    run.supersedes.extend(_build_supersedes_for_run(run))
+    emit_noisy_baseline_warning(cohorts, baseline_cv_warn=config.baseline_cv_warn)
     return run
+
+
+# Default location of M3's published time report. Used by the supersession
+# step so an M4 sweep automatically populates the FR-007 "Supersedes M3" table
+# without requiring a CLI flag.
+M3_TIME_REPORT_PATH = "docs/benchmarks/m3-channel-tuning-time.json"
+
+
+def _build_supersedes_for_run(run: Run) -> list[Any]:
+    """Build SupersessionEntry list for ``run`` against the M3 time report.
+
+    Builds M4 cell descriptors from each candidate cohort (skipping baselines)
+    paired with its recommendation verdict, then delegates to
+    :func:`vllm_grpc_bench.m4_supersede.build_supersession_entries`. Returns an
+    empty list when the M3 report is absent (fresh runs before M3 is committed).
+    """
+    from vllm_grpc_bench.m4_supersede import build_supersession_entries
+
+    # Verdict lookup: (axis, path, hidden_size) -> verdict literal.
+    # build_recommendations emits one Recommendation per (axis, path, width),
+    # so this key is unique within a run.
+    verdict_by_apw: dict[tuple[str, str, int], str] = {}
+    for rec in run.recommendations:
+        for w in rec.applies_to_widths:
+            verdict_by_apw[(rec.axis, rec.applies_to_path, int(w))] = rec.verdict
+
+    m4_cells: list[dict[str, Any]] = []
+    for c in run.cohorts:
+        if c.is_baseline:
+            continue
+        axis = c.cell.channel_config.axis
+        path = c.cell.path
+        width = c.cell.hidden_size
+        verdict = verdict_by_apw.get((axis, path, width), "no_winner")
+        m4_cells.append(
+            {
+                "cell_id": c.cell.cell_id,
+                "path": path,
+                "hidden_size": width,
+                "config_axis": axis,
+                "config_name": c.cell.channel_config.name,
+                "verdict": verdict,
+            }
+        )
+
+    return build_supersession_entries(
+        M3_TIME_REPORT_PATH, m4_cells, m4_pacing_mode=run.pacing_mode or "no_pacing"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -768,6 +857,7 @@ async def compose_frozen_baselines(
             baseline_role="frozen_channel",
             expansion_record=None,
         )
+        cohort = flag_noisy_baseline(cohort, baseline_cv_warn=config.baseline_cv_warn)
         frozen_cohorts.append(cohort)
         frozen_baselines[path] = FrozenChannelBaseline(
             path=path,

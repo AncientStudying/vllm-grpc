@@ -7,7 +7,7 @@ This is the minimal recipe a contributor follows to reproduce the M4 measurement
 - macOS Apple Silicon (M2/M3) or Linux x86-64.
 - Python 3.12 (managed by `uv`).
 - `make` and `protoc` available on `PATH` (the project's `make proto` target shells out to `protoc`).
-- `~4 hours` of mostly-idle CPU on the host. Background load drives baseline CV (FR-005) and can fail the run with exit code 3 if it exceeds 5%.
+- `~4 hours` of mostly-idle CPU on the host. Background load drives within-cohort CV — the run still completes, but cohorts above `--baseline-cv-warn` (default 5%) carry a `noisy_baseline: true` flag in the published JSON for the reader's adjudication (FR-005).
 - (Optional) the cross-repo graph at `cross-repo.json`, refreshed via `/ground-truth-refresh` if the lockfile pins have changed since the last refresh. Citations in the published report require the cloned vLLM and grpcio sources to be available.
 
 ## One-time setup (or after a candidate proto change)
@@ -24,7 +24,7 @@ uv run python -c "from packages.gen.vllm_grpc_m4_candidates import packed_token_
 
 ```bash
 # Full sweep — US1 mechanics + US2 channel sweep + US3 schema candidates.
-# Default flags: --no-pacing --shared-baseline --baseline-n=100 --candidate-n=100 --expand-n=250 --baseline-cv-max=0.05
+# Default flags: --no-pacing --shared-baseline --baseline-n=100 --candidate-n=100 --expand-n=250 --baseline-cv-warn=0.05
 uv run python -m vllm_grpc_bench --m4
 ```
 
@@ -78,9 +78,10 @@ jq '.cohorts[] | select(.client_bound == true) | .cell_id' \
 | Exit | What happened | What to do |
 |------|---------------|-----------|
 | `2` | CLI flag conflict or arithmetic violation. | Read the stderr message; fix flags. |
-| `3` | A shared M1_BASELINE cohort exceeded `--baseline-cv-max` (default 5%). | The host had too much background load. Quit other processes, re-run. If a quiet host still fails, loosen with `--baseline-cv-max=0.07` (with the verdict-quality caveat in the contract). |
 | `4` | Internal validation failure (e.g., harness tried to emit `noise_bounded`). | Bug in M4 code. File against `tools/benchmark/`. |
 | `5` | A schema-candidate proto failed compilation. | Run `make proto` standalone to surface the protoc error; fix the offending `.proto` file under `proto/vllm_grpc/v1/m4-candidates/`. |
+
+The run does **not** abort on noisy baselines (FR-005). Instead, every cohort's per-cohort CV is recorded on its JSON entry, and a closing warning names any baseline cohort whose CV exceeded `--baseline-cv-warn` (default 5%). Re-run only the affected cohorts in a follow-up if the noise was situational.
 
 ## Cross-host considerations
 

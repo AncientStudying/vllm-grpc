@@ -195,10 +195,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "M4: discard this many leading RPCs per cohort to absorb cold-start "
             "cost (channel setup, first-RPC HTTP/2 negotiation, descriptor caches). "
-            "Crucial for hitting the FR-005 baseline-CV cap on commodity hosts."
+            "Larger values keep per-cohort CV (FR-005) lower on noisy hosts."
         ),
     )
-    parser.add_argument("--baseline-cv-max", type=float, default=0.05)
+    parser.add_argument(
+        "--baseline-cv-warn",
+        type=float,
+        default=0.05,
+        help=(
+            "M4: within-cohort CV warn threshold for baseline cohorts (FR-005 / R-11). "
+            "The run never aborts on CV; cohorts above this threshold are flagged "
+            "`noisy_baseline=true` in the published JSON and named in a closing "
+            "stderr warning so the report reader can adjudicate trust."
+        ),
+    )
     parser.add_argument(
         "--widths",
         default="2048,4096,8192",
@@ -645,7 +655,7 @@ def _build_m4_config(args: argparse.Namespace) -> M4SweepConfig:
         candidate_n=int(args.candidate_n),
         expand_n=int(args.expand_n),
         warmup_n=int(args.warmup_n),
-        baseline_cv_max=float(args.baseline_cv_max),
+        baseline_cv_warn=float(args.baseline_cv_warn),
         widths=widths,
         paths=paths,  # type: ignore[arg-type]
         axes=axes,
@@ -682,11 +692,7 @@ def _run_m4(args: argparse.Namespace) -> int:
         print(f"Error: invalid M4 sweep configuration: {exc}", file=sys.stderr)
         return 2
 
-    try:
-        run = asyncio.run(m4_sweep.run_m4_sweep(config, progress=True))
-    except m4_sweep.BaselineCVError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 3
+    run = asyncio.run(m4_sweep.run_m4_sweep(config, progress=True))
     try:
         m4_sweep.validate_run(run)
     except ValueError as exc:

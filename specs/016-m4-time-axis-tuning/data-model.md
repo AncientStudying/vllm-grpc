@@ -164,7 +164,7 @@ class M4SweepConfig:
     baseline_n: int = 100
     candidate_n: int = 100
     expand_n: int = 250
-    baseline_cv_max: float = 0.05      # FR-005 / R-11 default
+    baseline_cv_warn: float = 0.05     # FR-005 / R-11: warn-only threshold; never aborts
     widths: tuple[int, ...] = (2048, 4096, 8192)
     paths: tuple[Literal["embed", "chat_stream"], ...] = ("embed", "chat_stream")
     axes: tuple[str, ...] = ("max_message_size", "keepalive", "compression", "http2_framing")

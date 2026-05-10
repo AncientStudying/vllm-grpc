@@ -445,6 +445,12 @@ def _cohort_to_m4_dict(c: RunCohort) -> dict[str, object]:
         "time_to_first_token_seconds": (
             {"mean": ttft[0], "ci_low": ttft[1], "ci_high": ttft[2]} if ttft is not None else None
         ),
+        # FR-005 / R-11: within-cohort CV on the verdict metric, surfaced for
+        # reader adjudication. `noisy_baseline` is set on baseline cohorts whose
+        # verdict-metric CV exceeded the run's `baseline_cv_warn` threshold.
+        "time_cv": c.time_cv,
+        "ttft_cv": c.ttft_cv,
+        "noisy_baseline": c.noisy_baseline,
     }
 
 
@@ -568,6 +574,29 @@ def write_m4_markdown(run: Run, path: Path) -> Path:
             f"| {r.axis} | {r.applies_to_path} | {widths} | {r.verdict} "
             f"| {winning} | {delta} | {r.citation} |"
         )
+
+    baseline_cohorts = [c for c in run.cohorts if c.is_baseline]
+    if baseline_cohorts:
+        lines += [
+            "",
+            "## Baseline within-cohort CV (FR-005)",
+            "",
+            "Per-cohort coefficient of variation (stddev/mean) on the verdict metric. "
+            "The harness records this for every baseline cohort; cohorts marked "
+            "`noisy` exceeded the run's `--baseline-cv-warn` threshold and verdicts "
+            "derived from them carry extra uncertainty (see research.md R-11).",
+            "",
+            "| baseline cohort | role | metric | CV | noisy? |",
+            "|-----------------|------|--------|----|--------|",
+        ]
+        for c in baseline_cohorts:
+            metric = "ttft" if c.cell.path == "chat_stream" else "time"
+            cv = c.ttft_cv if metric == "ttft" else c.time_cv
+            cv_str = f"{cv:.4f}" if cv is not None else "n/a"
+            noisy = "yes" if c.noisy_baseline else "no"
+            lines.append(
+                f"| `{c.cell.cell_id}` | {c.baseline_role} | {metric} | {cv_str} | {noisy} |"
+            )
 
     if run.frozen_channel_baselines:
         lines += ["", "## Per-path frozen-channel baselines", ""]

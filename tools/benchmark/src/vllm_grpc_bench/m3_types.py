@@ -112,6 +112,16 @@ class RunCohort:
     # cohorts; populated for chat_stream cohorts when the M4 sweep aggregates
     # per-sample TTFTs (FR-003 promotion). M3 cohorts leave this unset.
     time_to_first_token_seconds: tuple[float, float, float] | None = None
+    # Within-cohort coefficient of variation on the verdict metric (FR-005).
+    # `time_cv` is stddev/mean over per-sample wall_clock_seconds (always set when
+    # the cohort has ≥2 successful samples). `ttft_cv` is the same over per-sample
+    # TTFTs and is populated only for chat_stream cohorts that have ≥2 TTFT-bearing
+    # samples. `noisy_baseline` is set by the M4 orchestrator on baseline cohorts
+    # whose verdict-metric CV exceeded `M4SweepConfig.baseline_cv_warn`; it is a
+    # reader-facing flag, not a gate (the run never aborts on CV).
+    time_cv: float | None = None
+    ttft_cv: float | None = None
+    noisy_baseline: bool = False
 
 
 @dataclass(frozen=True)
@@ -283,7 +293,11 @@ class M4SweepConfig:
     baseline_n: int = 100
     candidate_n: int = 100
     expand_n: int = 250
-    baseline_cv_max: float = 0.05
+    # FR-005 / R-11: warn-only threshold. Baseline cohorts whose verdict-metric
+    # CV exceeds this value get `noisy_baseline=True` and a closing stderr
+    # warning; the run never aborts on CV. The default tracks M3's calibrated
+    # cross-batch drift floor.
+    baseline_cv_warn: float = 0.05
     widths: tuple[int, ...] = (2048, 4096, 8192)
     paths: tuple[Path_, ...] = ("embed", "chat_stream")
     axes: tuple[str, ...] = (
@@ -304,8 +318,9 @@ class M4SweepConfig:
     # Discard this many leading RPCs from every cohort before aggregation.
     # Reuses the same server + channel as the measurement, so cold-start
     # cost (channel establishment, first-RPC HTTP/2 negotiation, protobuf
-    # descriptor caches) is paid before sampling begins. Crucial for
-    # hitting the FR-005 baseline-CV cap on commodity hosts.
+    # descriptor caches) is paid before sampling begins. Larger values keep
+    # within-cohort CV (FR-005) lower on commodity hosts; the cost is small
+    # since warmup RPCs share the same server bring-up.
     warmup_n: int = 10
 
     def __post_init__(self) -> None:
@@ -320,8 +335,8 @@ class M4SweepConfig:
                 "M4SweepConfig.expand_n must be > candidate_n "
                 f"(got {self.expand_n} <= {self.candidate_n})"
             )
-        if self.baseline_cv_max <= 0:
-            raise ValueError("M4SweepConfig.baseline_cv_max must be > 0")
+        if self.baseline_cv_warn <= 0:
+            raise ValueError("M4SweepConfig.baseline_cv_warn must be > 0")
         if not self.widths:
             raise ValueError("M4SweepConfig.widths must be non-empty")
         if not self.paths:

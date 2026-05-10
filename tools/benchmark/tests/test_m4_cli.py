@@ -27,7 +27,7 @@ class TestArgParser:
         assert args.baseline_n == 100
         assert args.candidate_n == 100
         assert args.expand_n == 250
-        assert args.baseline_cv_max == 0.05
+        assert args.baseline_cv_warn == 0.05
         assert args.widths == "2048,4096,8192"
         assert args.paths == "embed,chat_stream"
         assert args.axes == "max_message_size,keepalive,compression,http2_framing"

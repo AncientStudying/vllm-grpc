@@ -27,22 +27,26 @@ def _normalize_axis(value: Any) -> str | None:
 def build_supersession_entries(
     m3_time_json_path: str | Path,
     m4_cells: Iterable[dict[str, Any]],
+    *,
+    m4_pacing_mode: str = "no_pacing",
 ) -> list[SupersessionEntry]:
     """Produce supersession entries for M3 ``noise_bounded`` recommendations.
 
     ``m4_cells`` is an iterable of dicts at minimum carrying
     ``cell_id``, ``path``, ``hidden_size``, ``config_axis``,
-    ``config_name``, and ``verdict``. The function returns one entry per
-    matched pair; M3 noise_bounded recommendations with no M4 match are
-    skipped (the harness should never emit such — the sweep covers every
-    M3 cell — but skipping prevents the supersession table from being
-    spuriously incomplete during partial M4 runs).
+    ``config_name``, and ``verdict``. ``m4_pacing_mode`` describes the M4 run
+    that produced the cells (used in the rationale string). The function
+    returns one entry per matched pair; M3 noise_bounded recommendations with
+    no M4 match are skipped (the harness should never emit such — the sweep
+    covers every M3 cell — but skipping prevents the supersession table from
+    being spuriously incomplete during partial M4 runs).
     """
     m3_path = Path(m3_time_json_path)
     if not m3_path.exists():
         return []
     payload = json.loads(m3_path.read_text())
     recs = payload.get("recommendations", []) or []
+    pacing_phrase = "no-pacing" if m4_pacing_mode == "no_pacing" else "paced"
 
     m4_index: dict[tuple[str, int, str, str], dict[str, Any]] = {}
     for cell in m4_cells:
@@ -87,8 +91,7 @@ def build_supersession_entries(
                 continue
             m3_cell_id = f"{path}|h{width}|{axis or 'unknown'}|{winning_config}"
             rationale = (
-                f"M4 re-measurement under shared baseline + "
-                f"{'no-pacing' if 'pacing_mode' in payload else 'paced'} "
+                f"M4 re-measurement under shared baseline + {pacing_phrase} "
                 f"produced {m4_verdict} for ({path}, h{width}, {axis})."
             )
             entries.append(

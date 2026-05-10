@@ -168,7 +168,7 @@ class TestM4SweepConfig:
         assert cfg.baseline_n == 100
         assert cfg.candidate_n == 100
         assert cfg.expand_n == 250
-        assert cfg.baseline_cv_max == 0.05
+        assert cfg.baseline_cv_warn == 0.05
         assert cfg.loopback_caveat_axes == frozenset({"keepalive", "http2_framing"})
 
     def test_baseline_n_floor(self) -> None:
