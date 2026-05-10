@@ -78,6 +78,37 @@ class FrozenChannelBaseline:
 
 The cohort itself lives in `Run.cohorts[]`; this record is the metadata that links axis-winner provenance to the cohort.
 
+## New: `SchemaCandidatePerWidth` and `SchemaCandidateResult`
+
+```python
+# m3_types.py
+@dataclass(frozen=True)
+class SchemaCandidatePerWidth:
+    """Per-width verdict for a single schema candidate (R-8 / contracts/m4-report-schema.md)."""
+    hidden_size: int                                 # 2048 | 4096 | 8192
+    frozen_baseline_cohort_id: str                   # points into Run.cohorts[] (the per-path frozen baseline)
+    candidate_cohort_id: str                         # points into Run.cohorts[] (the schema candidate cohort)
+    bytes_verdict: Verdict                           # "recommend" | "no_winner" | "not_measurable" | "client_bound"
+    time_verdict: Verdict
+    primary_metric: Literal["bytes", "time"]         # which metric drove the verdict (per FR-013)
+    delta_bytes_pct: float | None                    # percent change vs. frozen baseline; None if metric unavailable
+    delta_time_pct: float | None
+    ci_overlap_initial: bool                         # initial-n=100 CI overlapped baseline CI (triggered borderline-expand)
+    expanded: bool                                   # candidate was re-measured at n>=250 per FR-002
+
+@dataclass(frozen=True)
+class SchemaCandidateResult:
+    """Top-level schema-candidate verdict aggregating per-width measurements (FR-012, FR-013, FR-014)."""
+    candidate_name: str                              # one of M4SweepConfig.schema_candidates
+    proto_file: str                                  # repository-relative path to the candidate .proto
+    measured_widths: list[int]                       # always includes 4096; includes 2048/8192 only if cascade fired
+    per_width: list[SchemaCandidatePerWidth]
+    is_negative_result: bool                         # True iff bytes_verdict and time_verdict are both "no_winner" at every measured width (FR-014)
+    notes: str | None                                # human-readable supplemental context
+```
+
+The `SchemaCandidateResult` records are aggregated views over schema-candidate cohorts in `Run.cohorts[]` (cohorts whose `config_axis` starts with `"schema:"`); the candidate cohorts themselves remain in `Run.cohorts[]` so the M3-shape JSON reader sees them. The `SchemaCandidateResult` aggregation is the M4-only synthesized view that `contracts/m4-report-schema.md`'s top-level `schema_candidate_results` field serializes.
+
 ## New: `SupersessionEntry`
 
 ```python
@@ -164,6 +195,7 @@ class Run:
     supersedes: list[SupersessionEntry] = field(default_factory=list)
     candidate_sizing_policy: dict | None = None  # {"default_n": 100, "expand_n": 250, "expand_rule": "ci_overlap"}
     loopback_caveat_axes: list[str] | None = None
+    schema_candidate_results: list[SchemaCandidateResult] = field(default_factory=list)  # synthesized aggregation over Run.cohorts[] schema-axis entries
 ```
 
 M3 readers see only the M3-shape fields and ignore the M4 additions (per /speckit-clarify Q1: strict superset).
@@ -179,5 +211,6 @@ The `Run` instance for M4 must satisfy:
 5. **TTFT presence on chat_stream**: every chat_stream cohort with `measurable=True` has a non-null `time_to_first_token_seconds`. (FR-003)
 6. **Loopback caveat consistency**: `loopback_caveat_axes` is a subset of `axes`, and for M4 single-host runs equals `{keepalive, http2_framing}` ∩ `axes`. (FR-010 / R-6)
 7. **Supersession completeness**: `supersedes` contains at least one entry per M3 `noise_bounded` cell present in the M3 time report at the matching `(path, hidden_size, axis)`. (FR-007 / FR-009)
+8. **Schema-candidate result well-formedness**: every `schema_candidate_results[i].candidate_name` is in `M4SweepConfig.schema_candidates`; every `per_width[i].frozen_baseline_cohort_id` and `per_width[i].candidate_cohort_id` resolves to a cohort in `Run.cohorts[]`; `is_negative_result` is `True` iff every `per_width[i]` has both `bytes_verdict == "no_winner"` and `time_verdict == "no_winner"` (FR-012 / FR-013 / FR-014).
 
 These are checked by `m4_sweep.validate_run(run)` before the JSON is written.
