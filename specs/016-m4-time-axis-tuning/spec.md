@@ -5,6 +5,14 @@
 **Status**: Draft
 **Input**: User description: "M4 — Time-Axis Channel & Schema Tuning from PLAN.md"
 
+## Clarifications
+
+### Session 2026-05-10
+
+- Q: How does the M4 JSON report relate to M3's existing `m3-channel-tuning-time.json` schema? → A: Strict superset — additive only (new fields permitted; no renames or removals). M3 readers continue to work unchanged on M4 files.
+- Q: How is the "frozen-channel baseline" for US3 (schema candidates) constructed? → A: Per-path frozen baseline — one cohort per path (chat_stream, embed), each combining its path's per-axis winners from US2 at the canonical width; each schema candidate pairs with the cohort matching its path.
+- Q: What sample size do candidate cohorts use (channel sweep and schema candidates)? → A: Default n ≥ 100 (matching the baseline and M3 convention), with a borderline-expand rule: any candidate cohort whose 95% CI touches the comparison baseline's 95% CI is re-measured at n ≥ 250 before the verdict is finalized. The borderline-expand step is recorded in the run output.
+
 ## User Scenarios & Testing *(mandatory)*
 
 M4 is the milestone that re-frames M3's measurements around wall-clock time as a first-class success metric (TTFT for streaming, total per-RPC wall-clock for embed) and runs the protobuf message-shape candidates that were deferred from M3. The audience is the project's maintainers and reviewers — researchers comparing channel-level and schema-level tuning options before committing them to the production proto and channel configuration.
@@ -78,7 +86,7 @@ A maintainer needs the protobuf message-shape candidates that were deferred from
 #### Harness redesign (Phase B prerequisite)
 
 - **FR-001**: The mock engine MUST support a no-pacing mode that emits tokens with zero artificial inter-token delay so that chat_stream total per-RPC wall-clock is dominated by transport and serialization rather than mock pacing. The default paced mode MUST remain available so prior reproducibility is not broken.
-- **FR-002**: The orchestrator MUST support a shared-baseline mode that measures one M1_BASELINE cohort (n ≥ 100 samples per measured path) at the start of a run and reuses it as the time-metric and bytes-metric reference for every axis × width × path cell in the same run. The cohort metadata (cohort id, sample count, timestamp, channel and serializer config) MUST be recorded in the run output so the published report can cite it once.
+- **FR-002**: The orchestrator MUST support a shared-baseline mode that measures one M1_BASELINE cohort (n ≥ 100 samples per measured path) at the start of a run and reuses it as the time-metric and bytes-metric reference for every axis × width × path cell in the same run. The cohort metadata (cohort id, sample count, timestamp, channel and serializer config) MUST be recorded in the run output so the published report can cite it once. **Candidate cohorts** (channel-axis cells per FR-006, per-path frozen baselines per FR-011, and schema candidates per FR-013) MUST default to n ≥ 100 samples and MUST be re-measured at n ≥ 250 ("borderline-expand") whenever the initial 95% CI touches the comparison baseline's 95% CI; the per-cell decision to expand and the resulting cohort size MUST be recorded in the run output so the report shows which cells were expanded and which were not.
 - **FR-003**: The recommendation builder MUST treat TTFT (per-sample time-to-first-token) as a first-class output for chat_stream cells. Total streaming wall-clock MUST be reported as a secondary diagnostic. The published verdict MUST name which metric drove it.
 - **FR-004**: The harness MUST refuse to issue a transport-axis time verdict for a cohort whose dominant per-RPC cost is client-side (e.g., orchestrator overhead exceeds the measured transport delta). Such cohorts MUST be recorded with a `client_bound` notation and excluded from `recommend` tallies.
 - **FR-005**: The harness MUST detect baseline-cohort variance that exceeds a configurable acceptance threshold and fail the run (rather than emit verdicts against a poisoned baseline). The threshold MUST default to a value calibrated against M3's observed cross-batch drift (≤ 5% standard deviation across the baseline cohort, sized to bound expected channel-tuning effect sizes).
@@ -93,14 +101,14 @@ A maintainer needs the protobuf message-shape candidates that were deferred from
 
 #### Schema-level (protobuf) candidates
 
-- **FR-011**: The schema-candidate sweep MUST be evaluated against the frozen-channel baseline derived from FR-006/FR-007 (i.e., the channel configuration that wins on time at the canonical width), not against M3's bytes-only baseline.
+- **FR-011**: The schema-candidate sweep MUST be evaluated against a **per-path frozen-channel baseline**: for each measured path (chat_stream, embed), the harness MUST construct one cohort whose channel configuration combines that path's per-axis winners from FR-006/FR-007 at the canonical width (hidden_size 4096), measure it at n ≥ 100, and use it as the comparison reference for every schema candidate that targets that path. Each schema candidate MUST pair with the cohort matching its path (e.g., packed scalars on chat completion's token-id field → chat_stream baseline; oneof flattening on the input union → both paths if applicable). Where a path's per-axis winners are all `no_winner` (i.e., M3-default channel config), the per-path frozen baseline is the M3-default channel config measured under the redesigned harness — it MUST still be measured as its own cohort rather than reused from the shared M1_BASELINE cohort, so the comparison is against a single coherent measured configuration. The frozen baselines MUST NOT be M3's bytes-only baseline.
 - **FR-012**: At minimum, the schema sweep MUST measure: (a) packed scalars on the chat completion's token-id field, (b) `oneof` flattening on the input union, and (c) alternative streaming chunk granularity per `specs/015-m3-protobuf-grpc-tuning/research.md` R-9.
 - **FR-013**: Each schema candidate MUST be evaluated on BOTH the bytes metric and the time metric using the same 95% CI rule as FR-008. Candidates MUST be measured at hidden_size 4096 (canonical mid-width) at minimum; candidates whose 4096 verdict is `recommend` or borderline (CIs within one CI-width of the baseline) MUST also be measured at hidden_size 2048 and 8192 to verify the effect generalizes.
 - **FR-014**: Candidates whose 95% CIs overlap the baseline's CI on both metrics MUST be recorded as negative results with supporting numbers and named in a "Negative results — do not re-run speculatively" appendix (Constitution V).
 
 #### Reporting and supersession
 
-- **FR-015**: The M4 report MUST be published at `docs/benchmarks/m4-time-axis-tuning.{md,json}` as a sibling to M3's bytes report. The report MUST follow the M2 ground-truth workflow's citation conventions, citing the cloned vLLM and grpcio sources behind any time-affecting recommendation.
+- **FR-015**: The M4 report MUST be published at `docs/benchmarks/m4-time-axis-tuning.{md,json}` as a sibling to M3's bytes report. The JSON file's schema MUST be a **strict superset of M3's `m3-channel-tuning-time.json` schema** — only additive changes are allowed (new fields permitted; no renames, no removals, no semantic redefinition of existing fields), so any tooling that reads M3's time-report continues to work without modification on M4's file. The report MUST follow the M2 ground-truth workflow's citation conventions, citing the cloned vLLM and grpcio sources behind any time-affecting recommendation.
 - **FR-016**: A reader of the M4 report MUST be able to determine, without reading the harness source, (a) which channel-level setting per axis is recommended at hidden_size 2048 / 4096 / 8192 for each path on the time metric, (b) whether each named schema candidate is recommended at the canonical width, and (c) which M3 cells M4 supersedes.
 
 ### Key Entities
