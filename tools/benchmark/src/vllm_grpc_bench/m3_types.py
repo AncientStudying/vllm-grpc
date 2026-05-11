@@ -1,21 +1,32 @@
-"""In-process data model for the M3 + M4 sweeps (``data-model.md``).
+"""In-process data model for the M3 + M4 + M5 sweeps (``data-model.md``).
 
 These are **not** wire types — for wire types see ``proto/vllm_grpc/v1/*.proto``.
 
-M4 extends this module in place rather than introducing a sibling: the new
-``Verdict`` literal ``"client_bound"``, ``BaselineRole``, ``ExpansionRecord``,
-``FrozenChannelBaseline``, ``SchemaCandidate*``, and ``SupersessionEntry``
-types are additive, and the existing M3 dataclasses (``BenchmarkCell``,
-``Sample``, ``RunCohort``, ``Recommendation``, ``ProtoRevision``) are kept
-unchanged so M3's reanalyze path keeps compiling.
+Each milestone extends this module in place rather than introducing a sibling.
+M4 added the ``"client_bound"`` verdict literal, ``BaselineRole``,
+``ExpansionRecord``, ``FrozenChannelBaseline``, ``SchemaCandidate*``, and
+``SupersessionEntry``. M5 adds the ``"server_bound"`` verdict, the
+``EndpointProvider`` Protocol + ``EndpointTuple`` TypeAlias, the active-probe
+``RTTRecord`` / ``RTTSummary`` types, the ``Citation`` /
+``SupersedesM4Entry`` / ``M5CrossHostBaseline`` / ``M5RunMetadata`` types, and
+strict-superset optional fields on ``RunCohort`` and ``Recommendation``. The
+existing M3/M4 dataclasses are kept unchanged so the M3 reanalyze path and
+the M4 sweep both keep compiling and producing bit-identical output.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+
+import grpc
 
 from vllm_grpc_bench.channel_config import Axis, ChannelConfig
+
+if TYPE_CHECKING:
+    from vllm_grpc_bench.mock_engine import MockEngine
 
 Path_ = Literal["embed", "chat_stream"]
 CorpusSubset = Literal["m1_chat", "m1_embed", "m3_long_stream"]
@@ -29,6 +40,7 @@ Verdict = Literal[
     "not_measurable",
     "noise_bounded",
     "client_bound",
+    "server_bound",
 ]
 ErrorKind = Literal["rpc_aborted", "max_msg_exceeded", "timeout", "other"]
 WinningMetric = Literal["bytes", "time", "ttft"]
@@ -122,6 +134,18 @@ class RunCohort:
     time_cv: float | None = None
     ttft_cv: float | None = None
     noisy_baseline: bool = False
+    # M5 additions (data-model.md). All optional — M3/M4 cohorts leave these at
+    # their defaults so the M5 JSON schema is a strict superset of the M4 one
+    # (FR-014). `rtt_record` carries the per-cohort active-probe distribution;
+    # `server_overhead_estimate_ms` and `server_bound` are set by the M5
+    # classifier (R-4); `low_rtt_caveat` is set when the measured RTT falls below
+    # the FR-004 exercise threshold; `discarded` is set on warm-up cohorts so the
+    # JSON records the warm-up cost while aggregation helpers skip them (R-5).
+    rtt_record: RTTRecord | None = None
+    server_overhead_estimate_ms: float | None = None
+    server_bound: bool = False
+    low_rtt_caveat: bool = False
+    discarded: bool = False
 
 
 @dataclass(frozen=True)
@@ -138,6 +162,13 @@ class Recommendation:
     candidate_ci_lower: float | None = None
     notes: str = ""
     corpus_subset: CorpusSubset | None = None
+    # M5 addition (data-model.md). Populated by the M5 sweep when this
+    # recommendation supersedes an M4 cell on the same (axis, path, width)
+    # coordinates; None on M3/M4-only runs. The full per-run "Supersedes M4"
+    # table is emitted by `m5_supersede.build_supersedes_m4_table` from these
+    # per-recommendation entries plus loopback-caveat M4 cells that lack an M5
+    # counterpart.
+    supersedes_m4_cell: SupersedesM4Entry | None = None
 
     def __post_init__(self) -> None:
         if not self.applies_to_widths:
@@ -371,3 +402,184 @@ class Run:
     loopback_caveat_axes: list[str] | None = None
     schema_candidate_results: list[SchemaCandidateResult] = field(default_factory=list)
     recommendations: list[Recommendation] = field(default_factory=list)
+    # M5 additions (data-model.md, FR-014 strict-superset). All optional —
+    # M3/M4 runs leave these at their defaults so the M5 JSON schema is a
+    # strict superset of the M4 one.
+    m5_metadata: M5RunMetadata | None = None
+    m5_cross_host_baselines: dict[str, M5CrossHostBaseline] = field(default_factory=dict)
+    supersedes_m4: list[SupersedesM4Entry] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# M5 additions (data-model.md). New literals, dataclasses, Protocol, and a
+# small filtering helper. None of these are referenced by the M3/M4 sweep code
+# paths, so M3/M4 reproductions remain bit-identical.
+# ---------------------------------------------------------------------------
+
+
+ExpectedClass = Literal[
+    "verdict_confirmed",
+    "loopback_resolution",
+    "transport_resolution",
+    "bound_classifier_transition",
+    "unexpected_supersession",
+]
+
+
+# (host:port, channel_credentials, call_metadata). credentials=None → insecure
+# channel; metadata=None → no per-RPC auth headers attached. PEP 695 `type`
+# statement keeps the alias lazily evaluated so the grpc import remains
+# inexpensive at module-load time.
+type EndpointTuple = tuple[
+    str,
+    grpc.ChannelCredentials | None,
+    tuple[tuple[str, str], ...] | None,
+]
+
+
+class EndpointProvider(Protocol):
+    """Async context manager factory yielding an ``EndpointTuple``.
+
+    Implementations:
+
+    * ``serve_in_process_adapter`` (in ``m3_sweep``) — wraps the existing
+      ``serve_in_process(...)`` and yields ``(addr, None, None)``. This is the
+      default for ``m4_sweep`` so M4 reproductions remain bit-identical.
+    * ``modal_endpoint.provide_endpoint`` (M5, T023) — deploys the Modal app,
+      captures tunnel URL + bearer token, yields
+      ``(modal_tunnel_target, ssl_credentials, (("authorization", f"Bearer {token}"),))``.
+    """
+
+    def __call__(
+        self,
+        engine: MockEngine,
+        channel_config: ChannelConfig,
+    ) -> AbstractAsyncContextManager[EndpointTuple]: ...
+
+
+@dataclass(frozen=True)
+class RTTRecord:
+    """Per-cohort active-probe RTT measurement (FR-004 / R-3).
+
+    Captured by ``rtt_probe.measure_rtt(...)`` immediately before the cohort's
+    measurement window opens. ``samples_ms`` is the raw per-probe wall-clock
+    list so the M5 JSON consumer can re-derive any percentile.
+    """
+
+    n: int
+    median_ms: float
+    p95_ms: float
+    samples_ms: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        if self.n < 1:
+            raise ValueError(f"RTTRecord.n must be >= 1 (got {self.n})")
+        if any(s < 0 for s in self.samples_ms):
+            raise ValueError("RTTRecord.samples_ms entries must be non-negative")
+
+
+@dataclass(frozen=True)
+class RTTSummary:
+    """Run-level RTT distribution aggregated across non-discarded cohorts."""
+
+    min_ms: float
+    median_ms: float
+    p95_ms: float
+    max_ms: float
+
+
+@dataclass(frozen=True)
+class Citation:
+    """One ground-truth citation entry attached to a verdict-changed
+    time-metric supersession (FR-017 / M2 ground-truth workflow).
+    """
+
+    repo: Literal["vllm-project/vllm", "grpc/grpc"]
+    file_path: str
+    identifier: str | None
+    justification: str
+
+
+@dataclass(frozen=True)
+class SupersedesM4Entry:
+    """One row in the M5 'Supersedes M4' table (FR-015).
+
+    Cross-references an M4 cell that M5 supersedes. ``verdict_changed`` is
+    auto-derived from the M4/M5 verdict literals; passing an inconsistent
+    value raises ``ValueError`` so callers can't silently lie about whether
+    the supersession changed a verdict.
+    """
+
+    m4_axis: str
+    m4_hidden_size: int
+    m4_path: Path_
+    m4_verdict_time: Verdict
+    m4_verdict_bytes: Verdict
+    m4_loopback_caveat: bool
+    m5_verdict_time: Verdict
+    m5_verdict_bytes: Verdict
+    m5_supporting_ci_lower: float
+    m5_supporting_ci_upper: float
+    rationale: str
+    expected_class: ExpectedClass
+    citations: tuple[Citation, ...] = ()
+    verdict_changed: bool = field(init=False)
+
+    def __post_init__(self) -> None:
+        computed = (
+            self.m4_verdict_time != self.m5_verdict_time
+            or self.m4_verdict_bytes != self.m5_verdict_bytes
+        )
+        # frozen=True forbids direct attribute assignment; use object.__setattr__
+        # to populate the derived field once during construction.
+        object.__setattr__(self, "verdict_changed", computed)
+        if not self.rationale:
+            raise ValueError("SupersedesM4Entry.rationale must be non-empty")
+        if self.m5_supporting_ci_lower > self.m5_supporting_ci_upper:
+            raise ValueError(
+                "SupersedesM4Entry.m5_supporting_ci_lower must be <= m5_supporting_ci_upper"
+            )
+
+
+@dataclass(frozen=True)
+class M5CrossHostBaseline:
+    """Per-path cross-host shared-baseline cohort metadata (FR-008)."""
+
+    path: Path_
+    cohort_id: str
+    modal_app_name: str
+    modal_region: str
+    measured_rtt: RTTRecord
+    n: int
+
+    def __post_init__(self) -> None:
+        if self.n < 100:
+            raise ValueError(f"M5CrossHostBaseline.n must be >= 100 per FR-008 (got {self.n})")
+
+
+@dataclass(frozen=True)
+class M5RunMetadata:
+    """Top-level M5 run metadata attached to the M5 JSON report root."""
+
+    m5_methodology_version: int
+    m5_modal_app_name: str
+    m5_modal_region: str
+    m5_runtime_wallclock_seconds: float
+    m5_rtt_summary_ms: RTTSummary
+    rtt_validity_threshold_ms: float
+    rtt_exercise_threshold_ms: float
+    warmup_n: int
+    server_bound_overhead_threshold_ms: float
+    server_bound_cohort_count: int
+
+
+def non_discarded(cohorts: Iterable[RunCohort]) -> Iterator[RunCohort]:
+    """Yield cohorts whose ``discarded`` flag is False.
+
+    Aggregation helpers (recommendation builder, shared-baseline collection,
+    run-level RTT summary) consume this so M5 warm-up cohorts — which are
+    persisted to JSON for reader visibility per R-5 — never reach a verdict
+    or a recommendation. M3/M4 cohorts always have ``discarded=False`` so
+    this is a no-op for the pre-M5 code paths.
+    """
+    return (c for c in cohorts if not c.discarded)

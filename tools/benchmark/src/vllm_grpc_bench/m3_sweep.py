@@ -38,6 +38,8 @@ from vllm_grpc.v1 import (
     chat_pb2_grpc,
     completions_pb2,
     completions_pb2_grpc,
+    health_pb2,
+    health_pb2_grpc,
 )
 
 from vllm_grpc_bench.channel_config import (
@@ -150,6 +152,23 @@ class M3ChatServicer(chat_pb2_grpc.ChatServiceServicer):  # type: ignore[misc]
                 return
 
 
+class _BenchHealthServicer(health_pb2_grpc.HealthServicer):  # type: ignore[misc]
+    """Minimal Health.Ping servicer for the M5 RTT probe (R-3).
+
+    Registered on every in-process server bring-up so the probe can drive a
+    no-op unary RPC against the same channel the cohort is about to use. The
+    response carries a constant payload, so cohort timings are unaffected;
+    only ``rtt_probe.measure_rtt`` exercises this method.
+    """
+
+    async def Ping(  # noqa: N802
+        self,
+        request: health_pb2.HealthRequest,
+        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
+    ) -> health_pb2.HealthResponse:
+        return health_pb2.HealthResponse(message="ok")
+
+
 class M3CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # type: ignore[misc]
     def __init__(self, engine: MockEngine) -> None:
         self._engine = engine
@@ -209,12 +228,34 @@ async def serve_in_process(
     completions_pb2_grpc.add_CompletionsServiceServicer_to_server(
         M3CompletionsServicer(engine), server
     )
+    # Health servicer is additive — only the M5 RTT probe calls it. M3/M4
+    # cohort drivers never hit Health.Ping, so per-RPC timings are unchanged.
+    health_pb2_grpc.add_HealthServicer_to_server(_BenchHealthServicer(), server)
     port = server.add_insecure_port("127.0.0.1:0")
     await server.start()
     try:
         yield f"127.0.0.1:{port}"
     finally:
         await server.stop(grace=0.5)
+
+
+@contextlib.asynccontextmanager
+async def serve_in_process_adapter(
+    engine: MockEngine,
+    channel_config: ChannelConfig,
+) -> AsyncIterator[tuple[str, grpc.ChannelCredentials | None, tuple[tuple[str, str], ...] | None]]:
+    """``EndpointProvider``-conforming wrapper around :func:`serve_in_process`.
+
+    Yields an ``(addr, credentials, metadata)`` tuple where ``credentials`` and
+    ``metadata`` are ``None`` (insecure local channel, no per-RPC auth). The M4
+    sweep uses this as its default ``endpoint_provider`` so M4 reproductions
+    remain bit-identical: same in-process server bring-up, same host/port shape,
+    same lifecycle. M5 swaps in ``modal_endpoint.provide_endpoint`` instead,
+    which yields a Modal-tunnel target with TLS credentials and a bearer-token
+    metadata pair.
+    """
+    async with serve_in_process(engine, channel_config) as addr:
+        yield (addr, None, None)
 
 
 def _client_kwargs(cfg: ChannelConfig) -> dict[str, Any]:
@@ -273,17 +314,27 @@ async def _drive_embed_cell(
     addr: str,
     cell: BenchmarkCell,
     seed: int,
+    *,
+    credentials: grpc.ChannelCredentials | None = None,
+    metadata: tuple[tuple[str, str], ...] | None = None,
 ) -> list[Sample]:
     samples: list[Sample] = []
     kwargs = _client_kwargs(cell.channel_config)
-    async with grpc.aio.insecure_channel(addr, **kwargs) as channel:
+    channel_ctx = (
+        grpc.aio.insecure_channel(addr, **kwargs)
+        if credentials is None
+        else grpc.aio.secure_channel(addr, credentials, **kwargs)
+    )
+    async with channel_ctx as channel:
         stub = completions_pb2_grpc.CompletionsServiceStub(channel)
         for i in range(cell.iterations):
             req = _build_embed_request(cell.hidden_size, seed + i)
             req_bytes = len(req.SerializeToString())
             t0 = time.perf_counter()
             try:
-                resp: completions_pb2.CompletionResponse = await stub.Complete(req, timeout=60.0)
+                resp: completions_pb2.CompletionResponse = await stub.Complete(
+                    req, timeout=60.0, metadata=metadata
+                )
             except Exception as exc:  # noqa: BLE001 — record-and-continue at boundary
                 samples.append(
                     Sample(
@@ -317,6 +368,9 @@ async def _drive_chat_stream_cell(
     cell: BenchmarkCell,
     seed: int,
     long_stream: bool,
+    *,
+    credentials: grpc.ChannelCredentials | None = None,
+    metadata: tuple[tuple[str, str], ...] | None = None,
 ) -> list[Sample]:
     samples: list[Sample] = []
     kwargs = _client_kwargs(cell.channel_config)
@@ -329,7 +383,12 @@ async def _drive_chat_stream_cell(
     else:
         prompt_text = "Explain gRPC channel options briefly."
         max_tokens = 32
-    async with grpc.aio.insecure_channel(addr, **kwargs) as channel:
+    channel_ctx = (
+        grpc.aio.insecure_channel(addr, **kwargs)
+        if credentials is None
+        else grpc.aio.secure_channel(addr, credentials, **kwargs)
+    )
+    async with channel_ctx as channel:
         stub = chat_pb2_grpc.ChatServiceStub(channel)
         for i in range(cell.iterations):
             req = _build_chat_request(f"{prompt_text} iter={seed + i}", max_tokens=max_tokens)
@@ -341,7 +400,7 @@ async def _drive_chat_stream_cell(
             error: str | None = None
             error_kind: ErrorKind | None = None
             try:
-                call = stub.CompleteStream(req, timeout=120.0)
+                call = stub.CompleteStream(req, timeout=120.0, metadata=metadata)
                 async for chunk in call:
                     arrival_times.append(time.perf_counter())
                     response_bytes += len(chunk.SerializeToString())

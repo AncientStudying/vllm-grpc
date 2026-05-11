@@ -1,7 +1,7 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/016-m4-time-axis-tuning/plan.md
+at specs/017-m5-cross-host-validation/plan.md
 <!-- SPECKIT END -->
 
 ## Codebase navigation

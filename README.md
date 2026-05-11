@@ -137,15 +137,21 @@ Re-frame the M3 measurements around wall-clock time as a first-class success met
 
 **Status (delivered 2026-05-10):** harness redesign + definitive sweep merged on `016-m4-time-axis-tuning`. Published report at [`docs/benchmarks/m4-time-axis-tuning.{md,json}`](docs/benchmarks/m4-time-axis-tuning.md). Drive the sweep with `python -m vllm_grpc_bench --m4` (default no-pacing, shared baseline, n=100→250 cascade, per-cohort CV recorded — the run never aborts on a noisy baseline; cohorts above the warn threshold are flagged in the report for reader adjudication per FR-005). M5 addresses the loopback caveat axes (`keepalive`, `http2_framing`) by re-running the same sweep on Modal.
 
-### Milestone 5 — Cross-Host Time-Axis Validation
+### Milestone 5 — Cross-Host Time-Axis Validation (delivered)
 
-Re-run the M4 sweep with the gRPC server deployed on Modal and the benchmark client running locally, so transmission crosses real wire instead of `127.0.0.1`. The goal is to confirm — or supersede — the M4 verdicts on axes that loopback masks: `keepalive` and `http2_framing` carry M4's loopback caveat because RTT-bounded behavior cannot manifest on a single host. A real client-server topology with realistic RTT exposes the actual transport behavior.
+Re-ran the M4 sweep with the gRPC server deployed on Modal (eu-west-1) and the benchmark client running locally, so transmission crossed real wire (~52 ms RTT median) instead of `127.0.0.1`. M4's `keepalive` and `http2_framing` verdicts carried a loopback caveat because RTT-bounded behavior cannot manifest on a single host; M5 resolved that caveat and found **5 channel-config wins on `embed/h2048` with deltas of −23% to −25%**: `max-msg-16mib`, `max-msg-unlimited`, `keepalive-aggressive`, `keepalive-relaxed`, `http2-bdp-probe`. All were invisible on M4's loopback sweep. M5 also surfaced a `server_bound` classifier that correctly excludes cohorts at `embed/h8192` (~512 KB payloads, server-side serialization dominates) and on `compression-gzip` at large hidden sizes from the recommend tallies.
 
-- Does aggressive keepalive measurably reduce TTFT once RTT is non-zero?
-- Does HTTP/2 BDP probing affect throughput when there's a real bandwidth-delay product?
-- Do the M4 channel verdicts on `max_message_size` and `compression` hold over real wire?
+**Status (delivered 2026-05-11):** Published report at [`docs/benchmarks/m5-cross-host-validation.{md,json}`](docs/benchmarks/m5-cross-host-validation.md). Drive the sweep with `python -m vllm_grpc_bench --m5 --m5-modal-region=eu-west-1` (requires `MODAL_BENCH_TOKEN` exported plus `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET`). Single deploy, ~10–15 min wall-clock on Modal CPU-only, clean teardown on exit. The published "Supersedes M4" table emits 20 entries (10 `loopback_resolution`, 8 `bound_classifier_transition`, 2 `verdict_confirmed`) — every M4 cell whose verdict M5 has resolved or contradicted is named explicitly.
 
-Reuses the existing M4 harness (`vllm_grpc_bench --m4`) unchanged; only the connection target moves. Outputs land at `docs/benchmarks/m5-cross-host-time-axis.{md,json}` with a "Supersedes M4" table for axes whose verdicts shift.
+### Milestone 5.1 — REST vs gRPC Head-to-Head on Real Wire (upcoming)
+
+M5 demonstrated that tuned gRPC channels deliver substantial wall-clock wins over *default* gRPC on real wire, but did not re-compare REST against those same conditions. Milestone 1's REST-vs-gRPC numbers compare REST against default-config gRPC over short-haul Modal — mixed time results, strong bandwidth wins. M5.1 closes the loop by driving **tuned gRPC vs REST head-to-head against the same Modal-hosted MockEngine over real wire**, so the cumulative evidence for "protobuf+gRPC is more time-efficient" gets a clean cross-host control.
+
+- Does the M5 tuning headroom (23–25% wall-clock at `embed/h2048`) compound with M1's gRPC-vs-REST gains?
+- Are REST's small-body chat wins from M1 a loopback artifact, or do they survive realistic RTT?
+- Where does the tuned-gRPC-vs-REST break-even sit on the (hidden_size × path × concurrency) surface?
+
+Reuses M5's cross-host harness; adds a REST cohort driven through a FastAPI shim against the same `MockEngine`. Outputs land at `docs/benchmarks/m5_1-rest-vs-grpc.{md,json}`. Mock-engine methodology (consistent with M3–M5) keeps runs cheap; real-vLLM validation is deferred to Milestone 7.
 
 ### Milestone 6 — Corpus Expansion
 

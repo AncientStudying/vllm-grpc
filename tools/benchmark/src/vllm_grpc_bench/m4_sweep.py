@@ -37,10 +37,11 @@ from vllm_grpc_bench.m3_sweep import (
     _aggregate,
     _drive_chat_stream_cell,
     _drive_embed_cell,
-    serve_in_process,
+    serve_in_process_adapter,
 )
 from vllm_grpc_bench.m3_types import (
     BenchmarkCell,
+    EndpointProvider,
     ExpansionRecord,
     FrozenChannelBaseline,
     M4SweepConfig,
@@ -458,6 +459,7 @@ async def _measure_cell(
     seed: int,
     pace_tokens: bool,
     warmup_n: int = 0,
+    endpoint_provider: EndpointProvider = serve_in_process_adapter,
 ) -> RunCohort:
     """Measure ``cell.iterations`` RPCs after ``warmup_n`` discarded warmup RPCs.
 
@@ -471,6 +473,14 @@ async def _measure_cell(
     The returned cohort has exactly ``cell.iterations`` samples; the
     discarded warmup samples are not visible to ``_aggregate`` and never
     surface in the published JSON.
+
+    ``endpoint_provider`` (M5 / T008) is an :class:`EndpointProvider`-conforming
+    async context manager factory yielding ``(target, credentials, metadata)``.
+    The default ``serve_in_process_adapter`` brings up an in-process gRPC server
+    and yields ``(addr, None, None)`` so M4 callers retain bit-identical
+    behaviour. M5 swaps in ``modal_endpoint.provide_endpoint`` to point the same
+    drivers at a Modal-tunnel endpoint with TLS credentials and a bearer-token
+    metadata pair.
     """
     long_stream = cell.corpus_subset == "m3_long_stream"
     engine_cfg = _engine_config(
@@ -481,11 +491,24 @@ async def _measure_cell(
     )
     engine = MockEngine(engine_cfg)
     drive_cell = replace(cell, iterations=cell.iterations + warmup_n) if warmup_n > 0 else cell
-    async with serve_in_process(engine, drive_cell.channel_config) as addr:
+    async with endpoint_provider(engine, drive_cell.channel_config) as (
+        target,
+        credentials,
+        metadata,
+    ):
         if drive_cell.path == "embed":
-            samples = await _drive_embed_cell(addr, drive_cell, seed)
+            samples = await _drive_embed_cell(
+                target, drive_cell, seed, credentials=credentials, metadata=metadata
+            )
         else:
-            samples = await _drive_chat_stream_cell(addr, drive_cell, seed, long_stream=long_stream)
+            samples = await _drive_chat_stream_cell(
+                target,
+                drive_cell,
+                seed,
+                long_stream=long_stream,
+                credentials=credentials,
+                metadata=metadata,
+            )
     measured = list(samples[warmup_n:]) if warmup_n > 0 else list(samples)
     cohort = _aggregate(cell, measured)
     return _attach_ttft(cohort)
@@ -519,6 +542,7 @@ async def measure_shared_baseline(
     hidden_size: int,
     seed: int,
     config: M4SweepConfig,
+    endpoint_provider: EndpointProvider = serve_in_process_adapter,
 ) -> RunCohort:
     """Measure a single shared M1_BASELINE cohort at ``hidden_size``."""
     corpus = "m1_embed" if path == "embed" else "m1_chat"
@@ -534,6 +558,7 @@ async def measure_shared_baseline(
         seed=seed,
         pace_tokens=(config.pacing_mode == "paced"),
         warmup_n=config.warmup_n,
+        endpoint_provider=endpoint_provider,
     )
     return replace(
         cohort,
@@ -549,6 +574,7 @@ async def measure_candidate(
     baseline: RunCohort,
     seed: int,
     config: M4SweepConfig,
+    endpoint_provider: EndpointProvider = serve_in_process_adapter,
 ) -> RunCohort:
     """Measure one candidate cell with the borderline-expand cascade."""
     cohort = await _measure_cell(
@@ -556,6 +582,7 @@ async def measure_candidate(
         seed=seed,
         pace_tokens=(config.pacing_mode == "paced"),
         warmup_n=config.warmup_n,
+        endpoint_provider=endpoint_provider,
     )
     metric = "ttft" if cell.path == "chat_stream" else "time"
     overlapped = detect_ci_overlap(baseline, cohort, metric=metric)
@@ -568,6 +595,7 @@ async def measure_candidate(
                 seed=seed + 1,
                 pace_tokens=(config.pacing_mode == "paced"),
                 warmup_n=config.warmup_n,
+                endpoint_provider=endpoint_provider,
             )
 
         cohort = await expand_cohort(
@@ -625,12 +653,18 @@ async def run_m4_sweep(
     *,
     progress: bool = True,
     is_loopback: bool = True,
+    endpoint_provider: EndpointProvider = serve_in_process_adapter,
 ) -> Run:
     """Run the full M4 sweep and return the populated ``Run`` record.
 
     The full schema-candidate flow (US3) is gated behind ``not skip_schema``
     and lives downstream of the channel sweep so US1+US2 can run in
     isolation when ``--skip-schema`` is set.
+
+    ``endpoint_provider`` (M5 / T008) is threaded down to ``_measure_cell``.
+    The default ``serve_in_process_adapter`` preserves bit-identical M4
+    behaviour; M5 callers pass ``modal_endpoint.provide_endpoint`` to point
+    the same orchestrator at the Modal-tunnel endpoint.
     """
     cohorts: list[RunCohort] = []
     shared_baselines: dict[str, RunCohort] = {}
@@ -643,6 +677,7 @@ async def run_m4_sweep(
             hidden_size=config.schema_canonical_width,
             seed=config.seed,
             config=config,
+            endpoint_provider=endpoint_provider,
         )
         baseline = flag_noisy_baseline(baseline, baseline_cv_warn=config.baseline_cv_warn)
         cohorts.append(baseline)
@@ -670,6 +705,7 @@ async def run_m4_sweep(
             baseline=baseline,
             seed=config.seed + (idx + 1) * 1000,
             config=config,
+            endpoint_provider=endpoint_provider,
         )
         cohorts.append(cohort)
         if progress:
@@ -689,6 +725,7 @@ async def run_m4_sweep(
             sweep_cohorts=cohorts,
             config=config,
             seed=config.seed + 999_000,
+            endpoint_provider=endpoint_provider,
         )
         cohorts.extend(frozen_cohorts)
 
@@ -698,6 +735,7 @@ async def run_m4_sweep(
             frozen_baselines=frozen_baselines or {},
             config=config,
             seed=config.seed + 999_900,
+            endpoint_provider=endpoint_provider,
         )
         cohorts.extend(schema_cohorts)
 
@@ -789,6 +827,7 @@ async def compose_frozen_baselines(
     sweep_cohorts: list[RunCohort],
     config: M4SweepConfig,
     seed: int,
+    endpoint_provider: EndpointProvider = serve_in_process_adapter,
 ) -> tuple[dict[str, FrozenChannelBaseline], list[RunCohort]]:
     """Build a per-path frozen-channel baseline at ``schema_canonical_width``.
 
@@ -839,6 +878,7 @@ async def compose_frozen_baselines(
             seed=seed,
             pace_tokens=(config.pacing_mode == "paced"),
             warmup_n=config.warmup_n,
+            endpoint_provider=endpoint_provider,
         )
         cohort = replace(
             cohort,
@@ -954,6 +994,7 @@ async def measure_schema_candidates(
     frozen_baselines: dict[str, FrozenChannelBaseline],
     config: M4SweepConfig,
     seed: int,
+    endpoint_provider: EndpointProvider = serve_in_process_adapter,
 ) -> tuple[list[SchemaCandidateResult], list[RunCohort]]:
     """Author the schema-candidate result records (T045).
 
