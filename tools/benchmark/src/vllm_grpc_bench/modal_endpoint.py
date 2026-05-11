@@ -115,13 +115,9 @@ async def provide_endpoint(
                 with contextlib.suppress(Exception):
                     await d.pop.aio(key)
 
-            endpoint = await _wait_for_handshake(
-                d, _HANDSHAKE_TIMEOUT_S, expected_token=token
-            )
+            endpoint = await _wait_for_handshake(d, _HANDSHAKE_TIMEOUT_S, expected_token=token)
             target = _strip_scheme(endpoint)
-            metadata: tuple[tuple[str, str], ...] = (
-                ("authorization", f"Bearer {token}"),
-            )
+            metadata: tuple[tuple[str, str], ...] = (("authorization", f"Bearer {token}"),)
             try:
                 # Modal's gRPC-friendly tunnel is plain TCP (the HTTPS edge
                 # doesn't negotiate h2 ALPN). FR-002's auth requirement is

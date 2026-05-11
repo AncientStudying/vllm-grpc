@@ -622,21 +622,27 @@ async def run_m5_sweep(
         # wrapper.
         return await _run_m5_sweep_impl(config, endpoint_provider, progress)
 
-    # No provider given → deploy via Modal and freeze the tuple.
+    # No provider given → deploy via Modal and freeze the tuple. We pass a
+    # minimal ``MockEngine`` instance for ``EndpointProvider`` Protocol
+    # parity — the Modal-side server runs its own engine, so this instance
+    # is never actually invoked, but the type signature requires a real
+    # ``MockEngine`` (mypy --strict rejects a placeholder class).
     from vllm_grpc_bench import modal_endpoint
+    from vllm_grpc_bench.mock_engine import MockEngine, MockEngineConfig
 
+    placeholder_engine = MockEngine(MockEngineConfig(hidden_size=4096, seed=0))
     if config.skip_deploy_endpoint:
         # --m5-skip-deploy → static_endpoint_provider is cheap (no app.run),
         # but the frozen-tuple wrapper still keeps the per-cohort flow uniform.
         deploy_ctx = modal_endpoint.static_endpoint_provider(
-            _DummyEngine(),
+            placeholder_engine,
             M1_BASELINE,
             target=config.skip_deploy_endpoint,
             token_env=config.token_env,
         )
     else:
         deploy_ctx = modal_endpoint.provide_endpoint(
-            _DummyEngine(),
+            placeholder_engine,
             M1_BASELINE,
             region=config.modal_region,
             token_env=config.token_env,
@@ -650,13 +656,6 @@ async def run_m5_sweep(
             )
         frozen = make_frozen_endpoint_provider(target, credentials, metadata)
         return await _run_m5_sweep_impl(config, frozen, progress)
-
-
-class _DummyEngine:
-    """Placeholder passed to ``provide_endpoint`` for ``EndpointProvider``
-    Protocol parity. The Modal-side server runs its own ``MockEngine``; the
-    harness side never touches this object.
-    """
 
 
 async def _run_m5_sweep_impl(

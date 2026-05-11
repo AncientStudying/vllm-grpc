@@ -876,7 +876,7 @@ def _run_m5(args: argparse.Namespace) -> int:
     if args.m4_shared_baseline is None:
         args.m4_shared_baseline = True
     try:
-        config = _build_m5_config(args)  # type: ignore[arg-type]
+        config = _build_m5_config(args)
     except (ValueError, SystemExit) as exc:
         print(f"Error: invalid M5 sweep configuration: {exc}", file=sys.stderr)
         return 2
