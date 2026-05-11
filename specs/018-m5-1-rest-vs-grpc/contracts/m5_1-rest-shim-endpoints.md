@@ -88,6 +88,20 @@ The harness's REST cohort runner records:
 - Request bytes (`request_bytes_median` field on `RESTCohortRecord`): the JSON body length.
 - Response bytes (`response_bytes_median` field): the JSON response length.
 
+## Response headers (timing instrumentation)
+
+Both `POST /v1/chat/completions` and `POST /v1/embeddings` MUST emit the following response header, carrying the FastAPI handler's intra-process overhead (handler-entry to `MockEngine.{generate,embed}`-return wall-clock, in milliseconds, six-decimal precision):
+
+```text
+X-Shim-Overhead-Ms: 0.382451
+```
+
+- The header name is **`X-Shim-Overhead-Ms`** (case-insensitive per HTTP/1.1, but the shim emits the canonical PascalCase form).
+- For SSE `/v1/chat/completions` responses, the shim emits the header on the initial `200 OK` response line, **before** any `data:` event is sent (so the harness reads it from `response.headers` once the headers are received, regardless of subsequent streaming).
+- The harness's REST cohort runner (`rest_cohort.run_rest_cohort`) reads this header per-request and aggregates median + p95 into `RESTCohortRecord.shim_overhead_ms_median` / `shim_overhead_ms_p95`.
+- `/healthz` MUST NOT emit this header (the probe doesn't measure shim overhead).
+- The header value units are milliseconds (not seconds, not microseconds). Mismatch is a contract violation.
+
 ## `GET /healthz`
 
 Lightweight liveness endpoint. No bearer-auth gating (the auth middleware excludes this path). Used by the harness's RTT probe (research.md R-3).
