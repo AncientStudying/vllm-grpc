@@ -8,7 +8,6 @@ sourcing, ``static_endpoint_provider`` yields, and the URL-scheme stripper.
 
 from __future__ import annotations
 
-import grpc
 import pytest
 from vllm_grpc_bench.channel_config import M1_BASELINE
 from vllm_grpc_bench.mock_engine import MockEngine, MockEngineConfig
@@ -34,24 +33,25 @@ async def test_provide_endpoint_refuses_when_token_env_unset(
 
 
 @pytest.mark.asyncio
-async def test_static_endpoint_provider_yields_secure_endpoint_with_metadata(
+async def test_static_endpoint_provider_yields_endpoint_with_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The ``--m5-skip-deploy`` provider yields ``(host:port, ssl_creds, auth_md)``
-    without contacting Modal.
+    """The ``--m5-skip-deploy`` provider yields ``(host:port, None, auth_md)``
+    without contacting Modal. Modal's gRPC-friendly tunnel is plain TCP (its
+    HTTPS edge does not negotiate h2 ALPN); FR-002 auth is provided by the
+    application-level bearer-token interceptor.
     """
     monkeypatch.setenv("MODAL_BENCH_TOKEN", "test-bearer-abc")
     engine = MockEngine(MockEngineConfig(hidden_size=2048, seed=0))
     async with static_endpoint_provider(
         engine,
         M1_BASELINE,
-        target="grpcs://r3.modal.host:54321",
+        target="tcp://r3.modal.host:54321",
     ) as (target, credentials, metadata):
         # Scheme is stripped to plain host:port.
         assert target == "r3.modal.host:54321"
-        # secure_channel-compatible credentials.
-        assert credentials is not None
-        assert isinstance(credentials, grpc.ChannelCredentials)
+        # Insecure channel — gRPC uses ``insecure_channel`` when credentials is None.
+        assert credentials is None
         # Bearer-token metadata is the only header attached.
         assert metadata == (("authorization", "Bearer test-bearer-abc"),)
 

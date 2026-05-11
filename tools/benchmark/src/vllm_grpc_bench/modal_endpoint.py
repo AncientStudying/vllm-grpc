@@ -27,8 +27,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
-import grpc
-
 from vllm_grpc_bench.channel_config import ChannelConfig
 from vllm_grpc_bench.m3_types import EndpointTuple
 
@@ -98,27 +96,51 @@ async def provide_endpoint(
             "is on PYTHONPATH"
         ) from exc
 
-    async with app.run.aio():
-        serve_call = serve_bench.spawn.aio(token=token, region=region)
-        d = modal.Dict.from_name(_DICT_NAME, create_if_missing=True)
-        # Clear any stale handshake state from an earlier crashed run.
-        for key in ("endpoint", "token", "region", "ready", "teardown"):
-            with contextlib.suppress(Exception):
-                await d.pop.aio(key)
+    # Surface Modal image-build and runtime logs so build failures don't
+    # arrive as opaque ``RemoteError`` traces. ``enable_output()`` is safe to
+    # call repeatedly and only affects this process.
+    output_ctx = modal.enable_output()
+    output_ctx.__enter__()
+    try:
+        async with app.run.aio():
+            # ``spawn.aio()`` is a coroutine that *initiates* the remote
+            # function call and returns a ``FunctionCall`` handle. Awaiting it
+            # immediately is mandatory — without the await, the spawn never
+            # happens and the harness times out waiting for a handshake that
+            # the un-started function can never publish.
+            serve_call = await serve_bench.spawn.aio(token=token, region=region)
+            d = modal.Dict.from_name(_DICT_NAME, create_if_missing=True)
+            # Clear any stale handshake state from an earlier crashed run.
+            for key in ("endpoint", "token", "region", "ready", "teardown"):
+                with contextlib.suppress(Exception):
+                    await d.pop.aio(key)
 
-        endpoint = await _wait_for_handshake(d, _HANDSHAKE_TIMEOUT_S, expected_token=token)
-        target = _strip_scheme(endpoint)
-        metadata: tuple[tuple[str, str], ...] = (("authorization", f"Bearer {token}"),)
-        try:
-            yield (target, grpc.ssl_channel_credentials(), metadata)
-        finally:
-            # Signal teardown via dict so the Modal-side server exits cleanly.
-            with contextlib.suppress(Exception):
-                await d.put.aio("teardown", True)
-            # Wait briefly for the spawned call to drain. app.run.aio()'s exit
-            # will hard-stop the function if it lingers past Modal's grace.
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(serve_call, timeout=30.0)
+            endpoint = await _wait_for_handshake(
+                d, _HANDSHAKE_TIMEOUT_S, expected_token=token
+            )
+            target = _strip_scheme(endpoint)
+            metadata: tuple[tuple[str, str], ...] = (
+                ("authorization", f"Bearer {token}"),
+            )
+            try:
+                # Modal's gRPC-friendly tunnel is plain TCP (the HTTPS edge
+                # doesn't negotiate h2 ALPN). FR-002's auth requirement is
+                # satisfied at the application level by the bearer-token
+                # interceptor — the harness still attaches the token as call
+                # metadata on every RPC.
+                yield (target, None, metadata)
+            finally:
+                # Signal teardown via dict so the Modal-side server exits cleanly.
+                with contextlib.suppress(Exception):
+                    await d.put.aio("teardown", True)
+                # Wait briefly for the spawned call to drain. app.run.aio()'s exit
+                # will hard-stop the function if it lingers past Modal's grace.
+                # ``serve_call`` is a ``FunctionCall`` handle; ``.get.aio()``
+                # awaits the remote function's return value.
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(serve_call.get.aio(), timeout=30.0)
+    finally:
+        output_ctx.__exit__(None, None, None)
 
 
 @asynccontextmanager
@@ -142,7 +164,9 @@ async def static_endpoint_provider(
             "--m5-skip-deploy still requires the bearer token to be exported"
         )
     metadata: tuple[tuple[str, str], ...] = (("authorization", f"Bearer {token}"),)
-    yield (_strip_scheme(target), grpc.ssl_channel_credentials(), metadata)
+    # Modal's gRPC-friendly tunnel is plain TCP; the bearer-token interceptor
+    # on the Modal-side server provides FR-002 auth.
+    yield (_strip_scheme(target), None, metadata)
 
 
 async def _wait_for_handshake(d: object, timeout_s: float, *, expected_token: str) -> str:

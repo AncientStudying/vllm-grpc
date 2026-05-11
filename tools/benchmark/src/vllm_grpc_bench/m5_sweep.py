@@ -35,10 +35,11 @@ from typing import TYPE_CHECKING, Any
 
 import grpc
 
-from vllm_grpc_bench.channel_config import M1_BASELINE
+from vllm_grpc_bench.channel_config import M1_BASELINE, ChannelConfig
 from vllm_grpc_bench.m3_types import (
     BenchmarkCell,
     EndpointProvider,
+    EndpointTuple,
     ExpansionRecord,
     FrozenChannelBaseline,
     M4SweepConfig,
@@ -220,6 +221,37 @@ def load_m4_constants(report_path: Path) -> _M4ConstantsForClassifier:
 
 
 # ---------------------------------------------------------------------------
+# Deploy-once endpoint reuse
+# ---------------------------------------------------------------------------
+
+
+def make_frozen_endpoint_provider(
+    target: str,
+    credentials: grpc.ChannelCredentials | None,
+    metadata: tuple[tuple[str, str], ...] | None,
+) -> EndpointProvider:
+    """Wrap a captured ``EndpointTuple`` as a no-op ``EndpointProvider``.
+
+    The M4 harness re-enters its ``endpoint_provider`` once per cohort. For
+    in-process backends that's cheap; for the Modal-backed M5 provider it
+    would mean a fresh deploy per cohort. Instead, ``run_m5_sweep`` enters
+    ``modal_endpoint.provide_endpoint`` once at the start of the sweep,
+    captures the target/credentials/metadata, and threads this frozen
+    provider into every per-cohort call — yielding the same tuple each time
+    without contacting Modal.
+    """
+
+    @asynccontextmanager
+    async def _provider(
+        engine: MockEngine,
+        channel_config: ChannelConfig,
+    ) -> AsyncIterator[EndpointTuple]:
+        yield (target, credentials, metadata)
+
+    return _provider
+
+
+# ---------------------------------------------------------------------------
 # Cohort drivers — wrap M4's drivers with the M5 endpoint provider
 # ---------------------------------------------------------------------------
 
@@ -260,9 +292,7 @@ async def _measure_cohort_with_rtt(
     from vllm_grpc_bench.m4_sweep import _measure_cell
 
     # Step 1 — probe RTT first against the same channel the cohort will use.
-    async with endpoint_provider(
-        _engine_for(cell), cell.channel_config
-    ) as endpoint_tuple:
+    async with endpoint_provider(_engine_for(cell), cell.channel_config) as endpoint_tuple:
         target, credentials, metadata = endpoint_tuple
         async with _open_probe_channel(
             target, credentials, cell.channel_config.client_options
@@ -368,9 +398,12 @@ async def run_warmup_cohorts(
             corpus_subset=corpus,  # type: ignore[arg-type]
             iterations=config.warmup_n,
         )
+        # Warmup-cohort seed sits in a high band so cohort_id collisions with
+        # the candidate seeds (which use ``seed + (idx + 1) * 1000``) are
+        # impossible. Negative seeds are rejected by ``MockEngineConfig``.
         cohort = await _measure_cohort_with_rtt(
             cell,
-            seed=config.base.seed - 1,
+            seed=config.base.seed + 990_000,
             config=config,
             endpoint_provider=endpoint_provider,
             constants=constants,
@@ -575,29 +608,68 @@ async def run_m5_sweep(
 ) -> Run:
     """Execute the full M5 sweep and return the populated ``Run`` record.
 
-    When ``endpoint_provider`` is None, the harness uses
-    ``modal_endpoint.provide_endpoint`` (full deploy / teardown). Tests pass
-    a stub provider for unit-level verification without contacting Modal.
+    When ``endpoint_provider`` is None, the harness deploys via
+    ``modal_endpoint.provide_endpoint`` once at the top of the sweep,
+    captures the published ``(target, credentials, metadata)`` tuple, and
+    threads a *frozen* provider into the rest of the sweep so every cohort
+    reuses the same Modal endpoint instead of re-deploying per-cohort
+    (which would multiply Modal cost by ~50× and the AsyncUsageWarning by
+    the same factor). Tests pass a stub provider directly (typically
+    ``serve_in_process_adapter``) and bypass the deploy-once wrapper.
     """
-    if endpoint_provider is None:
-        from functools import partial
+    if endpoint_provider is not None:
+        # Test path / explicit provider — call directly, no deploy-once
+        # wrapper.
+        return await _run_m5_sweep_impl(config, endpoint_provider, progress)
 
-        from vllm_grpc_bench import modal_endpoint
+    # No provider given → deploy via Modal and freeze the tuple.
+    from vllm_grpc_bench import modal_endpoint
 
-        if config.skip_deploy_endpoint:
-            endpoint_provider = partial(
-                modal_endpoint.static_endpoint_provider,
-                target=config.skip_deploy_endpoint,
-                token_env=config.token_env,
+    if config.skip_deploy_endpoint:
+        # --m5-skip-deploy → static_endpoint_provider is cheap (no app.run),
+        # but the frozen-tuple wrapper still keeps the per-cohort flow uniform.
+        deploy_ctx = modal_endpoint.static_endpoint_provider(
+            _DummyEngine(),
+            M1_BASELINE,
+            target=config.skip_deploy_endpoint,
+            token_env=config.token_env,
+        )
+    else:
+        deploy_ctx = modal_endpoint.provide_endpoint(
+            _DummyEngine(),
+            M1_BASELINE,
+            region=config.modal_region,
+            token_env=config.token_env,
+        )
+    async with deploy_ctx as endpoint_tuple:
+        target, credentials, metadata = endpoint_tuple
+        if progress:
+            print(
+                f"[deploy] M5 endpoint={target} (deploy once for the full sweep)",
+                flush=True,
             )
-        else:
-            endpoint_provider = partial(
-                modal_endpoint.provide_endpoint,
-                region=config.modal_region,
-                token_env=config.token_env,
-            )
-    assert endpoint_provider is not None
+        frozen = make_frozen_endpoint_provider(target, credentials, metadata)
+        return await _run_m5_sweep_impl(config, frozen, progress)
 
+
+class _DummyEngine:
+    """Placeholder passed to ``provide_endpoint`` for ``EndpointProvider``
+    Protocol parity. The Modal-side server runs its own ``MockEngine``; the
+    harness side never touches this object.
+    """
+
+
+async def _run_m5_sweep_impl(
+    config: M5SweepConfig,
+    endpoint_provider: EndpointProvider,
+    progress: bool,
+) -> Run:
+    """Inner sweep body — assumes ``endpoint_provider`` is already set up.
+
+    Split out from ``run_m5_sweep`` so the Modal deploy-once wrapper can
+    enter ``provide_endpoint`` exactly once at the top of the sweep and
+    pass a frozen tuple-yielding provider here for per-cohort reuse.
+    """
     constants = load_m4_constants(config.m4_report_path)
     run_started = time.monotonic()
     cohorts: list[RunCohort] = []
@@ -777,10 +849,7 @@ async def build_m5_frozen_channel_baselines(
         list(shared_baselines.values()) + candidate_cohorts,
         shared_baselines,
     )
-    winners_by_path_axis: dict[Path_, dict[str, str]] = {
-        p: {}
-        for p in config.base.paths
-    }
+    winners_by_path_axis: dict[Path_, dict[str, str]] = {p: {} for p in config.base.paths}
     for rec in recs:
         if rec.verdict != "recommend" or rec.winning_config is None:
             continue

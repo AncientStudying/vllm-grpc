@@ -4,9 +4,14 @@
 Hosts the M4 ``MockEngine`` behind M3's production-shape servicers
 (``M3CompletionsServicer`` / ``M3ChatServicer``) plus a tiny ``HealthServicer``
 that the harness's RTT probe (``rtt_probe.measure_rtt``) drives. The gRPC
-port is exposed via ``modal.forward(_GRPC_PORT, unencrypted=False)`` so
-Modal terminates TLS at the tunnel edge (research.md R-1). Application-level
-auth is enforced by a ``BearerTokenInterceptor`` registered on the server.
+port is exposed via ``modal.forward(_GRPC_PORT, unencrypted=True)`` — plain
+TCP tunneling. Modal's TLS-terminating HTTPS edge does not negotiate the
+HTTP/2 ALPN that gRPC requires, so an attempted ``unencrypted=False`` setup
+fails the gRPC handshake with "Cannot check peer: missing selected ALPN
+property". FR-002's auth requirement is satisfied at the application level
+by a ``BearerTokenInterceptor`` registered on the server; the harness
+attaches the token as ``authorization: Bearer …`` call metadata on every
+RPC.
 
 The harness drives this app via ``modal_endpoint.provide_endpoint`` (which
 calls ``app.run.aio()`` and reads the tunnel URL + bearer token back from
@@ -42,6 +47,13 @@ _FUNCTION_TIMEOUT_S = 60 * 60 * 12  # 12-hour cap (operator-overridable)
 
 # Modal Image: CPU-only debian-slim + the harness packages.  No GPU, no vLLM
 # install — the M5 server uses ``MockEngine`` (no model dependency).
+#
+# The local workspace packages (``vllm-grpc-gen``, ``vllm-grpc-bench``) declare
+# workspace-relative siblings (``vllm-grpc-client``) that don't resolve under
+# plain ``pip install`` inside the container. We install them with
+# ``--no-deps`` and explicitly pre-install every transitive runtime dep that
+# the M5 server actually touches at runtime (the M3 servicers + ``MockEngine``
+# only need ``grpcio``, ``numpy``, ``protobuf``).
 _image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(
@@ -52,12 +64,10 @@ _image = (
     )
     .add_local_dir("proto", "/build/proto", copy=True)
     .add_local_dir("packages/gen", "/build/packages/gen", copy=True)
-    .add_local_dir("packages/frontend", "/build/packages/frontend", copy=True)
     .add_local_dir("tools/benchmark", "/build/tools/benchmark", copy=True)
     .run_commands(
-        "pip install /build/packages/gen",
-        "pip install /build/packages/frontend",
-        "pip install /build/tools/benchmark",
+        "pip install --no-deps /build/packages/gen",
+        "pip install --no-deps /build/tools/benchmark",
     )
 )
 
@@ -75,7 +85,6 @@ async def serve_bench(token: str, region: str) -> dict[str, object]:
     unencrypted=False)`` so Modal terminates TLS, then publishes the tunnel
     URL + token + region on the shared ``modal.Dict``.
     """
-    from collections.abc import Awaitable, Callable
     from typing import Any
 
     import grpc
@@ -147,21 +156,27 @@ async def serve_bench(token: str, region: str) -> dict[str, object]:
     d = modal.Dict.from_name(_DICT_NAME, create_if_missing=True)
     started = time.monotonic()
     try:
-        with modal.forward(_GRPC_PORT, unencrypted=False) as tunnel:
-            # tunnel.url for HTTPS-style endpoints; tunnel.tcp_socket for raw
-            # TCP. With unencrypted=False, Modal returns a host:port the
-            # client can pair with grpc.ssl_channel_credentials().
-            try:
-                endpoint = tunnel.url
-            except AttributeError:
-                host, port = tunnel.tcp_socket
-                endpoint = f"{host}:{port}"
-            d.put("endpoint", endpoint)
-            d.put("token", token)
-            d.put("region", region)
-            d.put("ready", True)
+        # Plain TCP tunnel — Modal's HTTPS edge does not negotiate the HTTP/2
+        # ALPN that gRPC requires, so ``unencrypted=False`` causes the gRPC
+        # client to fail with "Cannot check peer: missing selected ALPN
+        # property." We use TCP tunneling instead and rely on the application-
+        # level ``_BearerTokenInterceptor`` for FR-002 auth (the same pattern
+        # used by ``scripts/python/modal_frontend_serve.py``).
+        # ``modal.forward.aio`` is the async variant — silences the
+        # ``AsyncUsageWarning`` Modal emits when the blocking variant is used
+        # inside an async function.
+        async with modal.forward.aio(_GRPC_PORT, unencrypted=True) as tunnel:
+            host, port = tunnel.tcp_socket
+            endpoint = f"{host}:{port}"
+            # ``d`` here is a Modal Dict accessed from inside an async
+            # ``@app.function``; use the ``.aio`` variants so we don't block
+            # the event loop (also silences ``AsyncUsageWarning``).
+            await d.put.aio("endpoint", endpoint)
+            await d.put.aio("token", token)
+            await d.put.aio("region", region)
+            await d.put.aio("ready", True)
             # Block until the harness signals teardown.
-            while not d.get("teardown", default=False):
+            while not await d.get.aio("teardown", default=False):
                 if time.monotonic() - started > _FUNCTION_TIMEOUT_S - 30:
                     # Self-exit before Modal's hard cap to allow clean teardown.
                     break
@@ -171,7 +186,7 @@ async def serve_bench(token: str, region: str) -> dict[str, object]:
         # Best-effort cleanup so stale handshake state doesn't poison a future run.
         for key in ("endpoint", "token", "region", "ready", "teardown"):
             with contextlib.suppress(Exception):
-                d.pop(key, None)
+                await d.pop.aio(key)
 
     return {"ok": True, "wallclock_s": time.monotonic() - started}
 
