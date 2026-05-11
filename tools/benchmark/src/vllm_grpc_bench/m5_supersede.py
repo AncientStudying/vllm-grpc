@@ -8,17 +8,26 @@ and emits a ``SupersedesM4Entry`` for every M4 cell where either:
 * the M5 verdict differs from the M4 verdict on either the time metric or
   the bytes metric.
 
-``expected_class`` classifies each row per the four-value taxonomy from
-``data-model.md``:
+``expected_class`` classifies each row per a five-value taxonomy that
+extends the original four values from ``data-model.md``:
 
 * ``verdict_confirmed`` — verdicts match on both metrics (still recorded so
   loopback-caveat resolution is traceable).
 * ``loopback_resolution`` — M4 had ``loopback_caveat == True`` AND verdict
-  changed.
+  changed. The headline M5 case.
 * ``transport_resolution`` — axis is ``keepalive`` / ``http2_framing`` AND
-  M4 had no loopback caveat AND verdict changed.
-* ``unexpected_supersession`` — axis is ``max_message_size`` / ``compression``
-  AND verdict changed.
+  M4 had no loopback caveat AND verdict changed (real-RTT effect M4 missed
+  for reasons other than the loopback caveat).
+* ``bound_classifier_transition`` — verdict change is explained by the
+  boundedness classifier moving (M4 ``client_bound`` / ``noise_bounded`` →
+  M5 unbound, or M5 ``server_bound`` firing on a cell M4 couldn't classify).
+  These are methodology-driven transitions, not real disagreements; M5's
+  verdict is the more defensible one. See ``_classify_expected`` for the
+  precise detection criterion.
+* ``unexpected_supersession`` — axis is ``max_message_size`` /
+  ``compression`` AND verdict changed AND the change is *not* a
+  bound-classifier transition. Genuine surprise; reader should investigate
+  before adopting.
 
 For verdict-changed entries on the time metric, ``citations`` is populated
 with structured cross-references into the cloned vLLM / grpcio source
@@ -114,12 +123,55 @@ def _axis_citations(axis: str) -> tuple[Citation, ...]:
     return ()
 
 
-def _classify_expected(axis: str, m4_loopback_caveat: bool, verdict_changed: bool) -> ExpectedClass:
-    """Four-value classifier per spec Edge Cases."""
+_BOUND_VERDICTS: frozenset[str] = frozenset({"client_bound", "noise_bounded", "server_bound"})
+
+
+def _classify_expected(
+    axis: str,
+    m4_loopback_caveat: bool,
+    verdict_changed: bool,
+    m4_verdict_time: str = "no_winner",
+    m5_verdict_time: str = "no_winner",
+) -> ExpectedClass:
+    """Five-value classifier (extends the original spec Edge Cases taxonomy).
+
+    The fifth value, ``bound_classifier_transition``, captures verdict changes
+    that are explained by the *boundedness classifier* moving rather than by a
+    real transport-layer effect or a measurement-noise artifact. Two
+    structural patterns hit this class on the M5/M4 join:
+
+    * ``client_bound → recommend/no_winner`` — M4 emitted ``client_bound``
+      when the candidate delta sat below the baseline's own per-RPC jitter
+      floor (a loopback measurement artifact). On real-wire transport that
+      jitter floor is no longer the limit (RTT dominates by ~3 orders of
+      magnitude), so M5 sees the CI honestly. The verdict literally changed
+      but the *information* is the same — M5's verdict is the more defensible
+      one.
+    * ``no_winner → server_bound`` — M5's R-4 classifier detects cells where
+      remote-server overhead dominates transport. M4 structurally cannot fire
+      this classifier (loopback's "server" is the same process as the
+      client), so this transition is methodology-driven, not data-driven.
+
+    Without the new class, both patterns end up in ``unexpected_supersession``
+    where they incorrectly prime the reader to "investigate before adopting."
+    The bound-classifier transitions don't need investigation — they're
+    explainable and M5's verdict is the right one.
+
+    Detection criterion (precise): the M4 time-metric verdict is in
+    ``{client_bound, noise_bounded}`` and the M5 verdict is not, OR the M5
+    verdict is ``server_bound`` and the M4 verdict is not. This is checked
+    before the ``transport_resolution`` / ``unexpected_supersession``
+    branches so the new class wins on the cells it applies to.
+    """
     if not verdict_changed:
         return "verdict_confirmed"
     if m4_loopback_caveat:
         return "loopback_resolution"
+    m4_was_client_or_noise_bound = m4_verdict_time in {"client_bound", "noise_bounded"}
+    m5_no_longer_bound = m5_verdict_time not in _BOUND_VERDICTS
+    m5_fired_server_bound = m5_verdict_time == "server_bound" and m4_verdict_time != "server_bound"
+    if (m4_was_client_or_noise_bound and m5_no_longer_bound) or m5_fired_server_bound:
+        return "bound_classifier_transition"
     if axis in ("keepalive", "http2_framing"):
         return "transport_resolution"
     return "unexpected_supersession"
@@ -142,6 +194,7 @@ def _build_rationale(
     m5_ci_high: float,
     m4_loopback: bool,
     verdict_changed: bool,
+    expected_class: ExpectedClass = "verdict_confirmed",
 ) -> str:
     if not verdict_changed and m4_loopback:
         return (
@@ -160,11 +213,34 @@ def _build_rationale(
     if not _verdicts_match(m4_v_bytes, m5_v_bytes):
         parts.append(f"bytes-metric verdict changed from {m4_v_bytes!r} to {m5_v_bytes!r}")
     delta_descr = f" (M5 CI=[{m5_ci_low:.4g}, {m5_ci_high:.4g}])"
-    reason = (
-        "real RTT exposed an effect M4 could not measure on loopback"
-        if m4_loopback
-        else ("M5 disagrees with M4 under real-wire transport")
-    )
+    # Tailor the explanation by classifier-class so the reader gets the
+    # right framing: loopback caveat resolved, classifier-transition
+    # explained, or genuine real-wire disagreement worth investigating.
+    if expected_class == "loopback_resolution":
+        reason = "real RTT exposed an effect M4 could not measure on loopback"
+    elif expected_class == "bound_classifier_transition":
+        if m4_v_time in {"client_bound", "noise_bounded"} and m5_v_time not in _BOUND_VERDICTS:
+            reason = (
+                "M4's client-side classifier was a loopback jitter-floor "
+                "artifact; on real wire the jitter floor is dominated by RTT, "
+                "so M5 sees the CI honestly — M5's verdict is the more "
+                "defensible one"
+            )
+        elif m5_v_time == "server_bound":
+            reason = (
+                "M5's R-4 classifier detected remote-server overhead "
+                "dominating transport — a classification M4 structurally "
+                "cannot fire on loopback (same-process server)"
+            )
+        else:
+            reason = "boundedness classifier moved between M4 and M5"
+    elif expected_class == "transport_resolution":
+        reason = (
+            "RTT-bounded axis effect surfaced on real wire that M4's "
+            "loopback measurement could not exercise"
+        )
+    else:  # unexpected_supersession
+        reason = "M5 disagrees with M4 under real-wire transport"
     return f"{'; '.join(parts)}{delta_descr}: {reason}"
 
 
@@ -258,7 +334,13 @@ def build_supersedes_m4_table(run: Run, m4_report_path: Path) -> list[Supersedes
         time_changed = m4_v_time != m5_v_time
         bytes_changed = m4_v_bytes != m5_v_bytes
         verdict_changed = time_changed or bytes_changed
-        expected = _classify_expected(axis, m4_loopback, verdict_changed)
+        expected = _classify_expected(
+            axis,
+            m4_loopback,
+            verdict_changed,
+            m4_verdict_time=m4_v_time,
+            m5_verdict_time=m5_v_time,
+        )
         ci_lower = float(m5_cell.get("ci_lower") or 0.0)
         ci_upper = float(m5_cell.get("ci_upper") or 0.0)
         if ci_lower > ci_upper:
@@ -280,6 +362,7 @@ def build_supersedes_m4_table(run: Run, m4_report_path: Path) -> list[Supersedes
             m5_ci_high=ci_upper,
             m4_loopback=m4_loopback,
             verdict_changed=verdict_changed,
+            expected_class=expected,
         )
         # Emit a supersession row when:
         #   (a) M4 had loopback_caveat=True (mandatory per FR-015), OR

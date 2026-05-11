@@ -5537,9 +5537,9 @@
       "m5_verdict_bytes": "no_winner",
       "m5_supporting_ci_lower": 0.0,
       "m5_supporting_ci_upper": 0.06264319245385129,
-      "rationale": "time-metric verdict changed from 'client_bound' to 'no_winner' (M5 CI=[0, 0.06264]): M5 disagrees with M4 under real-wire transport",
+      "rationale": "time-metric verdict changed from 'client_bound' to 'no_winner' (M5 CI=[0, 0.06264]): M4's client-side classifier was a loopback jitter-floor artifact; on real wire the jitter floor is dominated by RTT, so M5 sees the CI honestly \u2014 M5's verdict is the more defensible one",
       "verdict_changed": true,
-      "expected_class": "unexpected_supersession",
+      "expected_class": "bound_classifier_transition",
       "citations": [
         {
           "repo": "grpc/grpc",
@@ -5560,9 +5560,9 @@
       "m5_verdict_bytes": "no_winner",
       "m5_supporting_ci_lower": 0.0,
       "m5_supporting_ci_upper": 0.12152909468720147,
-      "rationale": "time-metric verdict changed from 'client_bound' to 'no_winner' (M5 CI=[0, 0.1215]): M5 disagrees with M4 under real-wire transport",
+      "rationale": "time-metric verdict changed from 'client_bound' to 'no_winner' (M5 CI=[0, 0.1215]): M4's client-side classifier was a loopback jitter-floor artifact; on real wire the jitter floor is dominated by RTT, so M5 sees the CI honestly \u2014 M5's verdict is the more defensible one",
       "verdict_changed": true,
-      "expected_class": "unexpected_supersession",
+      "expected_class": "bound_classifier_transition",
       "citations": [
         {
           "repo": "grpc/grpc",
@@ -5583,9 +5583,9 @@
       "m5_verdict_bytes": "no_winner",
       "m5_supporting_ci_lower": 0.0,
       "m5_supporting_ci_upper": 0.06264319245385129,
-      "rationale": "time-metric verdict changed from 'client_bound' to 'no_winner' (M5 CI=[0, 0.06264]): M5 disagrees with M4 under real-wire transport",
+      "rationale": "time-metric verdict changed from 'client_bound' to 'no_winner' (M5 CI=[0, 0.06264]): M4's client-side classifier was a loopback jitter-floor artifact; on real wire the jitter floor is dominated by RTT, so M5 sees the CI honestly \u2014 M5's verdict is the more defensible one",
       "verdict_changed": true,
-      "expected_class": "unexpected_supersession",
+      "expected_class": "bound_classifier_transition",
       "citations": [
         {
           "repo": "grpc/grpc",
@@ -5606,9 +5606,9 @@
       "m5_verdict_bytes": "no_winner",
       "m5_supporting_ci_lower": 0.0,
       "m5_supporting_ci_upper": 0.0,
-      "rationale": "time-metric verdict changed from 'no_winner' to 'server_bound' (M5 CI=[0, 0]): M5 disagrees with M4 under real-wire transport",
+      "rationale": "time-metric verdict changed from 'no_winner' to 'server_bound' (M5 CI=[0, 0]): M5's R-4 classifier detected remote-server overhead dominating transport \u2014 a classification M4 structurally cannot fire on loopback (same-process server)",
       "verdict_changed": true,
-      "expected_class": "unexpected_supersession",
+      "expected_class": "bound_classifier_transition",
       "citations": [
         {
           "repo": "grpc/grpc",
@@ -5629,9 +5629,9 @@
       "m5_verdict_bytes": "no_winner",
       "m5_supporting_ci_lower": 0.0,
       "m5_supporting_ci_upper": 0.06264319245385129,
-      "rationale": "time-metric verdict changed from 'client_bound' to 'no_winner' (M5 CI=[0, 0.06264]): M5 disagrees with M4 under real-wire transport",
+      "rationale": "time-metric verdict changed from 'client_bound' to 'no_winner' (M5 CI=[0, 0.06264]): M4's client-side classifier was a loopback jitter-floor artifact; on real wire the jitter floor is dominated by RTT, so M5 sees the CI honestly \u2014 M5's verdict is the more defensible one",
       "verdict_changed": true,
-      "expected_class": "unexpected_supersession",
+      "expected_class": "bound_classifier_transition",
       "citations": [
         {
           "repo": "grpc/grpc",
@@ -5783,9 +5783,9 @@
       "m5_verdict_bytes": "no_winner",
       "m5_supporting_ci_lower": 0.0,
       "m5_supporting_ci_upper": 0.0,
-      "rationale": "time-metric verdict changed from 'no_winner' to 'server_bound' (M5 CI=[0, 0]): M5 disagrees with M4 under real-wire transport",
+      "rationale": "time-metric verdict changed from 'no_winner' to 'server_bound' (M5 CI=[0, 0]): M5's R-4 classifier detected remote-server overhead dominating transport \u2014 a classification M4 structurally cannot fire on loopback (same-process server)",
       "verdict_changed": true,
-      "expected_class": "unexpected_supersession",
+      "expected_class": "bound_classifier_transition",
       "citations": [
         {
           "repo": "grpc/grpc",
@@ -5812,9 +5812,9 @@
       "m5_verdict_bytes": "no_winner",
       "m5_supporting_ci_lower": 0.0,
       "m5_supporting_ci_upper": 0.06264319245385129,
-      "rationale": "time-metric verdict changed from 'client_bound' to 'no_winner' (M5 CI=[0, 0.06264]): M5 disagrees with M4 under real-wire transport",
+      "rationale": "time-metric verdict changed from 'client_bound' to 'no_winner' (M5 CI=[0, 0.06264]): M4's client-side classifier was a loopback jitter-floor artifact; on real wire the jitter floor is dominated by RTT, so M5 sees the CI honestly \u2014 M5's verdict is the more defensible one",
       "verdict_changed": true,
-      "expected_class": "unexpected_supersession",
+      "expected_class": "bound_classifier_transition",
       "citations": [
         {
           "repo": "grpc/grpc",
@@ -5841,9 +5841,9 @@
       "m5_verdict_bytes": "no_winner",
       "m5_supporting_ci_lower": 0.0,
       "m5_supporting_ci_upper": 0.0,
-      "rationale": "time-metric verdict changed from 'no_winner' to 'server_bound' (M5 CI=[0, 0]): M5 disagrees with M4 under real-wire transport",
+      "rationale": "time-metric verdict changed from 'no_winner' to 'server_bound' (M5 CI=[0, 0]): M5's R-4 classifier detected remote-server overhead dominating transport \u2014 a classification M4 structurally cannot fire on loopback (same-process server)",
       "verdict_changed": true,
-      "expected_class": "unexpected_supersession",
+      "expected_class": "bound_classifier_transition",
       "citations": [
         {
           "repo": "grpc/grpc",

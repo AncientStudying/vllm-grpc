@@ -164,7 +164,9 @@ class TestExpectedClassClassifier:
         assert entries[0].citations
 
     def test_unexpected_supersession(self, tmp_path: Path) -> None:
-        # Axis is max_message_size (non-RTT-bounded) and verdict changed.
+        # Axis is max_message_size (non-RTT-bound) and verdict changed from
+        # no_winner → recommend (NOT a bound-classifier transition: neither
+        # side is a bound verdict literal).
         m4_path = _write_m4_report(
             tmp_path / "m4.json",
             recommendations=[
@@ -181,6 +183,98 @@ class TestExpectedClassClassifier:
         entries = build_supersedes_m4_table(run, m4_path)
         assert len(entries) == 1
         assert entries[0].expected_class == "unexpected_supersession"
+
+    def test_bound_classifier_transition_client_bound_to_no_winner(self, tmp_path: Path) -> None:
+        """Refinement — M4's ``client_bound`` was a loopback jitter-floor
+        artifact; on real wire that floor is dominated by RTT, so M5 sees
+        the CI honestly as ``no_winner``. The verdict literally changed but
+        the *information* is the same; this should classify as
+        ``bound_classifier_transition``, not ``unexpected_supersession``.
+        """
+        m4_path = _write_m4_report(
+            tmp_path / "m4.json",
+            recommendations=[
+                {
+                    "axis": "max_message_size",
+                    "applies_to_path": "embed",
+                    "applies_to_widths": [4096],
+                    "verdict": "client_bound",
+                }
+            ],
+            loopback_caveat_axes=[],
+        )
+        run = _m5_run_with_recs([_rec("max_message_size", "embed", 4096, "no_winner")])
+        entries = build_supersedes_m4_table(run, m4_path)
+        assert len(entries) == 1
+        assert entries[0].expected_class == "bound_classifier_transition"
+        assert entries[0].verdict_changed is True
+
+    def test_bound_classifier_transition_no_winner_to_server_bound(self, tmp_path: Path) -> None:
+        """M5's ``server_bound`` classifier (R-4) fires on cells where
+        remote-server overhead dominates transport — a classification M4
+        structurally cannot fire (loopback's "server" is the same process
+        as the client). The transition is methodology-driven, not data-
+        driven; classify as ``bound_classifier_transition``.
+        """
+        from vllm_grpc_bench.m3_types import Recommendation
+
+        m4_path = _write_m4_report(
+            tmp_path / "m4.json",
+            recommendations=[
+                {
+                    "axis": "compression",
+                    "applies_to_path": "embed",
+                    "applies_to_widths": [4096],
+                    "verdict": "no_winner",
+                }
+            ],
+            loopback_caveat_axes=[],
+        )
+        # The Recommendation dataclass enforces recommend-only invariants on
+        # winning_config / candidate_ci_lower, so we build a server_bound
+        # rec inline (those invariants don't apply to non-recommend verdicts).
+        server_bound_rec = Recommendation(
+            axis="compression",
+            applies_to_path="embed",
+            applies_to_widths=frozenset({4096}),
+            verdict="server_bound",
+            baseline_ci_upper=0.0,
+            citation="x",
+            notes="server overhead dominates",
+            corpus_subset="m1_embed",
+        )
+        run = _m5_run_with_recs([server_bound_rec])
+        entries = build_supersedes_m4_table(run, m4_path)
+        assert len(entries) == 1
+        assert entries[0].expected_class == "bound_classifier_transition"
+
+    def test_loopback_resolution_takes_precedence_over_bound_transition(
+        self, tmp_path: Path
+    ) -> None:
+        """Precedence guard: when M4 had a loopback caveat AND the verdict
+        change happens to match the bound-classifier pattern, the
+        ``loopback_resolution`` label wins. The headline M5 case must keep
+        its existing label.
+        """
+        m4_path = _write_m4_report(
+            tmp_path / "m4.json",
+            recommendations=[
+                {
+                    "axis": "keepalive",
+                    "applies_to_path": "embed",
+                    "applies_to_widths": [2048],
+                    "verdict": "client_bound",
+                }
+            ],
+            loopback_caveat_axes=["keepalive"],
+        )
+        run = _m5_run_with_recs([_rec("keepalive", "embed", 2048, "recommend")])
+        entries = build_supersedes_m4_table(run, m4_path)
+        assert len(entries) == 1
+        # loopback_resolution is checked BEFORE bound_classifier_transition;
+        # the M4 loopback caveat takes priority even though the verdict
+        # change also matches the bound-transition pattern.
+        assert entries[0].expected_class == "loopback_resolution"
 
 
 class TestSupersedesM4BoundaryCases:

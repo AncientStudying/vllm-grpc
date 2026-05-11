@@ -421,6 +421,7 @@ ExpectedClass = Literal[
     "verdict_confirmed",
     "loopback_resolution",
     "transport_resolution",
+    "bound_classifier_transition",
     "unexpected_supersession",
 ]
 
