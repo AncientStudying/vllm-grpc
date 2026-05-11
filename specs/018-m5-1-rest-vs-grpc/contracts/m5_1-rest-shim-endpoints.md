@@ -1,0 +1,132 @@
+# Contract: M5.1 FastAPI REST shim endpoints
+
+The FastAPI shim inside the M5.1 Modal app exposes three endpoints. All are HTTP/1.1; the shim does not negotiate HTTP/2. The shim is internal to the M5.1 measurement run — it is **not** a production REST API. It exists solely to give the REST cohort a methodologically clean path into the same MockEngine the gRPC servicers use.
+
+## `POST /v1/chat/completions`
+
+OpenAI-compatible chat completion. Behavior depends on `stream` field in the request body.
+
+### Request (JSON)
+
+```json
+{
+  "model": "mock",
+  "messages": [
+    {"role": "user", "content": "<prompt string>"}
+  ],
+  "stream": true,
+  "max_tokens": 512,
+  "temperature": 1.0
+}
+```
+
+- `model` is always `"mock"`; the field exists for OpenAI-API shape compatibility but the shim ignores it (MockEngine is the only engine).
+- `messages` carries a single user-role message; the shim concatenates `content` strings into a flat prompt for MockEngine.generate.
+- `stream` MUST be `true` for M5.1 chat_stream cohorts (per Clarifications 2026-05-11). The shim accepts `stream: false` (returns a single JSON response) for completeness but M5.1 cohorts always set `true`.
+- `max_tokens`, `temperature` honored; defaults match MockEngine's defaults.
+
+### Response (SSE when `stream: true`)
+
+```text
+HTTP/1.1 200 OK
+Content-Type: text/event-stream
+Cache-Control: no-cache
+Connection: keep-alive
+Transfer-Encoding: chunked
+
+data: {"id":"...","choices":[{"delta":{"role":"assistant","content":"<chunk1>"},"index":0}]}
+
+data: {"id":"...","choices":[{"delta":{"content":"<chunk2>"},"index":0}]}
+
+...
+
+data: [DONE]
+
+```
+
+- Each SSE event carries one MockEngine-emitted chunk.
+- The harness's REST cohort runner records the wall-clock to the **first non-empty `data:` line** as TTFT.
+- The final event is `data: [DONE]` (OpenAI convention); the harness uses receipt of `[DONE]` as the cohort's "request complete" anchor.
+
+### Response (JSON when `stream: false`)
+
+OpenAI-compatible single-response shape. Not used by M5.1 cohorts; available for ad-hoc validation only.
+
+## `POST /v1/embeddings`
+
+Embeddings endpoint accepting either a text input or a base64-encoded prompt-embedding tensor. M5.1's embed cohort exercises the latter (matches M1's Phase-6 methodology).
+
+### Request (JSON)
+
+```json
+{
+  "model": "mock",
+  "input_kind": "prompt_embedding_b64",
+  "input": "<base64-encoded raw float32 tensor bytes>",
+  "hidden_size": 4096
+}
+```
+
+- `input_kind: "prompt_embedding_b64"` MUST be set for M5.1 cohorts. The shim base64-decodes `input` into raw bytes and passes those bytes plus `hidden_size` to MockEngine's existing embed path.
+- `input_kind: "text"` is accepted (text → MockEngine encodes → embedding response) but not used by M5.1 cohorts.
+- `hidden_size` MUST be 2048, 4096, or 8192. Mismatch with the input tensor's actual byte length raises HTTP 422.
+
+### Response (JSON)
+
+```json
+{
+  "model": "mock",
+  "data": [
+    {"embedding": "<base64-encoded raw float32 tensor bytes>", "index": 0}
+  ]
+}
+```
+
+The harness's REST cohort runner records:
+- Wall-clock from request-send-completion to response-recv-completion (cohort's per-request wall-clock).
+- Shim overhead: server-side wall-clock from FastAPI handler entry to `MockEngine.embed` return.
+- Request bytes (`request_bytes_median` field on `RESTCohortRecord`): the JSON body length.
+- Response bytes (`response_bytes_median` field): the JSON response length.
+
+## `GET /healthz`
+
+Lightweight liveness endpoint. No bearer-auth gating (the auth middleware excludes this path). Used by the harness's RTT probe (research.md R-3).
+
+### Request
+
+```text
+GET /healthz HTTP/1.1
+```
+
+### Response
+
+```json
+{"ok": true}
+```
+
+Response is intentionally tiny so RTT probes pay minimal serialization cost.
+
+## Authentication
+
+All `/v1/*` endpoints require `Authorization: Bearer <token>` matching the `MODAL_BENCH_TOKEN` value. Missing or mismatched token returns HTTP 401 with body `{"error": "unauthorized"}`. The FastAPI middleware short-circuits the request **before** the body is parsed (research.md R-8) so auth failures cost the harness no extra time.
+
+`/healthz` is **not** gated by bearer auth (the auth middleware skips it). This is deliberate: the RTT probe (which runs frequently) should not pay bearer-validation overhead.
+
+## Error responses
+
+| HTTP code | When |
+|-----------|------|
+| 400 | Malformed JSON in request body |
+| 401 | Missing or mismatched bearer token |
+| 422 | Pydantic validation failure (e.g., `hidden_size: 1024` on embed) |
+| 500 | MockEngine raised an exception (harness treats this as cohort-irrecoverable, exit code 7) |
+
+Error response bodies are always a single-field JSON: `{"error": "<short message>"}`. No traceback is exposed (the Modal logs carry the traceback).
+
+## Out of scope for M5.1
+
+- Streaming `/v1/embeddings` (no SSE for embeddings; the M1 baseline did not stream embed responses either).
+- `model` field validation (the field is accepted-then-ignored).
+- OpenAI's `n` field for multi-completion (M5.1 sends single completions only).
+- Function-calling, tool-use, vision, anything beyond a single user-role message.
+- HTTPS-edge TLS configuration (Modal-managed; the shim does not configure TLS).
