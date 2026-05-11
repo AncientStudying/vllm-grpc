@@ -29,6 +29,7 @@ def test_comparison_verdict_literal_contains_required_values() -> None:
         "tuned_grpc_multiplexed_recommend",
         "tuned_grpc_channels_recommend",
         "tuned_grpc_recommend",
+        "default_grpc_recommend",
         "rest_recommend",
         "no_winner",
         "comparison_unavailable",

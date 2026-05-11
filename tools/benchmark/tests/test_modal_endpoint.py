@@ -78,6 +78,10 @@ class TestStripScheme:
             ("grpcs://r3.modal.host:54321", "r3.modal.host:54321"),
             ("https://r3.modal.host:54321", "r3.modal.host:54321"),
             ("grpc://r3.modal.host:54321", "r3.modal.host:54321"),
+            # M5.1's serve_bench writes this scheme to the handshake dict;
+            # the stripper MUST recognize it or gRPC's DNS resolver chokes
+            # on the literal "tcp+plaintext://" prefix.
+            ("tcp+plaintext://r434.modal.host:41729", "r434.modal.host:41729"),
             ("r3.modal.host:54321", "r3.modal.host:54321"),  # already bare
         ],
     )

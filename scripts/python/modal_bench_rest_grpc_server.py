@@ -131,11 +131,23 @@ async def serve_bench(token: str, region: str) -> dict[str, object]:
     d = modal.Dict.from_name(_DICT_NAME, create_if_missing=True)
     started = time.monotonic()
     try:
+        # Both protocols use plain-TCP modal.forward to eliminate the
+        # routing asymmetry that arises if REST goes through Modal's HTTPS
+        # edge (TLS-terminated, anycast-routed near client) while gRPC
+        # goes direct via plain TCP. The smoke run measured a ~2× RTT gap
+        # (REST ~185 ms, gRPC ~360 ms) on identical hardware in the same
+        # region — that's tunnel-routing asymmetry, not protocol cost.
+        # Forcing REST through plain-TCP too holds the network path
+        # constant so the per-cell verdict reflects protocol cost alone.
+        # This voids the spec's "Modal-managed TLS for REST" assumption
+        # (FR-019) — intentional per Constitution V; documented in the
+        # methodology section of the M5.1 report.
         async with modal.forward.aio(_GRPC_PORT, unencrypted=True) as grpc_tunnel:
             grpc_host, grpc_port = grpc_tunnel.tcp_socket
             grpc_endpoint = f"tcp+plaintext://{grpc_host}:{grpc_port}"
-            async with modal.forward.aio(_REST_PORT) as rest_tunnel:
-                rest_endpoint = rest_tunnel.url
+            async with modal.forward.aio(_REST_PORT, unencrypted=True) as rest_tunnel:
+                rest_host, rest_port = rest_tunnel.tcp_socket
+                rest_endpoint = f"http://{rest_host}:{rest_port}"
                 await d.put.aio("grpc", grpc_endpoint)
                 await d.put.aio("rest", rest_endpoint)
                 await d.put.aio("token", token)

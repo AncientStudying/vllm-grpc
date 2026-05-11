@@ -299,6 +299,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="M5.1: override default report output directory (default docs/benchmarks/).",
     )
+    parser.add_argument(
+        "--m5_1-smoke",
+        action="store_true",
+        help=(
+            "M5.1: smoke mode — 3 cells (chat_stream c=1, chat_stream c=4, embed c=4) "
+            "at n=10 per cohort with rtt_probe_n=4. Covers every code path "
+            "(REST, all 4 gRPC sub-cohort kinds, both metric types) in ~90s "
+            "including Modal deploy. Pair with --m5_1-skip-deploy to iterate "
+            "in ~15-25s against a long-lived deploy."
+        ),
+    )
 
     # ---- M5 mode (cross-host time-axis validation) ----
     parser.add_argument(
@@ -1094,16 +1105,24 @@ def _build_m5_1_config(
     args: argparse.Namespace, *, rest_url: str, grpc_target: str
 ) -> M5_1SweepConfig:
     """Construct the M5_1SweepConfig from argparse args."""
-    from vllm_grpc_bench.m5_1_sweep import M5_1SweepConfig
+    from vllm_grpc_bench.m5_1_sweep import SMOKE_CELLS, M5_1SweepConfig
 
+    smoke = bool(getattr(args, "m5_1_smoke", False))
+    # Warmup: smoke uses 5 (enough to flush HTTP/2 cold-channel handshake
+    # cost without inflating wall-clock); full sweep uses --m5_1-warmup-n
+    # (default 20).
+    warmup_n = 5 if smoke else int(args.m5_1_warmup_n)
     return M5_1SweepConfig(
         rest_url=rest_url,
         grpc_target=grpc_target,
         token_env_var=str(args.m5_1_modal_token_env),
         modal_region=str(args.m5_1_modal_region),
-        n_per_cohort=100,
+        n_per_cohort=10 if smoke else 100,
+        rtt_probe_n=4 if smoke else 16,
+        warmup_n=warmup_n,
         low_rtt_threshold_ms=float(args.m5_1_rtt_exercise_threshold_ms),
         shim_overhead_warn_pct=float(args.m5_1_shim_overhead_warn_pct),
+        cells_override=list(SMOKE_CELLS) if smoke else None,
     )
 
 

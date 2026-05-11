@@ -107,9 +107,11 @@ M5.1's JSON report at `docs/benchmarks/m5_1-rest-vs-grpc.json` is a **strict sup
     },
     {
       "grpc_sub_cohort": "default_grpc",
-      "verdict": "rest_recommend",
-      "delta_pct": 8.7,
-      "ci_pct": [4.1, 13.3],
+      // When default_grpc wins, the literal is `default_grpc_recommend`
+      // (not the tuned-multiplexed label). One literal per sub-cohort kind.
+      "verdict": "default_grpc_recommend",
+      "delta_pct": -8.7,
+      "ci_pct": [-13.3, -4.1],
       "metric": "ttft"
     }
   ],

@@ -15,6 +15,7 @@ import pytest
 from vllm_grpc_bench.m3_types import GRPCSubCohortKind, RTTRecord, Sample
 from vllm_grpc_bench.m5_1_grpc_cohort import GRPCCohortResult
 from vllm_grpc_bench.m5_1_sweep import (
+    SMOKE_CELLS,
     CellSpec,
     _bootstrap_delta_ci,
     _CellMeasurement,
@@ -24,6 +25,23 @@ from vllm_grpc_bench.m5_1_sweep import (
     frozen_tuned_channel_config,
 )
 from vllm_grpc_bench.rest_cohort import RESTCohortRecord, RESTCohortResult, RESTCohortSample
+
+
+def test_smoke_cells_cover_every_sub_cohort_kind() -> None:
+    """SMOKE_CELLS exercises every M5.1 code path: REST, tuned_grpc (c=1
+    degenerate), tuned_grpc_multiplexed + tuned_grpc_channels (c>=2),
+    default_grpc (every cell), TTFT (chat_stream), wallclock (embed).
+    """
+    assert len(SMOKE_CELLS) == 3
+    paths = {c.path for c in SMOKE_CELLS}
+    assert paths == {"chat_stream", "embed"}, "smoke set must cover both metric types"
+    concurrencies = {c.concurrency for c in SMOKE_CELLS}
+    assert 1 in concurrencies, "smoke set must include a c=1 cell (tuned_grpc degenerate)"
+    assert any(c.concurrency >= 2 for c in SMOKE_CELLS), (
+        "smoke set must include a c>=2 cell (dual sub-cohort split)"
+    )
+    # All h=2048 (cheapest payload — smoke prioritizes coverage over width sweep).
+    assert {c.hidden_size for c in SMOKE_CELLS} == {2048}
 
 
 def test_enumerate_cells_produces_18_tuples() -> None:
@@ -79,7 +97,12 @@ def test_bootstrap_delta_ci_recognizes_rest_faster() -> None:
 
 
 def test_verdict_mapper_emits_correct_literals() -> None:
-    """T015 (e): verdict literal mapper handles each sub-cohort kind."""
+    """T015 (e): verdict literal mapper handles each sub-cohort kind.
+
+    One literal per sub-cohort kind — including ``default_grpc_recommend``
+    when the M1-default-channel control cohort beats REST. No fallthrough
+    collapses one sub-cohort's win into another's label.
+    """
     # CI strictly negative → gRPC sub-cohort recommend.
     assert (
         _verdict_for_sub_cohort("tuned_grpc_multiplexed", -20.0, (-25.0, -15.0))
@@ -90,10 +113,16 @@ def test_verdict_mapper_emits_correct_literals() -> None:
         == "tuned_grpc_channels_recommend"
     )
     assert _verdict_for_sub_cohort("tuned_grpc", -8.0, (-12.0, -4.0)) == "tuned_grpc_recommend"
+    # default_grpc winning gets its own literal, NOT the tuned-multiplexed one.
+    assert (
+        _verdict_for_sub_cohort("default_grpc", -9.0, (-12.0, -6.0)) == "default_grpc_recommend"
+    )
     # CI strictly positive → rest_recommend.
     assert _verdict_for_sub_cohort("tuned_grpc_multiplexed", 12.0, (8.0, 16.0)) == "rest_recommend"
+    assert _verdict_for_sub_cohort("default_grpc", 12.0, (8.0, 16.0)) == "rest_recommend"
     # CI spans zero → no_winner.
     assert _verdict_for_sub_cohort("tuned_grpc_multiplexed", 0.5, (-3.0, 4.0)) == "no_winner"
+    assert _verdict_for_sub_cohort("default_grpc", 0.5, (-3.0, 4.0)) == "no_winner"
 
 
 def _fake_grpc_result(

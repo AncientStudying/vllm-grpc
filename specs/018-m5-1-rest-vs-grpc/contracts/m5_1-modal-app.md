@@ -52,20 +52,34 @@ Both servers share the same `MockEngine` instance (research.md R-1, R-8). Uvicor
 
 ## Exposed tunnel ports
 
-Two `modal.forward()` calls inside the function:
+> **Methodology revision (2026-05-11, post-smoke):** both protocols use
+> plain-TCP `modal.forward(..., unencrypted=True)` so the network path is
+> held constant. The smoke run measured a ~2× RTT gap between REST (Modal
+> HTTPS edge, anycast-routed near client) and gRPC (plain-TCP tunnel,
+> direct to region) on identical hardware in the same region. That
+> asymmetry would dominate every per-cell verdict and make the
+> protocol-comparison meaningless. Forcing REST through plain-TCP too
+> voids the spec's original "REST uses Modal-managed TLS" assumption
+> (FR-019) — accepted per Constitution V (honest measurement) and
+> documented in the report's executive section.
+
+Two `modal.forward()` calls inside the function, both plain-TCP:
 
 ```python
-with modal.forward(8000) as rest_tunnel, modal.forward(50051, unencrypted=True) as grpc_tunnel:
-    # rest_tunnel.url   → "https://<random>.modal.host"
-    # grpc_tunnel.url   → "tcp://<random>.modal.host:50051"
-    # Write both to modal.Dict so the harness can read them.
-    endpoint_dict["rest"] = rest_tunnel.url
-    endpoint_dict["grpc"] = f"tcp+plaintext://{grpc_tunnel.host}:{grpc_tunnel.port}"
+async with (
+    modal.forward.aio(_GRPC_PORT, unencrypted=True) as grpc_tunnel,
+    modal.forward.aio(_REST_PORT, unencrypted=True) as rest_tunnel,
+):
+    grpc_host, grpc_port = grpc_tunnel.tcp_socket
+    rest_host, rest_port = rest_tunnel.tcp_socket
+    endpoint_dict["grpc"] = f"tcp+plaintext://{grpc_host}:{grpc_port}"
+    endpoint_dict["rest"] = f"http://{rest_host}:{rest_port}"
     endpoint_dict["ready"] = True
-    await _serve()
 ```
 
-REST uses Modal's HTTPS-terminated edge (default). gRPC uses plain-TCP per M5's documented ALPN-incompatibility finding for Modal's HTTPS edge.
+gRPC uses plain-TCP per M5's documented ALPN-incompatibility finding for
+Modal's HTTPS edge. REST also uses plain-TCP per the methodology revision
+above — eliminates routing asymmetry between the two tunnels.
 
 ## Authentication
 

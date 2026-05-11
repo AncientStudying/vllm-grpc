@@ -1299,6 +1299,16 @@ def write_m5_1_markdown(run_metadata: M5_1RunMetadata, path: Path) -> Path:
         "transport + framing component only. Real-engine re-validation is "
         "deferred to M7."
     )
+    lines.append(
+        "- **Methodology — Modal tunnel topology**: both protocols use Modal's "
+        "plain-TCP `modal.forward(..., unencrypted=True)` so the network path is "
+        "held constant. The original spec assumed REST would use Modal's HTTPS "
+        "edge (TLS-terminated, anycast-routed near client); the smoke run "
+        "measured a ~2× RTT gap that would have dominated every verdict. The "
+        "FR-019 'REST uses Modal-managed TLS' assumption is voided for M5.1, "
+        "accepted per Constitution V. M1 ran REST over the HTTPS edge — that "
+        "difference is part of why M5.1 supersedes M1's time-axis findings."
+    )
     lines.append("")
 
     lines.append("## Per-cell comparison matrix")

@@ -187,7 +187,13 @@ def _verdict_for_sub_cohort(
     delta_pct: float,
     ci_pct: tuple[float, float],
 ) -> ComparisonVerdict:
-    """Map (sub_cohort_kind, delta CI) → ComparisonVerdict literal per FR-013."""
+    """Map (sub_cohort_kind, delta CI) → ComparisonVerdict literal per FR-013.
+
+    One literal per sub-cohort kind so the report labels each gRPC win
+    honestly — ``default_grpc`` wins now surface as
+    ``default_grpc_recommend`` instead of being collapsed into the
+    tuned-multiplexed literal.
+    """
     ci_low, ci_high = ci_pct
     # CI strictly < 0 → gRPC faster (recommend that sub-cohort).
     # CI strictly > 0 → REST faster (rest_recommend).
@@ -199,8 +205,9 @@ def _verdict_for_sub_cohort(
             return "tuned_grpc_channels_recommend"
         if sub_cohort_kind == "tuned_grpc":
             return "tuned_grpc_recommend"
-        # default_grpc — collapse to multiplexed-style literal for now.
-        return "tuned_grpc_multiplexed_recommend"
+        if sub_cohort_kind == "default_grpc":
+            return "default_grpc_recommend"
+        raise ValueError(f"_verdict_for_sub_cohort: unknown sub_cohort_kind {sub_cohort_kind!r}")
     if ci_low > 0:
         return "rest_recommend"
     return "no_winner"
@@ -234,6 +241,7 @@ async def dispatch_cell(
     rest_client: httpx.AsyncClient | None = None,
     timeout_s: float = 60.0,
     rtt_probe_n: int = 16,
+    warmup_n: int = 0,
 ) -> _CellMeasurement:
     """Run the cell's REST + tuned-gRPC sub-cohort(s) + default-gRPC control in series."""
     metadata: tuple[tuple[str, str], ...] = (("authorization", f"Bearer {token}"),)
@@ -249,6 +257,7 @@ async def dispatch_cell(
         hidden_size=cell.hidden_size,
         timeout_s=timeout_s,
         rtt_probe_n=rtt_probe_n,
+        warmup_n=warmup_n,
         client=rest_client,
     )
 
@@ -271,6 +280,7 @@ async def dispatch_cell(
         timeout_s=timeout_s,
         cell_id=f"grpc-tuned-mux:{cell.key}",
         rtt_probe_n=rtt_probe_n,
+        warmup_n=warmup_n,
     )
     tuned_channels: GRPCCohortResult | None = None
     if cell.concurrency >= 2:
@@ -288,6 +298,7 @@ async def dispatch_cell(
             timeout_s=timeout_s,
             cell_id=f"grpc-tuned-ch:{cell.key}",
             rtt_probe_n=rtt_probe_n,
+            warmup_n=warmup_n,
         )
 
     # 3) default-gRPC control.
@@ -305,6 +316,7 @@ async def dispatch_cell(
         timeout_s=timeout_s,
         cell_id=f"grpc-default:{cell.key}",
         rtt_probe_n=rtt_probe_n,
+        warmup_n=warmup_n,
     )
 
     return _CellMeasurement(
@@ -503,9 +515,25 @@ class M5_1SweepConfig:
     expand_n: int = 250
     timeout_s: float = 60.0
     rtt_probe_n: int = 16
+    warmup_n: int = 10
     low_rtt_threshold_ms: float = 20.0
     shim_overhead_warn_pct: float = 5.0
     m5_report_path: Path = field(default_factory=lambda: _M5_REPORT_PATH)
+    # When set, overrides the default 18-cell enumeration. Used by
+    # ``--m5_1-smoke`` to run a 3-cell minimal coverage matrix.
+    cells_override: list[CellSpec] | None = None
+
+
+# Minimal smoke cell set: covers every M5.1 code path that runs per cell —
+# both protocols (REST + gRPC), all four gRPC sub-cohort kinds (tuned_grpc
+# degenerate at c=1, tuned_grpc_multiplexed + tuned_grpc_channels at c>=2,
+# default_grpc on every cell), both metric types (TTFT for chat_stream,
+# wallclock for embed), and one h=2048 width (the cheapest payload).
+SMOKE_CELLS: tuple[CellSpec, ...] = (
+    CellSpec(path="chat_stream", hidden_size=2048, concurrency=1),
+    CellSpec(path="chat_stream", hidden_size=2048, concurrency=4),
+    CellSpec(path="embed", hidden_size=2048, concurrency=4),
+)
 
 
 @dataclass
@@ -526,7 +554,9 @@ async def run_m5_1_sweep(
     if not token:
         raise RuntimeError(f"Bearer-token env var {config.token_env_var!r} is not set.")
 
-    cells = enumerate_cells()
+    cells = (
+        list(config.cells_override) if config.cells_override is not None else enumerate_cells()
+    )
     m5_1_matrix: list[M5_1Cell] = []
     cohorts: list[RunCohort] = []
     shim_overheads_run: list[float] = []
@@ -550,6 +580,7 @@ async def run_m5_1_sweep(
             tuned_channel_config=tuned_cfg,
             timeout_s=config.timeout_s,
             rtt_probe_n=config.rtt_probe_n,
+            warmup_n=config.warmup_n,
         )
         m5_1_cell = emit_cell_verdicts(
             measurement, low_rtt_threshold_ms=config.low_rtt_threshold_ms

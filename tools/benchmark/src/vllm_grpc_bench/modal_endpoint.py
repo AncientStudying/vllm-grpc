@@ -69,9 +69,13 @@ def _strip_scheme(endpoint: str) -> str:
     Modal's ``modal.forward(unencrypted=False)`` may publish either
     ``tcp://host:port`` or ``grpcs://host:port`` depending on the Modal SDK
     version (contract m5-modal-app.md, "What the contract does NOT
-    guarantee"). gRPC channels accept the bare ``host:port`` form.
+    guarantee"). M5.1's ``serve_bench`` writes ``tcp+plaintext://host:port``
+    for the gRPC tunnel (matches the harness's documentation of the plain-
+    TCP-with-no-TLS choice forced by Modal's HTTPS edge ALPN constraint).
+    gRPC channels accept the bare ``host:port`` form.
     """
-    for prefix in ("tcp://", "grpcs://", "https://", "grpc://"):
+    # Longest prefix first so ``tcp+plaintext://`` wins over ``tcp://``.
+    for prefix in ("tcp+plaintext://", "tcp://", "grpcs://", "https://", "grpc://"):
         if endpoint.startswith(prefix):
             return endpoint[len(prefix) :]
     return endpoint

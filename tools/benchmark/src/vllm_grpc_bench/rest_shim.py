@@ -18,6 +18,7 @@ forward refs under ``from __future__ import annotations``.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import time
 import uuid
@@ -48,6 +49,11 @@ class _EmbedRequest(BaseModel):
     input_kind: str = "prompt_embedding_b64"
     input: str
     hidden_size: int
+    # M5.1 — apples-to-apples with gRPC CompletionsService.Complete (M3
+    # methodology): the embed cohort exercises ``engine.generate`` with a
+    # prompt-embedding-shaped input, not ``engine.encode``. ``max_tokens``
+    # matches M3's default so the engine work is held constant.
+    max_tokens: int = 10
 
 
 def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
@@ -150,6 +156,15 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
 
     @shim.post("/v1/embeddings")
     async def embeddings(req: _EmbedRequest) -> Any:
+        """M5.1 'embed' cohort endpoint.
+
+        Despite the OpenAI-style URL, this calls ``engine.generate`` with a
+        prompt-embedding-shaped input — matching ``M3CompletionsServicer.
+        Complete``'s engine call so the protocol comparison holds the
+        engine operation constant. The URL kept its ``/v1/embeddings`` name
+        for continuity with the contract doc and existing test wiring; the
+        operation is 'completion-from-embedding', not 'return embedding'.
+        """
         handler_entry = time.perf_counter()
         if req.input_kind not in ("prompt_embedding_b64", "text"):
             return JSONResponse({"error": "unsupported input_kind"}, status_code=422)
@@ -157,30 +172,37 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
             return JSONResponse({"error": "hidden_size must be 2048/4096/8192"}, status_code=422)
         if req.input_kind == "prompt_embedding_b64":
             try:
-                _raw = base64.b64decode(req.input, validate=True)
+                raw_bytes = base64.b64decode(req.input, validate=True)
             except (ValueError, base64.binascii.Error):  # type: ignore[attr-defined]
                 return JSONResponse({"error": "input not valid base64"}, status_code=400)
-            prompt = f"embed-h{req.hidden_size}-l{len(req.input)}"
+            # Mirror M3CompletionsServicer._completion_prompt: hash the raw
+            # embedding bytes into a deterministic prompt token so the engine
+            # produces stable per-request output across both protocols.
+            digest = hashlib.blake2b(raw_bytes, digest_size=8).hexdigest()
+            prompt: Any = f"embeds:{digest}"
         else:
             prompt = req.input
-        request_id = f"rest-embed-{uuid.uuid4().hex}"
-        import numpy as np
 
-        embedding_bytes: bytes = b""
-        async for out in engine.encode(prompt, request_id=request_id):
-            arr = out.outputs[0].embedding
-            embedding_bytes = np.asarray(arr, dtype=np.float32).tobytes()
-            break
+        class _SamplingParams:
+            def __init__(self, max_tokens: int) -> None:
+                self.max_tokens = max_tokens
+
+        sampling = _SamplingParams(req.max_tokens)
+        request_id = f"rest-embed-{uuid.uuid4().hex}"
+        # Drain the generator to its final chunk (parity with M3 Complete RPC).
+        final_text = ""
+        final_finish = "stop"
+        async for output in engine.generate(prompt, sampling, request_id=request_id):
+            if output.outputs:
+                comp = output.outputs[0]
+                final_text = comp.text
+                final_finish = comp.finish_reason or "stop"
         overhead_ms = (time.perf_counter() - handler_entry) * 1000.0
         response = JSONResponse(
             {
                 "model": "mock",
-                "data": [
-                    {
-                        "embedding": base64.b64encode(embedding_bytes).decode("ascii"),
-                        "index": 0,
-                    }
-                ],
+                "generated_text": final_text,
+                "finish_reason": final_finish,
             }
         )
         response.headers["X-Shim-Overhead-Ms"] = f"{overhead_ms:.6f}"

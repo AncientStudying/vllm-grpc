@@ -178,8 +178,13 @@ async def _single_embed_request(
     timeout_s: float,
 ) -> RESTCohortSample:
     # Build a deterministic prompt-embedding-shaped payload (raw float32, base64).
+    # Shape is (seq_len=16, hidden_size) to match M3's ``_build_embed_request``
+    # default — apples-to-apples with the gRPC cohort's payload. Pre-fix this
+    # was (hidden_size,) which made the REST payload 16× smaller than the gRPC
+    # payload and dominated the embed-cell verdicts via bandwidth bias.
+    _SEQ_LEN = 16
     rng = np.random.default_rng(seed=hidden_size)
-    tensor = rng.standard_normal(hidden_size, dtype=np.float32)
+    tensor = rng.standard_normal((_SEQ_LEN, hidden_size), dtype=np.float32)
     encoded = base64.b64encode(tensor.tobytes()).decode("ascii")
     body = {
         "model": "mock",
@@ -227,6 +232,7 @@ async def run_rest_cohort(
     timeout_s: float = 30.0,
     max_tokens: int = 64,
     rtt_probe_n: int = 32,
+    warmup_n: int = 0,
     client: httpx.AsyncClient | None = None,
 ) -> RESTCohortResult:
     """Drive ``n`` requests on the configured ``path`` with concurrency ``concurrency``.
@@ -249,7 +255,6 @@ async def run_rest_cohort(
 
     assert client is not None
     try:
-        rtt = await probe_rest_rtt(base_url, client=client, n=rtt_probe_n, timeout_s=timeout_s)
 
         async def _one_request(i: int) -> RESTCohortSample:
             if path == "chat_stream":
@@ -270,26 +275,39 @@ async def run_rest_cohort(
                 timeout_s=timeout_s,
             )
 
-        # Worker pool: c workers, each pulls work items from a queue.
-        queue: asyncio.Queue[int] = asyncio.Queue()
-        for i in range(n):
-            queue.put_nowait(i)
-        results: list[RESTCohortSample] = []
+        async def _drive_pool(count: int) -> list[RESTCohortSample]:
+            """Worker pool: ``concurrency`` workers, each pulls from a queue."""
+            q: asyncio.Queue[int] = asyncio.Queue()
+            for i in range(count):
+                q.put_nowait(i)
+            collected: list[RESTCohortSample] = []
 
-        async def _worker() -> None:
-            while True:
-                try:
-                    i = queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    return
-                try:
-                    sample = await _one_request(i)
-                    results.append(sample)
-                finally:
-                    queue.task_done()
+            async def _worker() -> None:
+                while True:
+                    try:
+                        i = q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        return
+                    try:
+                        sample = await _one_request(i)
+                        collected.append(sample)
+                    finally:
+                        q.task_done()
 
-        workers = [asyncio.create_task(_worker()) for _ in range(concurrency)]
-        await asyncio.gather(*workers)
+            workers = [asyncio.create_task(_worker()) for _ in range(concurrency)]
+            await asyncio.gather(*workers)
+            return collected
+
+        # Warmup phase — discarded. Fills the keep-alive pool and pays any
+        # per-connection HTTP/1.1 handshake cost so the measurement window
+        # starts on warm connections.
+        if warmup_n > 0:
+            await _drive_pool(warmup_n)
+        # RTT probe goes AFTER warmup so the probe channel is also warm
+        # (matches the cohort's measurement state).
+        rtt = await probe_rest_rtt(base_url, client=client, n=rtt_probe_n, timeout_s=timeout_s)
+        # Measurement phase — these samples reach the aggregator.
+        results = await _drive_pool(n)
     finally:
         if owned_client:
             await client.aclose()

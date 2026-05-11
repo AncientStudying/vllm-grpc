@@ -12,6 +12,11 @@ ComparisonVerdict = Literal[
     "tuned_grpc_channels_recommend",
     # c == 1 verdict literal (multiplexed/channels degenerate):
     "tuned_grpc_recommend",
+    # Default-gRPC (M1-default channel config) outperforms REST at this cell.
+    # One literal per sub-cohort kind so the report labels each gRPC win
+    # honestly — added 2026-05-11 after the first M5.1 full sweep surfaced
+    # default_grpc wins collapsing into the tuned-multiplexed literal.
+    "default_grpc_recommend",
     # Both-c REST recommendation:
     "rest_recommend",
     # Standard outcomes:

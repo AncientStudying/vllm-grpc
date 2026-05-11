@@ -167,6 +167,7 @@ async def run_grpc_cohort(
     timeout_s: float = 60.0,
     cell_id: str = "",
     rtt_probe_n: int = 32,
+    warmup_n: int = 0,
 ) -> GRPCCohortResult:
     """Drive ``n`` RPCs against the gRPC endpoint under the chosen sub-cohort kind.
 
@@ -190,9 +191,6 @@ async def run_grpc_cohort(
 
     # Open channel(s) once for the entire cohort lifetime.
     async with _open_n_channels(target, credentials, channel_config, channels_needed) as channels:
-        # RTT probe via the first channel.
-        rtt = await measure_rtt(channels[0], n=rtt_probe_n, metadata=metadata)
-
         samples: list[Sample] = []
 
         async def _run_one(i: int, channel: grpc.aio.Channel) -> None:
@@ -217,36 +215,53 @@ async def run_grpc_cohort(
                 )
             samples.append(sample)
 
-        if sub_cohort_kind == "tuned_grpc_channels":
-            # c channels, each runs its share of RPCs serially.
-            chunks = _split_indices(n, concurrency)
+        async def _drive_measurement(count: int, *, into_samples: bool) -> None:
+            """Run ``count`` RPCs under the cohort's sub_cohort_kind dispatch
+            pattern. If ``into_samples`` is False, samples are still appended
+            via _run_one but the caller discards them afterward.
+            """
+            if sub_cohort_kind == "tuned_grpc_channels":
+                # c channels, each runs its share of RPCs serially.
+                chunks = _split_indices(count, concurrency)
 
-            async def _channel_worker(channel_idx: int) -> None:
-                channel = channels[channel_idx]
-                for i in chunks[channel_idx]:
-                    await _run_one(i, channel)
-
-            await asyncio.gather(*(_channel_worker(i) for i in range(concurrency)))
-        else:
-            # multiplexed / default_grpc / tuned_grpc (c=1): single channel
-            # with concurrency-wide concurrent dispatch.
-            channel = channels[0]
-            queue: asyncio.Queue[int] = asyncio.Queue()
-            for i in range(n):
-                queue.put_nowait(i)
-
-            async def _worker() -> None:
-                while True:
-                    try:
-                        i = queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        return
-                    try:
+                async def _channel_worker(channel_idx: int) -> None:
+                    channel = channels[channel_idx]
+                    for i in chunks[channel_idx]:
                         await _run_one(i, channel)
-                    finally:
-                        queue.task_done()
 
-            await asyncio.gather(*(_worker() for _ in range(concurrency)))
+                await asyncio.gather(*(_channel_worker(i) for i in range(concurrency)))
+            else:
+                # multiplexed / default_grpc / tuned_grpc (c=1): single channel
+                # with concurrency-wide concurrent dispatch.
+                channel = channels[0]
+                queue: asyncio.Queue[int] = asyncio.Queue()
+                for i in range(count):
+                    queue.put_nowait(i)
+
+                async def _worker() -> None:
+                    while True:
+                        try:
+                            i = queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            return
+                        try:
+                            await _run_one(i, channel)
+                        finally:
+                            queue.task_done()
+
+                await asyncio.gather(*(_worker() for _ in range(concurrency)))
+
+        # Warmup phase — discarded. Pays the cold-channel HTTP/2 handshake
+        # cost on RPC #1 (and on each of c channels in channels-mode) so the
+        # measurement window starts on warm connections.
+        if warmup_n > 0:
+            await _drive_measurement(warmup_n, into_samples=False)
+            samples.clear()  # Drop warmup samples — they reached _run_one's
+            #                  closure but aren't part of the cohort record.
+        # RTT probe goes AFTER warmup so the probe channel is warm.
+        rtt = await measure_rtt(channels[0], n=rtt_probe_n, metadata=metadata)
+        # Measurement phase — samples reach the aggregator.
+        await _drive_measurement(n, into_samples=True)
 
     return GRPCCohortResult(
         samples=tuple(samples),

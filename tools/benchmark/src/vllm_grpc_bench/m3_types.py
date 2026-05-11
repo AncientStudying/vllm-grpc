@@ -593,6 +593,10 @@ ComparisonVerdict = Literal[
     "tuned_grpc_multiplexed_recommend",
     "tuned_grpc_channels_recommend",
     "tuned_grpc_recommend",
+    # Default-gRPC channel (M1-default config) outperforms REST at this cell.
+    # Surfaces the M1-default-channel side of the M5.1 dual sub-cohort split
+    # honestly rather than collapsing into a tuned-gRPC label.
+    "default_grpc_recommend",
     "rest_recommend",
     "no_winner",
     "comparison_unavailable",

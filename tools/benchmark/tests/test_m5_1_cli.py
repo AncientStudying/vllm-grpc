@@ -6,6 +6,7 @@ import argparse
 
 import pytest
 from vllm_grpc_bench.__main__ import (
+    _build_m5_1_config,
     _build_parser,
     _strip_endpoint_scheme,
     _validate_m5_1_args,
@@ -86,6 +87,26 @@ def test_strip_endpoint_scheme_normalizes_urls() -> None:
     assert _strip_endpoint_scheme("tcp://a.modal.host:50051") == "a.modal.host:50051"
     assert _strip_endpoint_scheme("grpcs://a.modal.host:50051") == "a.modal.host:50051"
     assert _strip_endpoint_scheme("a.modal.host:50051") == "a.modal.host:50051"
+
+
+def test_m5_1_smoke_flag_shrinks_config() -> None:
+    """--m5_1-smoke must produce a sweep config with n=10, rtt_probe_n=4,
+    and the 3-cell SMOKE_CELLS override set.
+    """
+    args = _parse(["--m5_1", "--m5_1-smoke"])
+    cfg = _build_m5_1_config(args, rest_url="http://test", grpc_target="t:50051")
+    assert cfg.n_per_cohort == 10
+    assert cfg.rtt_probe_n == 4
+    assert cfg.cells_override is not None
+    assert len(cfg.cells_override) == 3
+
+
+def test_m5_1_without_smoke_uses_full_18_cell_defaults() -> None:
+    """Absence of --m5_1-smoke must NOT shrink the cell set or n."""
+    args = _parse(["--m5_1"])
+    cfg = _build_m5_1_config(args, rest_url="http://test", grpc_target="t:50051")
+    assert cfg.n_per_cohort == 100
+    assert cfg.cells_override is None
 
 
 def test_m5_1_endpoint_pair_parsing(monkeypatch: pytest.MonkeyPatch) -> None:

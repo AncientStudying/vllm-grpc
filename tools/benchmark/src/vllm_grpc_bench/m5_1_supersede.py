@@ -92,6 +92,7 @@ def _m5_1_verdict_direction(verdict: ComparisonVerdict) -> str:
         "tuned_grpc_multiplexed_recommend",
         "tuned_grpc_channels_recommend",
         "tuned_grpc_recommend",
+        "default_grpc_recommend",
     ):
         return "grpc"
     if verdict == "rest_recommend":
