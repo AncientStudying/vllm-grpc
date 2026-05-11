@@ -241,6 +241,67 @@ def _build_parser() -> argparse.ArgumentParser:
         help="M4: output directory for transient per-iteration JSON.",
     )
 
+    # ---- M5 mode (cross-host time-axis validation) ----
+    parser.add_argument(
+        "--m5",
+        action="store_true",
+        help="Run the M5 cross-host sweep (see specs/017-m5-cross-host-validation).",
+    )
+    parser.add_argument(
+        "--m5-modal-region",
+        default="auto-far",
+        help=(
+            "M5: Modal region for the cross-host gRPC server. Sentinel "
+            "`auto-far` resolves to us-east-1; override with eu-west-1 or "
+            "ap-southeast-1 from a US/EU operator to land in the 30–100 ms RTT band."
+        ),
+    )
+    parser.add_argument(
+        "--m5-modal-token-env",
+        default="MODAL_BENCH_TOKEN",
+        help="M5: env-var name containing the per-deploy bearer token (FR-002).",
+    )
+    parser.add_argument(
+        "--m5-rtt-validity-threshold-ms",
+        type=float,
+        default=1.0,
+        help=(
+            "M5: refuse to issue verdicts on cohorts whose measured median RTT "
+            "is below this value (FR-004 same-host-fallback)."
+        ),
+    )
+    parser.add_argument(
+        "--m5-rtt-exercise-threshold-ms",
+        type=float,
+        default=20.0,
+        help=(
+            "M5: cohorts whose median RTT is below this value get "
+            "`low_rtt_caveat: true` (FR-004 exercise-threshold)."
+        ),
+    )
+    parser.add_argument(
+        "--m5-warmup-n",
+        type=int,
+        default=32,
+        help="M5: per-path warmup cohort size (R-5). Set to 0 to disable (not recommended).",
+    )
+    parser.add_argument(
+        "--m5-skip-deploy",
+        action="store_true",
+        help=(
+            "M5: skip the Modal deploy/teardown handshake; connect to an "
+            "already-running endpoint via --m5-modal-endpoint."
+        ),
+    )
+    parser.add_argument(
+        "--m5-modal-endpoint",
+        default=None,
+        help=(
+            "M5: explicit Modal tunnel endpoint (host:port) for use with "
+            "--m5-skip-deploy. Required when --m5-skip-deploy is set."
+        ),
+    )
+
     # ---- run (default) ----
     parser.add_argument("--proxy-url", required=False, default=None)
     parser.add_argument("--native-url", required=False, default=None)
@@ -721,9 +782,153 @@ def _run_m4(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_m5_config(args: argparse.Namespace) -> object:
+    """Build an ``M5SweepConfig`` from ``argparse``-parsed args.
+
+    Reuses ``_build_m4_config`` for the inherited M4 surface and layers M5
+    flags on top. Raises ``SystemExit(2)`` on validation failure (mirrors
+    M4's behavior).
+    """
+    from vllm_grpc_bench.m5_sweep import M5SweepConfig
+
+    m4_config = _build_m4_config(args)
+    # M5's default baseline_cv_warn is 0.10 (the M4 default is 0.05) to
+    # absorb real-network jitter (per plan.md). Operators can override via
+    # --baseline-cv-warn.
+    from dataclasses import replace as _replace
+
+    m4_config = _replace(m4_config, baseline_cv_warn=max(float(args.baseline_cv_warn), 0.05))
+
+    region_raw = str(args.m5_modal_region)
+    if region_raw == "auto-far":
+        region_raw = "us-east-1"
+    return M5SweepConfig(
+        base=m4_config,
+        modal_region=region_raw,
+        token_env=str(args.m5_modal_token_env),
+        rtt_validity_threshold_ms=float(args.m5_rtt_validity_threshold_ms),
+        rtt_exercise_threshold_ms=float(args.m5_rtt_exercise_threshold_ms),
+        warmup_n=int(args.m5_warmup_n),
+        skip_deploy_endpoint=str(args.m5_modal_endpoint) if args.m5_modal_endpoint else None,
+    )
+
+
+def _validate_m5_args(args: argparse.Namespace) -> int:
+    """Pre-flight validation for M5 mode. Returns exit code; 0 means OK."""
+    import os as _os
+
+    # Mutual exclusion with --m3 / --m4.
+    if getattr(args, "m3", False) or getattr(args, "m4", False):
+        print(
+            "Error: --m5 is mutually exclusive with --m3 and --m4",
+            file=sys.stderr,
+        )
+        return 2
+    if bool(args.m5_skip_deploy) and not args.m5_modal_endpoint:
+        print(
+            "Error: --m5-skip-deploy requires --m5-modal-endpoint",
+            file=sys.stderr,
+        )
+        return 2
+    if args.expand_n <= args.candidate_n:
+        print(
+            "Error: --expand-n must be greater than --candidate-n",
+            file=sys.stderr,
+        )
+        return 2
+    if args.baseline_n < 100:
+        print(
+            "Error: --baseline-n must be >= 100 (FR-008)",
+            file=sys.stderr,
+        )
+        return 2
+    if float(args.m5_rtt_exercise_threshold_ms) < float(args.m5_rtt_validity_threshold_ms):
+        print(
+            "Error: --m5-rtt-exercise-threshold-ms must be >= --m5-rtt-validity-threshold-ms",
+            file=sys.stderr,
+        )
+        return 2
+    # Token env var must be set unless we're in deploy mode (still required for
+    # provide_endpoint).
+    token_env = str(args.m5_modal_token_env)
+    if not _os.environ.get(token_env):
+        print(
+            f"Error: bearer-token env var {token_env!r} is unset; "
+            "export it before running --m5 (see quickstart.md)",
+            file=sys.stderr,
+        )
+        return 2
+    return 0
+
+
+def _run_m5(args: argparse.Namespace) -> int:
+    import asyncio as _asyncio
+
+    from vllm_grpc_bench import m5_sweep
+    from vllm_grpc_bench.reporter import write_m5_json, write_m5_markdown
+
+    rc = _validate_m5_args(args)
+    if rc != 0:
+        return rc
+    # The M4 helper needs m4_pacing/m4_shared_baseline defaults to be filled in.
+    if args.m4_pacing is None:
+        args.m4_pacing = "no_pacing"
+    if args.m4_shared_baseline is None:
+        args.m4_shared_baseline = True
+    try:
+        config = _build_m5_config(args)  # type: ignore[arg-type]
+    except (ValueError, SystemExit) as exc:
+        print(f"Error: invalid M5 sweep configuration: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        run = _asyncio.run(m5_sweep.run_m5_sweep(config, progress=True))  # type: ignore[arg-type]
+    except Exception as exc:
+        # Map RTT-validity failure → exit code 8 per CLI contract.
+        msg = str(exc)
+        if "rtt_below_validity_threshold" in msg or "shared-baseline measurement failed" in msg:
+            print(f"Error: M5 RTT validity check failed: {exc}", file=sys.stderr)
+            return 8
+        # Modal handshake failures → exit code 3.
+        from vllm_grpc_bench.modal_endpoint import ModalDeployError
+
+        if isinstance(exc, ModalDeployError):
+            print(f"Error: Modal handshake failed: {exc}", file=sys.stderr)
+            return 3
+        raise
+
+    docs_dir = Path("docs/benchmarks")
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    json_path = docs_dir / "m5-cross-host-validation.json"
+    md_path = docs_dir / "m5-cross-host-validation.md"
+    write_m5_json(run, json_path)
+    write_m5_markdown(run, md_path)
+
+    n_recommend = sum(1 for r in run.recommendations if r.verdict == "recommend")
+    n_no_winner = sum(1 for r in run.recommendations if r.verdict == "no_winner")
+    n_client_bound = sum(1 for r in run.recommendations if r.verdict == "client_bound")
+    n_server_bound = sum(1 for r in run.recommendations if r.verdict == "server_bound")
+    n_super = len(run.supersedes_m4)
+    n_super_changed = sum(1 for e in run.supersedes_m4 if e.verdict_changed)
+    assert run.m5_metadata is not None
+    rtt_med = run.m5_metadata.m5_rtt_summary_ms.median_ms
+    n_cohorts = sum(1 for c in run.cohorts if not c.discarded)
+    print(
+        f"M5 sweep complete: {n_recommend} recommend, {n_no_winner} no_winner, "
+        f"{n_client_bound} client_bound, {n_server_bound} server_bound. "
+        f"{n_super} M4 cells superseded ({n_super_changed} verdict-changed, "
+        f"{n_super - n_super_changed} verdict-confirmed). "
+        f"RTT median {rtt_med:.1f} ms across {n_cohorts} cohorts."
+    )
+    return 0
+
+
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+
+    if getattr(args, "m5", False):
+        sys.exit(_run_m5(args))
 
     if getattr(args, "m4", False):
         sys.exit(_run_m4(args))

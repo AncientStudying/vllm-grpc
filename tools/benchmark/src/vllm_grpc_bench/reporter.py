@@ -8,9 +8,12 @@ from dataclasses import asdict
 from pathlib import Path
 
 from vllm_grpc_bench.m3_types import (
+    Citation,
+    Recommendation,
     Run,
     RunCohort,
     SchemaCandidateResult,
+    SupersedesM4Entry,
     SupersessionEntry,
 )
 from vllm_grpc_bench.metrics import (
@@ -728,3 +731,357 @@ def write_three_way_md(report: ThreeWayReport, path: Path) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# M5 report (strict-superset of M4 JSON + Markdown companion)
+# ---------------------------------------------------------------------------
+
+
+def _cohort_to_m5_dict(c: RunCohort) -> dict[str, object]:
+    """M5 cohort shape: M4 fields + RTT/server_bound/low_rtt_caveat/discarded.
+
+    Per contract m5-report-schema.md, the M5 cohort entry is a strict
+    superset of M4's. Schema-additive only; M4-reader compatibility
+    preserved by emitting ``loopback_caveat: false`` on every M5 cohort
+    (FR-007 says M5 cells never carry the loopback caveat).
+    """
+    base = _cohort_to_m4_dict(c)
+    base["loopback_caveat"] = False  # M4-reader compat: every M5 cell is `false`.
+    base["rtt_record"] = (
+        {
+            "n": c.rtt_record.n,
+            "median_ms": c.rtt_record.median_ms,
+            "p95_ms": c.rtt_record.p95_ms,
+            "samples_ms": list(c.rtt_record.samples_ms),
+        }
+        if c.rtt_record is not None
+        else None
+    )
+    base["server_overhead_estimate_ms"] = c.server_overhead_estimate_ms
+    base["server_bound"] = c.server_bound
+    base["low_rtt_caveat"] = c.low_rtt_caveat
+    base["discarded"] = c.discarded
+    return base
+
+
+def _citation_to_dict(citation: Citation) -> dict[str, object]:
+    return {
+        "repo": citation.repo,
+        "file_path": citation.file_path,
+        "identifier": citation.identifier,
+        "justification": citation.justification,
+    }
+
+
+def _supersedes_m4_to_dict(entry: SupersedesM4Entry) -> dict[str, object]:
+    return {
+        "m4_axis": entry.m4_axis,
+        "m4_hidden_size": entry.m4_hidden_size,
+        "m4_path": entry.m4_path,
+        "m4_verdict_time": entry.m4_verdict_time,
+        "m4_verdict_bytes": entry.m4_verdict_bytes,
+        "m4_loopback_caveat": entry.m4_loopback_caveat,
+        "m5_verdict_time": entry.m5_verdict_time,
+        "m5_verdict_bytes": entry.m5_verdict_bytes,
+        "m5_supporting_ci_lower": entry.m5_supporting_ci_lower,
+        "m5_supporting_ci_upper": entry.m5_supporting_ci_upper,
+        "rationale": entry.rationale,
+        "verdict_changed": entry.verdict_changed,
+        "expected_class": entry.expected_class,
+        "citations": [_citation_to_dict(c) for c in entry.citations],
+    }
+
+
+def _m5_recommendation_to_dict(r: Recommendation) -> dict[str, object]:
+    out: dict[str, object] = {
+        "axis": r.axis,
+        "applies_to_path": r.applies_to_path,
+        "applies_to_widths": sorted(r.applies_to_widths),
+        "verdict": r.verdict,
+        "winning_config": r.winning_config.name if r.winning_config is not None else None,
+        "winning_delta_pct": r.winning_delta_pct,
+        "winning_metric": r.winning_metric,
+        "baseline_ci_upper": r.baseline_ci_upper,
+        "candidate_ci_lower": r.candidate_ci_lower,
+        "citation": r.citation,
+        "notes": r.notes,
+        "corpus_subset": r.corpus_subset,
+        "supersedes_m4_cell": (
+            _supersedes_m4_to_dict(r.supersedes_m4_cell)
+            if r.supersedes_m4_cell is not None
+            else None
+        ),
+    }
+    return out
+
+
+def write_m5_json(run: Run, path: Path) -> Path:
+    """Write the M5 report JSON in the strict-superset schema (FR-014)."""
+    meta = run.m5_metadata
+    rtt_summary = (
+        {
+            "min": meta.m5_rtt_summary_ms.min_ms,
+            "median": meta.m5_rtt_summary_ms.median_ms,
+            "p95": meta.m5_rtt_summary_ms.p95_ms,
+            "max": meta.m5_rtt_summary_ms.max_ms,
+        }
+        if meta is not None
+        else None
+    )
+    payload: dict[str, object] = {
+        # --- M4-shape fields (preserved unchanged) ---
+        "mode": run.mode,
+        "axes": list(run.axes),
+        "widths": list(run.widths),
+        "paths": list(run.paths),
+        "iterations_per_cell": run.iterations_per_cell,
+        "seed": run.seed,
+        "p2_revision": run.p2_revision,
+        "frozen_channel": run.frozen_channel,
+        "pacing_mode": run.pacing_mode,
+        "shared_baseline_cohort_ids": run.shared_baseline_cohort_ids,
+        "frozen_channel_baselines": (
+            {
+                p: {
+                    "path": fb.path,
+                    "cohort_id": fb.cohort_id,
+                    "channel_config_name": fb.channel_config_name,
+                    "per_axis_winners": dict(fb.per_axis_winners),
+                    "measured_at_hidden_size": fb.measured_at_hidden_size,
+                }
+                for p, fb in run.frozen_channel_baselines.items()
+            }
+            if run.frozen_channel_baselines is not None
+            else None
+        ),
+        "cohorts": [_cohort_to_m5_dict(c) for c in run.cohorts],
+        "supersedes": [_supersession_to_dict(e) for e in run.supersedes],
+        "candidate_sizing_policy": run.candidate_sizing_policy,
+        "loopback_caveat_axes": (
+            list(run.loopback_caveat_axes) if run.loopback_caveat_axes is not None else None
+        ),
+        "schema_candidate_results": [
+            _schema_candidate_to_dict(r) for r in run.schema_candidate_results
+        ],
+        "recommendations": [_m5_recommendation_to_dict(r) for r in run.recommendations],
+        # --- M5-only top-level additions ---
+        "m5_methodology_version": meta.m5_methodology_version if meta is not None else 1,
+        "m5_modal_app_name": meta.m5_modal_app_name if meta is not None else None,
+        "m5_modal_region": meta.m5_modal_region if meta is not None else None,
+        "m5_runtime_wallclock_seconds": (
+            meta.m5_runtime_wallclock_seconds if meta is not None else None
+        ),
+        "m5_rtt_summary_ms": rtt_summary,
+        "rtt_validity_threshold_ms": (meta.rtt_validity_threshold_ms if meta is not None else None),
+        "rtt_exercise_threshold_ms": (meta.rtt_exercise_threshold_ms if meta is not None else None),
+        "warmup_n": meta.warmup_n if meta is not None else None,
+        "server_bound_overhead_threshold_ms": (
+            meta.server_bound_overhead_threshold_ms if meta is not None else None
+        ),
+        "server_bound_cohort_count": (meta.server_bound_cohort_count if meta is not None else 0),
+        "m5_cross_host_baselines": {
+            p: {
+                "path": b.path,
+                "cohort_id": b.cohort_id,
+                "modal_app_name": b.modal_app_name,
+                "modal_region": b.modal_region,
+                "measured_rtt": {
+                    "n": b.measured_rtt.n,
+                    "median_ms": b.measured_rtt.median_ms,
+                    "p95_ms": b.measured_rtt.p95_ms,
+                    "samples_ms": list(b.measured_rtt.samples_ms),
+                },
+                "n": b.n,
+            }
+            for p, b in run.m5_cross_host_baselines.items()
+        },
+        "supersedes_m4": [_supersedes_m4_to_dict(e) for e in run.supersedes_m4],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, default=str))
+    return path
+
+
+def write_m5_markdown(run: Run, path: Path) -> Path:
+    """Write the human-readable M5 report companion.
+
+    Section order matches quickstart.md "Reading the report":
+      1. Methodology preamble
+      2. Channel-sweep verdict table
+      3. Frozen-channel baselines (US2)
+      4. Schema-candidate verdicts (US2)
+      5. Supersedes M4 table (US3) — verdict-changed rows distinguished
+      6. Negative results appendix (US2)
+      7. Executive summary footer
+    """
+    meta = run.m5_metadata
+    lines: list[str] = [
+        "# M5: Cross-Host Time-Axis Validation",
+        "",
+        "## Methodology",
+        "",
+    ]
+    if meta is not None:
+        rtt = meta.m5_rtt_summary_ms
+        lines += [
+            f"- Modal app: `{meta.m5_modal_app_name}` (region `{meta.m5_modal_region}`)",
+            f"- Methodology version: `{meta.m5_methodology_version}`",
+            f"- Runtime wall-clock: {meta.m5_runtime_wallclock_seconds:.1f} s",
+            (
+                f"- Measured RTT (run-wide, ms): "
+                f"min={rtt.min_ms:.2f} median={rtt.median_ms:.2f} "
+                f"p95={rtt.p95_ms:.2f} max={rtt.max_ms:.2f}"
+            ),
+            (
+                f"- Thresholds: validity={meta.rtt_validity_threshold_ms} ms · "
+                f"exercise={meta.rtt_exercise_threshold_ms} ms · "
+                f"server_bound_overhead_floor={meta.server_bound_overhead_threshold_ms} ms"
+            ),
+            f"- Warmup cohort size per path: {meta.warmup_n}",
+            (
+                "- Server-bound cohorts excluded from recommendations: "
+                f"{meta.server_bound_cohort_count}"
+            ),
+        ]
+    lines += [
+        f"- Pacing mode: `{run.pacing_mode}`",
+        f"- Shared baseline cohort ids: `{run.shared_baseline_cohort_ids}`",
+        f"- Sample policy: {run.candidate_sizing_policy}",
+        f"- Seed: {run.seed}",
+        "",
+        "## Verdicts",
+        "",
+        "| axis | path | hidden_size | verdict | winning_config | Δ% | citation |",
+        "|------|------|-------------|---------|----------------|----|----------|",
+    ]
+    for r in run.recommendations:
+        widths = ",".join(str(w) for w in sorted(r.applies_to_widths))
+        winning = r.winning_config.name if r.winning_config is not None else "-"
+        delta = f"{r.winning_delta_pct:+.2f}%" if r.winning_delta_pct is not None else "-"
+        lines.append(
+            f"| {r.axis} | {r.applies_to_path} | {widths} | {r.verdict} "
+            f"| {winning} | {delta} | {r.citation} |"
+        )
+
+    if run.frozen_channel_baselines:
+        lines += ["", "## Per-path frozen-channel baselines", ""]
+        for path_name, fb in run.frozen_channel_baselines.items():
+            lines.append(
+                f"- **{path_name}** → cohort `{fb.cohort_id}` "
+                f"@ hidden_size={fb.measured_at_hidden_size}; "
+                f"per-axis winners: {fb.per_axis_winners}"
+            )
+
+    if run.schema_candidate_results:
+        lines += ["", "## Schema candidates", ""]
+        for sc in run.schema_candidate_results:
+            lines.append(
+                f"### `{sc.candidate_name}` "
+                f"({'negative result' if sc.is_negative_result else 'measured'})"
+            )
+            if sc.notes:
+                lines.append(f"> {sc.notes}")
+            lines.append("")
+
+    # Supersedes M4 table — sort verdict-changed first, then unexpected
+    # supersessions get their own sub-heading per spec Edge Cases.
+    if run.supersedes_m4:
+        normal_entries = [
+            e for e in run.supersedes_m4 if e.expected_class != "unexpected_supersession"
+        ]
+        normal_entries.sort(
+            key=lambda e: (not e.verdict_changed, e.m4_path, e.m4_axis, e.m4_hidden_size)
+        )
+        unexpected = [e for e in run.supersedes_m4 if e.expected_class == "unexpected_supersession"]
+        lines += [
+            "",
+            "## Supersedes M4",
+            "",
+            (
+                "| flag | M4 cell | M4 verdict (time/bytes) | M5 verdict (time/bytes) | "
+                "M5 CI | class | rationale |"
+            ),
+            "|------|---------|-------------------------|-------------------------|-------|-------|-----------|",
+        ]
+        for e in normal_entries:
+            marker = "**[changed]**" if e.verdict_changed else ""
+            m4 = f"{e.m4_axis}/h{e.m4_hidden_size}/{e.m4_path}"
+            m4v = f"{e.m4_verdict_time}/{e.m4_verdict_bytes}"
+            m5v = f"{e.m5_verdict_time}/{e.m5_verdict_bytes}"
+            ci = f"[{e.m5_supporting_ci_lower:.4g}, {e.m5_supporting_ci_upper:.4g}]"
+            rationale = e.rationale
+            if e.citations:
+                cite_refs = "; ".join(
+                    f"{c.repo}:{c.file_path}" + (f"#{c.identifier}" if c.identifier else "")
+                    for c in e.citations
+                )
+                rationale = f"{rationale} (citations: {cite_refs})"
+            lines.append(
+                f"| {marker} | `{m4}` | {m4v} | {m5v} | {ci} | {e.expected_class} | {rationale} |"
+            )
+        if unexpected:
+            lines += [
+                "",
+                "### Unexpected supersessions — investigate before adopting",
+                "",
+                (
+                    "| flag | M4 cell | M4 verdict (time/bytes) | M5 verdict (time/bytes) | "
+                    "M5 CI | rationale |"
+                ),
+                "|------|---------|-------------------------|-------------------------|-------|-----------|",
+            ]
+            for e in unexpected:
+                m4 = f"{e.m4_axis}/h{e.m4_hidden_size}/{e.m4_path}"
+                m4v = f"{e.m4_verdict_time}/{e.m4_verdict_bytes}"
+                m5v = f"{e.m5_verdict_time}/{e.m5_verdict_bytes}"
+                ci = f"[{e.m5_supporting_ci_lower:.4g}, {e.m5_supporting_ci_upper:.4g}]"
+                lines.append(
+                    f"| **[unexpected]** | `{m4}` | {m4v} | {m5v} | {ci} | {e.rationale} |"
+                )
+
+    # Negative results appendix (US2).
+    negatives = [r for r in run.schema_candidate_results if r.is_negative_result]
+    if negatives:
+        lines += [
+            "",
+            "## Appendix: Negative results — do not re-run speculatively",
+            "",
+        ]
+        for sc in negatives:
+            lines.append(
+                f"- `{sc.candidate_name}` — bytes and time both `no_winner` "
+                f"at every measured width (FR-013)."
+            )
+
+    # Executive summary footer.
+    if meta is not None:
+        n_recommend = sum(1 for r in run.recommendations if r.verdict == "recommend")
+        n_no_winner = sum(1 for r in run.recommendations if r.verdict == "no_winner")
+        n_client_bound = sum(1 for r in run.recommendations if r.verdict == "client_bound")
+        n_server_bound = sum(1 for r in run.recommendations if r.verdict == "server_bound")
+        n_cohorts = sum(1 for c in run.cohorts if not c.discarded)
+        lines += [
+            "",
+            "## Executive summary",
+            "",
+            (
+                f"- Runtime wall-clock: {meta.m5_runtime_wallclock_seconds:.1f} s · "
+                f"non-discarded cohorts: {n_cohorts} · "
+                f"region: {meta.m5_modal_region}"
+            ),
+            (
+                f"- Verdicts: {n_recommend} recommend · {n_no_winner} no_winner · "
+                f"{n_client_bound} client_bound · {n_server_bound} server_bound"
+            ),
+            (
+                f"- RTT median: {meta.m5_rtt_summary_ms.median_ms:.1f} ms · "
+                f"p95: {meta.m5_rtt_summary_ms.p95_ms:.1f} ms"
+            ),
+            f"- M4 cells superseded: {len(run.supersedes_m4)} "
+            f"({sum(1 for e in run.supersedes_m4 if e.verdict_changed)} verdict-changed)",
+        ]
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+    return path

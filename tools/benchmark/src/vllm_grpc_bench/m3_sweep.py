@@ -38,6 +38,8 @@ from vllm_grpc.v1 import (
     chat_pb2_grpc,
     completions_pb2,
     completions_pb2_grpc,
+    health_pb2,
+    health_pb2_grpc,
 )
 
 from vllm_grpc_bench.channel_config import (
@@ -150,6 +152,23 @@ class M3ChatServicer(chat_pb2_grpc.ChatServiceServicer):  # type: ignore[misc]
                 return
 
 
+class _BenchHealthServicer(health_pb2_grpc.HealthServicer):  # type: ignore[misc]
+    """Minimal Health.Ping servicer for the M5 RTT probe (R-3).
+
+    Registered on every in-process server bring-up so the probe can drive a
+    no-op unary RPC against the same channel the cohort is about to use. The
+    response carries a constant payload, so cohort timings are unaffected;
+    only ``rtt_probe.measure_rtt`` exercises this method.
+    """
+
+    async def Ping(  # noqa: N802
+        self,
+        request: health_pb2.HealthRequest,
+        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
+    ) -> health_pb2.HealthResponse:
+        return health_pb2.HealthResponse(message="ok")
+
+
 class M3CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # type: ignore[misc]
     def __init__(self, engine: MockEngine) -> None:
         self._engine = engine
@@ -209,6 +228,9 @@ async def serve_in_process(
     completions_pb2_grpc.add_CompletionsServiceServicer_to_server(
         M3CompletionsServicer(engine), server
     )
+    # Health servicer is additive — only the M5 RTT probe calls it. M3/M4
+    # cohort drivers never hit Health.Ping, so per-RPC timings are unchanged.
+    health_pb2_grpc.add_HealthServicer_to_server(_BenchHealthServicer(), server)
     port = server.add_insecure_port("127.0.0.1:0")
     await server.start()
     try:
