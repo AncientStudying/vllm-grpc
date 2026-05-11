@@ -1,0 +1,38 @@
+[
+  {
+    "m1_path": "chat_completion",
+    "m1_concurrency": 1,
+    "m1_verdict_literal": "REST faster (c=1 small-body chat)",
+    "m1_source_report": "docs/benchmarks/phase-3-modal-comparison.md#chat-c1"
+  },
+  {
+    "m1_path": "chat_completion",
+    "m1_concurrency": 4,
+    "m1_verdict_literal": "no_winner",
+    "m1_source_report": "docs/benchmarks/phase-3-modal-comparison.md#chat-c4"
+  },
+  {
+    "m1_path": "chat_completion",
+    "m1_concurrency": 8,
+    "m1_verdict_literal": "gRPC faster (c=8 high-fanout chat)",
+    "m1_source_report": "docs/benchmarks/phase-3-modal-comparison.md#chat-c8"
+  },
+  {
+    "m1_path": "embed_completion",
+    "m1_concurrency": 1,
+    "m1_verdict_literal": "no_winner",
+    "m1_source_report": "docs/benchmarks/phase-6-completions-comparison.md#embed-c1"
+  },
+  {
+    "m1_path": "embed_completion",
+    "m1_concurrency": 4,
+    "m1_verdict_literal": "gRPC faster (c=4 embed)",
+    "m1_source_report": "docs/benchmarks/phase-6-completions-comparison.md#embed-c4"
+  },
+  {
+    "m1_path": "embed_completion",
+    "m1_concurrency": 8,
+    "m1_verdict_literal": "gRPC faster (c=8 embed)",
+    "m1_source_report": "docs/benchmarks/phase-6-completions-comparison.md#embed-c8"
+  }
+]

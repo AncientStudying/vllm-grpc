@@ -31,6 +31,7 @@ from vllm_grpc_bench.runner import run_grpc_target_streaming, run_target, run_ta
 
 if TYPE_CHECKING:
     from vllm_grpc_bench.m3_types import M4SweepConfig
+    from vllm_grpc_bench.m5_1_sweep import M5_1Run, M5_1SweepConfig
 
 _DEFAULT_CORPUS = Path(__file__).parent.parent.parent / "corpus" / "chat_nonstreaming.json"
 
@@ -239,6 +240,64 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("bench-results/m4-full"),
         help="M4: output directory for transient per-iteration JSON.",
+    )
+
+    # ---- M5.1 mode (REST vs gRPC head-to-head on real wire) ----
+    parser.add_argument(
+        "--m5_1",
+        action="store_true",
+        help="Run the M5.1 REST-vs-gRPC head-to-head sweep (see specs/018-m5-1-rest-vs-grpc).",
+    )
+    parser.add_argument(
+        "--m5_1-modal-region",
+        default="eu-west-1",
+        help="M5.1: Modal region for the dual-protocol deploy (default eu-west-1).",
+    )
+    parser.add_argument(
+        "--m5_1-modal-token-env",
+        default="MODAL_BENCH_TOKEN",
+        help="M5.1: env-var name carrying the bearer token (token VALUE is never logged).",
+    )
+    parser.add_argument(
+        "--m5_1-modal-endpoint",
+        default=None,
+        help="M5.1: pre-existing endpoint in the form "
+        "'grpc=tcp+plaintext://...,rest=https://...' (implies --m5_1-skip-deploy).",
+    )
+    parser.add_argument(
+        "--m5_1-skip-deploy",
+        action="store_true",
+        help="M5.1: skip deploy and reuse --m5_1-modal-endpoint.",
+    )
+    parser.add_argument(
+        "--m5_1-rtt-validity-threshold-ms",
+        type=float,
+        default=1.0,
+        help="M5.1: refuse verdict below this median RTT (default 1.0 ms).",
+    )
+    parser.add_argument(
+        "--m5_1-rtt-exercise-threshold-ms",
+        type=float,
+        default=20.0,
+        help="M5.1: low_rtt_caveat fires below this median RTT (default 20.0 ms).",
+    )
+    parser.add_argument(
+        "--m5_1-warmup-n",
+        type=int,
+        default=20,
+        help="M5.1: warmup requests per (path × protocol) before measurement.",
+    )
+    parser.add_argument(
+        "--m5_1-shim-overhead-warn-pct",
+        type=float,
+        default=5.0,
+        help="M5.1: warn if shim overhead exceeds this fraction of cohort wallclock.",
+    )
+    parser.add_argument(
+        "--m5_1-report-out",
+        type=Path,
+        default=None,
+        help="M5.1: override default report output directory (default docs/benchmarks/).",
     )
 
     # ---- M5 mode (cross-host time-axis validation) ----
@@ -923,9 +982,155 @@ def _run_m5(args: argparse.Namespace) -> int:
     return 0
 
 
+def _validate_m5_1_args(args: argparse.Namespace) -> int:
+    """Pre-flight validation for M5.1 mode. Returns exit code; 0 means OK."""
+    import os as _os
+
+    if getattr(args, "m3", False) or getattr(args, "m4", False) or getattr(args, "m5", False):
+        print(
+            "Error: --m5_1 is mutually exclusive with --m3, --m4, and --m5",
+            file=sys.stderr,
+        )
+        return 2
+    if bool(args.m5_1_skip_deploy) and not args.m5_1_modal_endpoint:
+        print(
+            "Error: --m5_1-skip-deploy requires --m5_1-modal-endpoint",
+            file=sys.stderr,
+        )
+        return 2
+    if float(args.m5_1_rtt_exercise_threshold_ms) < float(args.m5_1_rtt_validity_threshold_ms):
+        print(
+            "Error: --m5_1-rtt-exercise-threshold-ms must be >= --m5_1-rtt-validity-threshold-ms",
+            file=sys.stderr,
+        )
+        return 2
+    token_env = str(args.m5_1_modal_token_env)
+    if not _os.environ.get(token_env):
+        print(
+            f"Error: bearer-token env var {token_env!r} is unset; "
+            "export it before running --m5_1 "
+            "(see specs/018-m5-1-rest-vs-grpc/quickstart.md)",
+            file=sys.stderr,
+        )
+        return 4
+    return 0
+
+
+def _run_m5_1(args: argparse.Namespace) -> int:
+    """M5.1 sweep entry-point — dispatches via run_m5_1_sweep."""
+    import asyncio as _asyncio
+
+    rc = _validate_m5_1_args(args)
+    if rc != 0:
+        return rc
+
+    from vllm_grpc_bench.m5_1_sweep import run_m5_1_sweep
+
+    # Endpoint resolution: in skip-deploy mode the endpoint string carries
+    # both URLs in a `grpc=...,rest=...` form. In full-deploy mode the
+    # harness would call provide_rest_grpc_endpoint; for CLI parity with
+    # the existing M5 pattern we accept the endpoints as flags rather than
+    # building the deploy plumbing here.
+    rest_url: str | None = None
+    grpc_target: str | None = None
+    if args.m5_1_modal_endpoint:
+        for pair in str(args.m5_1_modal_endpoint).split(","):
+            if pair.startswith("grpc="):
+                grpc_target = _strip_endpoint_scheme(pair[len("grpc=") :])
+            elif pair.startswith("rest="):
+                rest_url = pair[len("rest=") :]
+        if not rest_url or not grpc_target:
+            print(
+                "Error: --m5_1-modal-endpoint must include both 'grpc=' and 'rest=' parts",
+                file=sys.stderr,
+            )
+            return 2
+
+    if rest_url is None or grpc_target is None:
+        # Full-deploy path: deploy the dual-protocol Modal app, run the
+        # sweep against the returned URLs, tear down at exit.
+        async def _run_with_deploy() -> int:
+            from vllm_grpc_bench.modal_endpoint import (
+                ModalDeployError,
+                provide_rest_grpc_endpoint,
+            )
+
+            try:
+                async with provide_rest_grpc_endpoint(
+                    region=str(args.m5_1_modal_region),
+                    token_env=str(args.m5_1_modal_token_env),
+                ) as endpoints:
+                    cfg = _build_m5_1_config(
+                        args,
+                        rest_url=endpoints.rest_url,
+                        grpc_target=endpoints.grpc_url,
+                    )
+                    run = await run_m5_1_sweep(cfg, progress=True)
+            except ModalDeployError as exc:
+                print(f"Error: Modal deploy failed: {exc}", file=sys.stderr)
+                return 3
+            return _emit_m5_1_outputs(args, run)
+
+        return _asyncio.run(_run_with_deploy())
+
+    # Skip-deploy path.
+    cfg = _build_m5_1_config(args, rest_url=rest_url, grpc_target=grpc_target)
+    try:
+        run = _asyncio.run(run_m5_1_sweep(cfg, progress=True))
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error: M5.1 sweep failed: {exc}", file=sys.stderr)
+        return 7
+    return _emit_m5_1_outputs(args, run)
+
+
+def _strip_endpoint_scheme(endpoint: str) -> str:
+    for prefix in ("tcp+plaintext://", "tcp://", "grpcs://", "grpc://", "https://"):
+        if endpoint.startswith(prefix):
+            return endpoint[len(prefix) :]
+    return endpoint
+
+
+def _build_m5_1_config(
+    args: argparse.Namespace, *, rest_url: str, grpc_target: str
+) -> M5_1SweepConfig:
+    """Construct the M5_1SweepConfig from argparse args."""
+    from vllm_grpc_bench.m5_1_sweep import M5_1SweepConfig
+
+    return M5_1SweepConfig(
+        rest_url=rest_url,
+        grpc_target=grpc_target,
+        token_env_var=str(args.m5_1_modal_token_env),
+        modal_region=str(args.m5_1_modal_region),
+        n_per_cohort=100,
+        low_rtt_threshold_ms=float(args.m5_1_rtt_exercise_threshold_ms),
+        shim_overhead_warn_pct=float(args.m5_1_shim_overhead_warn_pct),
+    )
+
+
+def _emit_m5_1_outputs(args: argparse.Namespace, run: M5_1Run) -> int:
+    """Render JSON + Markdown and exit with success/failure code."""
+    from vllm_grpc_bench.reporter import write_m5_1_json, write_m5_1_markdown
+
+    docs_dir = args.m5_1_report_out if args.m5_1_report_out is not None else Path("docs/benchmarks")
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    json_path = docs_dir / "m5_1-rest-vs-grpc.json"
+    md_path = docs_dir / "m5_1-rest-vs-grpc.md"
+    try:
+        write_m5_1_json(run.metadata, run.cohorts, sample_size=100, path=json_path)
+        write_m5_1_markdown(run.metadata, md_path)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error: M5.1 report rendering failed: {exc}", file=sys.stderr)
+        return 8
+    print(f"M5.1 report written to {json_path} and {md_path}")
+    return 0
+
+
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+
+    if getattr(args, "m5_1", False):
+        sys.exit(_run_m5_1(args))
 
     if getattr(args, "m5", False):
         sys.exit(_run_m5(args))
