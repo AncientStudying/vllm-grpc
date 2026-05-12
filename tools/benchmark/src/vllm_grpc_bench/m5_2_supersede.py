@@ -136,26 +136,50 @@ def _build_rationale(
     ci_high: float,
     category: SupersedesM5_1Category,
 ) -> str:
-    """One-line free-text rationale rendered verbatim in the markdown."""
+    """One-line free-text rationale rendered verbatim in the markdown.
+
+    Rationale strings are **topology-aware**: M5.1 measured REST and gRPC
+    over the same plain-TCP network path (a controlled protocol-cost
+    comparison applicable to enterprise / self-hosted / homelab
+    deployments where REST and gRPC share a network fabric). M5.2
+    measures REST through Modal's HTTPS edge (anycast, TLS-terminated)
+    against gRPC over plain-TCP (the hobbyist-renting-GPU-from-managed-
+    provider topology). Both are honest, topology-specific measurements;
+    when they disagree the rationale names which deployment shape each
+    finding applies to so a reader doesn't generalize an M5.2 verdict to
+    a deployment without an HTTPS edge in front of REST.
+    """
     base = (
         f"M5.1={m5_1_verdict!r}; M5.2={m5_2_verdict!r}; "
         f"delta={delta_ms:+.1f} ms (CI [{ci_low:+.1f}, {ci_high:+.1f}])."
     )
     if category == "noise_resolved":
-        return base + " Noise resolved by the n=100 → n=250 resolution increase."
+        return (
+            base + " M5.1's no_winner resolved by M5.2's n=250 resolution increase "
+            "under the HTTPS-edge topology."
+        )
     if category == "transport_dependent":
         return (
-            base + " HTTPS-edge transport cost moved the comparison; the network path is "
-            "load-bearing."
+            base + " HTTPS-edge transport cost moved the comparison; the M5.2 verdict "
+            "against rest_https_edge differs from what the same comparison against "
+            "rest_plain_tcp would yield. Network path is load-bearing."
         )
     if category == "confirmed_unavailable":
-        return base + " Both M5.1 and M5.2 are comparison_unavailable."
+        return (
+            base + " Both M5.1 and M5.2 are comparison_unavailable — inconclusive "
+            "under both topologies."
+        )
     if category == "verdict_changed":
         return (
-            base + " Verdict shifted; the n=250 resolution increase + HTTPS-edge "
-            "transport surfaces the change."
+            base + " Topology-dependent: M5.1's same-network-path topology and M5.2's "
+            "HTTPS-edge topology favor different cohorts; pick by deployment shape "
+            "(M5.1 applies when REST and gRPC share a network fabric; M5.2 applies "
+            "when REST fronts a managed anycast edge)."
         )
-    return base + " M5.1's verdict holds at M5.2's resolution and transport."
+    return (
+        base + " M5.1's verdict holds under M5.2's n=250 + HTTPS-edge topology — "
+        "finding generalizes across both deployment shapes."
+    )
 
 
 def build_supersedes_m5_1(
