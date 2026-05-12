@@ -55,27 +55,30 @@ def test_m5_2_modal_smoke_deploy_assertions_4cell_sidecar_teardown(
             assert endpoints.rest_plain_tcp_url is not None, (
                 "M5.2 deploy must expose a plain-TCP REST tunnel"
             )
-            # Three tunnel URLs are emitted.
+            assert endpoints.rest_https_edge_url is not None, (
+                "M5.2 deploy must expose an HTTPS-edge REST tunnel"
+            )
+            # Four tunnel URLs are emitted (gRPC + M5.1's plain-TCP REST +
+            # M5.2's plain-TCP alias + M5.2's HTTPS-edge).
             assert endpoints.grpc_url
             assert endpoints.rest_url
             assert endpoints.rest_plain_tcp_url.startswith("tcp+plaintext://")
+            assert endpoints.rest_https_edge_url.startswith("https://")
 
-            rest_tcp = endpoints.rest_plain_tcp_url
-            # The httpx client needs an http:// scheme; the cohort runner
-            # consumes the bare host:port form.
+            # httpx needs http:// on the bare host:port for plain-TCP REST.
             from vllm_grpc_bench.modal_endpoint import _strip_scheme
 
-            rest_tcp_url = f"http://{_strip_scheme(rest_tcp)}"
+            rest_tcp_url = f"http://{_strip_scheme(endpoints.rest_plain_tcp_url)}"
 
             cfg = M5_2SweepConfig(
-                rest_https_edge_url=endpoints.rest_url,
+                rest_https_edge_url=endpoints.rest_https_edge_url,
                 rest_plain_tcp_url=rest_tcp_url,
                 grpc_target=endpoints.grpc_url,
                 run_id="smoke-integration",
                 events_sidecar_out_dir=tmp_path,
                 modal_region="eu-west-1",
                 modal_instance_class="cpu",
-                https_edge_endpoint=endpoints.rest_url,
+                https_edge_endpoint=endpoints.rest_https_edge_url,
                 n_per_cohort=5,
                 expand_n=5,
                 rtt_probe_n=4,

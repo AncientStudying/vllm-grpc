@@ -102,15 +102,15 @@ async def test_wait_for_rest_grpc_handshake_returns_both_urls() -> None:
             "token": "test-token-123",
         }
     )
-    grpc_url, rest_url, rest_plain_tcp = await _wait_for_rest_grpc_handshake(
+    grpc_url, rest_url, rest_plain_tcp, rest_https_edge = await _wait_for_rest_grpc_handshake(
         d, timeout_s=2.0, expected_token="test-token-123"
     )
     assert grpc_url == "tcp+plaintext://abc.modal.host:50051"
     assert rest_url == "https://abc.modal.host"
-    # M5.2 (T019): without ``with_rest_plain_tcp=True``, the third URL is
-    # not consulted and the helper returns None for it. M5.1 callers ignore
-    # the trailing element.
+    # M5.2 (T018-fix): without ``with_rest_plain_tcp=True``, the trailing
+    # M5.2-specific URLs are not consulted. M5.1 callers ignore them.
     assert rest_plain_tcp is None
+    assert rest_https_edge is None
 
 
 @pytest.mark.asyncio

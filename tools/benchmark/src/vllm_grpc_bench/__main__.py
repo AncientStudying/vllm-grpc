@@ -1364,20 +1364,26 @@ def _run_m5_2(args: argparse.Namespace) -> int:
                     token_env=str(args.m5_2_modal_token_env),
                     with_rest_plain_tcp=True,
                 ) as endpoints:
+                    # M5.2 (T018-fix): the HTTPS-edge URL is its OWN tunnel
+                    # on a second in-container port (not aliased to
+                    # endpoints.rest_url, which M5.1 forwards as plain-TCP).
+                    assert endpoints.rest_https_edge_url is not None
                     assert endpoints.rest_plain_tcp_url is not None
-                    rest_https_edge_url = endpoints.rest_url
-                    rest_plain_tcp_url = _strip_endpoint_scheme(endpoints.rest_plain_tcp_url)
-                    # The plain-TCP URL needs an explicit http:// scheme for
-                    # httpx; strip the tcp+plaintext:// prefix and re-prepend.
-                    if not rest_plain_tcp_url.startswith("http://"):
-                        rest_plain_tcp_url = f"http://{rest_plain_tcp_url}"
+                    rest_https_edge_url = endpoints.rest_https_edge_url
+                    # Plain-TCP URL: strip the tcp+plaintext:// scheme prefix
+                    # so httpx can consume the bare host:port form, then
+                    # re-prepend http:// so it can speak HTTP/1.1.
+                    tcp_url = _strip_endpoint_scheme(endpoints.rest_plain_tcp_url)
+                    if not tcp_url.startswith("http://"):
+                        tcp_url = f"http://{tcp_url}"
+                    rest_plain_tcp_url = tcp_url
                     grpc_target = endpoints.grpc_url
                     cfg = _build_m5_2_config(
                         args,
                         rest_https_edge_url=rest_https_edge_url,
                         rest_plain_tcp_url=rest_plain_tcp_url,
                         grpc_target=grpc_target,
-                        https_edge_endpoint=endpoints.rest_url,
+                        https_edge_endpoint=rest_https_edge_url,
                         smoke=smoke,
                         run_id=run_id,
                     )

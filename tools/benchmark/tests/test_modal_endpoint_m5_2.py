@@ -1,8 +1,13 @@
 """T020 — M5.2-specific extensions to ``modal_endpoint``.
 
-The ``with_rest_plain_tcp=True`` kwarg additively exposes the FastAPI shim's
-plain-TCP URL alongside the M5.1 HTTPS-edge URL. Default ``False`` preserves
-the M5.1 call signature so existing call-sites continue to work unchanged.
+The ``with_rest_plain_tcp=True`` kwarg additively exposes the FastAPI
+shim's plain-TCP URL and HTTPS-edge URL alongside M5.1's existing
+plain-TCP REST URL. Default ``False`` preserves the M5.1 call signature
+so existing call-sites continue to work unchanged.
+
+M5.2 uses a SECOND in-container port (8001) for the HTTPS-edge forward
+because Modal refuses two ``modal.forward`` calls to the same port — see
+``scripts/python/modal_bench_rest_grpc_server.py`` for the rationale.
 """
 
 from __future__ import annotations
@@ -48,56 +53,59 @@ class _FakeDict:
 
 
 @pytest.mark.asyncio
-async def test_handshake_with_rest_plain_tcp_returns_all_three_urls() -> None:
+async def test_handshake_with_rest_plain_tcp_returns_all_four_urls() -> None:
     d = _FakeDict(
         {
             "ready": True,
             "grpc": "tcp+plaintext://abc.modal.host:50051",
-            "rest": "https://abc.modal.run",
+            # M5.1's ``rest`` key is plain-TCP per M5.1's voiding of FR-019.
+            "rest": "http://abc.modal.host:8000",
             "rest_plain_tcp_url": "tcp+plaintext://abc.modal.host:8000",
+            "rest_https_edge_url": "https://abc.modal.run",
             "token": "tok",
         }
     )
-    grpc_url, rest_url, rest_plain_tcp = await _wait_for_rest_grpc_handshake(
+    grpc_url, rest_url, rest_plain_tcp, rest_https_edge = await _wait_for_rest_grpc_handshake(
         d, timeout_s=2.0, expected_token="tok", with_rest_plain_tcp=True
     )
     assert grpc_url == "tcp+plaintext://abc.modal.host:50051"
-    assert rest_url == "https://abc.modal.run"
+    assert rest_url == "http://abc.modal.host:8000"
     assert rest_plain_tcp == "tcp+plaintext://abc.modal.host:8000"
+    assert rest_https_edge == "https://abc.modal.run"
 
 
 @pytest.mark.asyncio
-async def test_handshake_without_with_rest_plain_tcp_returns_none_for_third() -> None:
-    """Back-compat: M5.1 callers that don't pass with_rest_plain_tcp=True
-    still get the M5.1 2-tuple of (grpc, rest) — and the third element is
-    None — even when the Dict contains a rest_plain_tcp_url key."""
+async def test_handshake_without_with_rest_plain_tcp_returns_none_for_trailing() -> None:
+    """Back-compat: M5.1 callers that don't pass ``with_rest_plain_tcp=True``
+    get None for the trailing M5.2 URLs even when the dict contains them."""
     d = _FakeDict(
         {
             "ready": True,
             "grpc": "tcp+plaintext://abc.modal.host:50051",
-            "rest": "https://abc.modal.run",
+            "rest": "http://abc.modal.host:8000",
             "rest_plain_tcp_url": "tcp+plaintext://abc.modal.host:8000",
+            "rest_https_edge_url": "https://abc.modal.run",
             "token": "tok",
         }
     )
-    _, _, rest_plain_tcp = await _wait_for_rest_grpc_handshake(
+    _, _, rest_plain_tcp, rest_https_edge = await _wait_for_rest_grpc_handshake(
         d, timeout_s=2.0, expected_token="tok"
     )
     assert rest_plain_tcp is None
+    assert rest_https_edge is None
 
 
 @pytest.mark.asyncio
 async def test_handshake_missing_rest_plain_tcp_url_raises_when_requested() -> None:
-    """When ``with_rest_plain_tcp=True`` is set but the deploy never wrote
-    the third URL to the Dict (e.g., operator forgot to redeploy the Modal
-    app after pulling the M5.2 change), the handshake helper raises a
-    clear ModalDeployError naming the missing key.
-    """
+    """When ``with_rest_plain_tcp=True`` but the deploy didn't write the
+    plain-TCP URL to the dict, the handshake helper raises with the
+    missing key named."""
     d = _FakeDict(
         {
             "ready": True,
             "grpc": "tcp+plaintext://abc.modal.host:50051",
-            "rest": "https://abc.modal.run",
+            "rest": "http://abc.modal.host:8000",
+            "rest_https_edge_url": "https://abc.modal.run",
             "token": "tok",
             # No rest_plain_tcp_url key.
         }
@@ -108,36 +116,62 @@ async def test_handshake_missing_rest_plain_tcp_url_raises_when_requested() -> N
         )
 
 
-def test_rest_grpc_endpoints_with_third_url_field() -> None:
+@pytest.mark.asyncio
+async def test_handshake_missing_rest_https_edge_url_raises_when_requested() -> None:
+    """When ``with_rest_plain_tcp=True`` but the deploy didn't write the
+    HTTPS-edge URL to the dict, the handshake helper raises with the
+    missing key named."""
+    d = _FakeDict(
+        {
+            "ready": True,
+            "grpc": "tcp+plaintext://abc.modal.host:50051",
+            "rest": "http://abc.modal.host:8000",
+            "rest_plain_tcp_url": "tcp+plaintext://abc.modal.host:8000",
+            "token": "tok",
+            # No rest_https_edge_url key.
+        }
+    )
+    with pytest.raises(ModalDeployError, match="rest_https_edge_url is empty"):
+        await _wait_for_rest_grpc_handshake(
+            d, timeout_s=2.0, expected_token="tok", with_rest_plain_tcp=True
+        )
+
+
+def test_rest_grpc_endpoints_with_m5_2_fields() -> None:
     bundle = RESTGRPCEndpoints(
         grpc_url="abc.modal.host:50051",
-        rest_url="https://abc.modal.run",
+        rest_url="http://abc.modal.host:8000",
         auth_token_env_var="MODAL_BENCH_TOKEN",
         rest_plain_tcp_url="tcp+plaintext://abc.modal.host:8000",
+        rest_https_edge_url="https://abc.modal.run",
     )
     assert bundle.rest_plain_tcp_url == "tcp+plaintext://abc.modal.host:8000"
+    assert bundle.rest_https_edge_url == "https://abc.modal.run"
 
 
-def test_rest_grpc_endpoints_third_url_defaults_to_none() -> None:
-    """M5.1 back-compat: omitting the third URL leaves the field None."""
+def test_rest_grpc_endpoints_m5_2_fields_default_to_none() -> None:
+    """M5.1 back-compat: omitting the M5.2 fields leaves them None."""
     bundle = RESTGRPCEndpoints(
         grpc_url="abc.modal.host:50051",
-        rest_url="https://abc.modal.run",
+        rest_url="http://abc.modal.host:8000",
         auth_token_env_var="MODAL_BENCH_TOKEN",
     )
     assert bundle.rest_plain_tcp_url is None
+    assert bundle.rest_https_edge_url is None
 
 
 def test_rest_plain_tcp_url_uses_tcp_plaintext_scheme_prefix() -> None:
-    """The scheme prefix convention is ``tcp+plaintext://host:port`` so the
-    consuming REST client can recognize the plain-TCP path and use plain
-    HTTP/1.1 (no TLS) on the bare host:port pair.
-    """
+    """Plain-TCP URL convention: ``tcp+plaintext://host:port`` so the
+    consuming REST client can recognize the path and use plain HTTP/1.1
+    on the bare host:port."""
     bundle = RESTGRPCEndpoints(
         grpc_url="abc.modal.host:50051",
-        rest_url="https://abc.modal.run",
+        rest_url="http://abc.modal.host:8000",
         auth_token_env_var="MODAL_BENCH_TOKEN",
         rest_plain_tcp_url="tcp+plaintext://abc.modal.host:8000",
+        rest_https_edge_url="https://abc.modal.run",
     )
     assert bundle.rest_plain_tcp_url is not None
     assert bundle.rest_plain_tcp_url.startswith("tcp+plaintext://")
+    assert bundle.rest_https_edge_url is not None
+    assert bundle.rest_https_edge_url.startswith("https://")

@@ -10,16 +10,53 @@ This file *resolves* NEEDS CLARIFICATION items implicit in the plan. The spec's 
 
 ## R-1 — HTTPS-edge REST cohort wiring: where does `rest_https_edge` get its URL, and how does `rest_plain_tcp` keep its M5.1 URL?
 
-**Decision**: The dual-protocol Modal app introduced by M5.1 (`scripts/python/modal_bench_rest_grpc_server.py`) already exposes both transports via two `modal.forward()` calls — `modal.forward(8000)` returns Modal's HTTPS-edge URL (TLS-terminated, anycast-routed), and `modal.forward(50051, unencrypted=True)` returns the plain-TCP tunnel URL used by gRPC. M5.1's handshake writes both URLs to the shared `modal.Dict`; M5.1 only consumed the HTTPS-edge URL for its single REST cohort (with the plain-TCP URL going only to gRPC). M5.2 reuses the same Modal deploy and adds a **second consumer of the plain-TCP URL on the REST side** — `rest_plain_tcp` points its `httpx.AsyncClient` at `http://<plain_tcp_host>:<plain_tcp_port>/v1/chat/completions` (no TLS), while `rest_https_edge` points its client at `https://<https_edge_host>/v1/chat/completions` (Modal-managed TLS). The FastAPI shim already binds to port 8000 inside the container with no TLS termination of its own — Modal's HTTPS edge does the TLS in front; the plain-TCP tunnel forwards raw TCP to port 8000 directly (the shim sees plain HTTP either way).
+> **Revised 2026-05-12 post-implementation.** The original R-1 made two wrong assumptions that the smoke run caught on the first deploy:
+> 1. *That M5.1 already forwards REST as HTTPS-edge.* It doesn't — M5.1 deliberately voided FR-019 (see methodology section of `docs/benchmarks/m5_1-rest-vs-grpc.md`) and forwards REST as plain-TCP. The `rest` key in M5.1's handshake dict is an `http://host:port` URL, not `https://`. So M5.2 has to *add* the HTTPS-edge tunnel, not reuse an existing one.
+> 2. *That `modal.forward(8000)` and `modal.forward(8000, unencrypted=True)` can coexist on the same in-container port.* They can't. Modal scopes tunnels per port number, not per (port × protocol). Calling `modal.forward` twice on the same port — even with different `unencrypted` flags — raises `modal.exception.InvalidError: Port 8000 is already forwarded`. The error surfaces at `__aenter__` time, so the smoke run aborts before any cohort dispatches. This is the lesson the implementation phase paid for.
+>
+> The revised R-1 below reflects what actually works.
 
-**Rationale**: The spec's FR-002 explicitly requires both REST transports to exercise the **identical in-container engine code path** — the only operative variable between `rest_https_edge` and `rest_plain_tcp` is the network path. Routing both REST cohorts to the same FastAPI shim on port 8000 via different Modal tunnels achieves this with zero new container-side code. The reuse of `modal_bench_rest_grpc_server.py` from M5.1 unchanged is a phase-discipline win — no new Modal-image work, no new image build cost, no risk of introducing a third operative variable by accident.
+**Decision**: The M5.2 deploy binds uvicorn **twice** inside the container — once on port 8000 (M5.1's existing REST socket, forwarded as plain-TCP via `modal.forward(8000, unencrypted=True)` for M5.1 back-compat and as the `rest_plain_tcp` cohort's transport) and a second time on port 8001 (forwarded as HTTPS-edge via `modal.forward(8001)` for the `rest_https_edge` cohort's transport). Both uvicorn `Server` instances wrap the **same** FastAPI `shim` object and therefore share the in-container `MockEngine` singleton — FR-002's "identical in-container engine code path" holds because only the listening socket differs. The handshake dict publishes four URLs: `grpc` (M5.1, gRPC plain-TCP), `rest` (M5.1, REST plain-TCP, `http://`), `rest_plain_tcp_url` (M5.2 alias for `rest`, scheme `tcp+plaintext://`), and `rest_https_edge_url` (M5.2 new, `https://`). `rest_plain_tcp` points its `httpx.AsyncClient` at `http://<plain_tcp_host>:<plain_tcp_port>/` while `rest_https_edge` points its client at `https://<https_edge_host>/` (Modal-managed TLS).
 
-**Implementation note**: M5.1's `modal_endpoint.provide_endpoint` returns the HTTPS-edge URL + the gRPC plain-TCP URL. M5.2 extends the return tuple (additively) to also expose the plain-TCP REST URL — the underlying tunnel data is the same data M5.1 already collected; the change is consumer-side wiring, not Modal-side configuration. The plain-TCP REST URL is constructed as `http://{tcp_host}:{tcp_port}` where `{tcp_host}:{tcp_port}` is the gRPC plain-TCP tunnel's host:port — the same `modal.forward(50051, unencrypted=True)` tunnel forwards every TCP byte regardless of whether port 50051 inside the container is the gRPC server or the FastAPI shim. **Correction**: the shim runs on port 8000, the gRPC server on port 50051; M5.2 therefore needs a **third** `modal.forward(8000, unencrypted=True)` call in `modal_bench_rest_grpc_server.py` to expose the FastAPI shim over plain-TCP. This is a one-line additive change to M5.1's Modal-deploy script and is the only Modal-side change M5.2 makes.
+**Rationale**: Modal's tunnel API is the operative constraint, not the in-container socket layout. Once we know `modal.forward(port)` is the *single allocator* of an in-container port to a tunnel, the design crystallises: one in-container port per tunnel, one uvicorn `Server` instance per in-container port, all wrapping the same shared FastAPI app object. Sharing the app (not just the engine) keeps FR-002 satisfied for free — `build_rest_shim(engine, expected_token=token)` is called once and the resulting ASGI callable is handed to both `uvicorn.Config(...)` invocations. The two `asyncio.create_task(server.serve())` instances run concurrently and listen on independent sockets; they share the event loop, the `MockEngine`, and the bearer-token verification middleware. Cold-start cost adds ~1–2 s for the second uvicorn instance — negligible relative to the 90 s smoke and 25–30 min full sweep.
+
+**Implementation note**: In `scripts/python/modal_bench_rest_grpc_server.py`:
+
+```python
+_REST_PORT = 8000               # M5.1's existing REST port (plain-TCP)
+_REST_HTTPS_EDGE_PORT = 8001    # M5.2's HTTPS-edge port (NEW)
+
+shim = build_rest_shim(engine, expected_token=token)
+rest_server      = uvicorn.Server(uvicorn.Config(shim, port=_REST_PORT,            ...))
+rest_edge_server = uvicorn.Server(uvicorn.Config(shim, port=_REST_HTTPS_EDGE_PORT, ...))
+rest_task      = asyncio.create_task(rest_server.serve())
+rest_edge_task = asyncio.create_task(rest_edge_server.serve())
+
+async with modal.forward.aio(_GRPC_PORT,            unencrypted=True) as grpc_tunnel:
+    async with modal.forward.aio(_REST_PORT,        unencrypted=True) as rest_tunnel:
+        async with modal.forward.aio(_REST_HTTPS_EDGE_PORT) as edge_tunnel:
+            # plain-TCP tunnels expose .tcp_socket (host, port); HTTPS-edge
+            # tunnels expose .url ("https://<id>.modal.run"). Different
+            # attribute shapes — the dispatcher reads them differently.
+            await d.put.aio("rest_https_edge_url", edge_tunnel.url)
+            await d.put.aio("rest_plain_tcp_url", f"tcp+plaintext://{rest_host}:{rest_port}")
+            ...
+```
+
+Teardown must clear both `rest_task` and `rest_edge_task` and pop the new `rest_https_edge_url` key from the dict on context exit. The harness-side `modal_endpoint._wait_for_rest_grpc_handshake` returns a **4-tuple** when `with_rest_plain_tcp=True`: `(grpc_url, rest_url, rest_plain_tcp_url, rest_https_edge_url)`. M5.1 callers leave the flag at its default `False` and receive `None` for the trailing two URLs, preserving back-compat.
+
+**Two more gotchas the implementation surfaced**:
+
+- *`modal.forward(port)` (no `unencrypted=`) vs `modal.forward(port, unencrypted=True)` expose different attribute shapes.* The HTTPS-edge tunnel surfaces its URL on `.url` (a string like `https://<id>.modal.run`); the plain-TCP tunnel surfaces its endpoint on `.tcp_socket` (a `(host, port)` tuple). Forgetting which attribute to read produces silent `AttributeError`s at handshake time. The deploy script reads `.url` for the HTTPS edge and constructs `tcp+plaintext://{host}:{port}` for plain-TCP.
+- *The plain-TCP URL still needs an `http://` scheme for `httpx`.* The handshake publishes `tcp+plaintext://host:port` (matches the gRPC convention, makes the scheme operatively visible in the dict); the harness strips that prefix and re-prepends `http://` before handing the URL to `httpx.AsyncClient`. The `__main__._run_m5_2` dispatcher does this transformation explicitly; treat the `tcp+plaintext://` scheme as a *labelling* convention for the dict, not a wire-layer scheme.
 
 **Alternatives considered**:
-- *Spin up a second Modal app for `rest_plain_tcp` (separate `modal.forward(unencrypted=True)`)*: rejected. Doubles deploy/teardown cost, breaks the "same MockEngine instance" guarantee (each app would have its own in-container singleton), and violates the spec's Single Modal deploy per run assumption.
-- *Route `rest_plain_tcp` through the gRPC plain-TCP tunnel (port 50051), with the shim listening on 50051 alongside the gRPC server*: rejected. Asyncio servers can't share a port; multiplexing would require an h2c-aware front like HAProxy in the container, which dramatically inflates implementation complexity.
-- *Skip `rest_plain_tcp` entirely and rely on M5.1's published `rest_plain_tcp` numbers*: rejected. The spec's FR-006 explicitly requires both REST transports to be re-measured at n=250 so the "transport-only comparison family" verdicts (FR-009) are at the same statistical resolution as the protocol-comparison family.
+- *Spin up a second Modal app for `rest_https_edge`*: rejected. Doubles deploy/teardown cost (~6–10 s extra per run), breaks the "same MockEngine instance across protocols" guarantee, and violates the spec's "single Modal deploy per run" assumption.
+- *Route `rest_https_edge` through the same `modal.forward(8000)` tunnel by binding uvicorn only on 8000 and forwarding once as HTTPS-edge*: rejected. This is what M5.1 would have looked like under FR-019, but it forces `rest_plain_tcp` to use a *different* in-container socket anyway (otherwise both REST cohorts share the HTTPS-edge tunnel — the experiment's variable collapses to a single value).
+- *Use a per-protocol reverse proxy (Caddy / Envoy) in the container that listens on one port and demultiplexes by SNI / port-suffix*: rejected. Inflates implementation complexity for no measurable benefit. The two-uvicorn approach is ~10 lines of Python and stays within the spec's "no new Modal-image deps relative to M5.1" rule.
+- *Skip `rest_plain_tcp` entirely and rely on M5.1's published numbers*: rejected. FR-006 requires both REST transports to be re-measured at n=250 so the transport-only verdict family has the same statistical resolution as the protocol-comparison family.
+
+**Lesson for future milestones**: when planning to add a new Modal tunnel that exposes an existing in-container service, the right question is *not* "can we forward port N twice with different flags?" but "**which in-container port does the new tunnel terminate on?**". Modal's `modal.forward(port, unencrypted=True|False)` is a 1-to-1 mapping from in-container ports to external tunnels. Every distinct tunnel needs a distinct in-container listener. The cost is one extra `uvicorn.Server` or equivalent, which is a much cheaper concession than the alternatives.
 
 ---
 
