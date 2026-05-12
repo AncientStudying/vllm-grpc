@@ -41,6 +41,11 @@ from typing import Any, Protocol
 import httpx
 
 from vllm_grpc_bench.channel_config import M1_BASELINE, ChannelConfig
+from vllm_grpc_bench.corpus import (
+    DEFAULT_CHAT_CORPUS_PATH,
+    RequestSample,
+    load_corpus,
+)
 from vllm_grpc_bench.m3_types import (
     M5_2CohortKind,
     NetworkPath,
@@ -143,6 +148,14 @@ class M5_2SweepConfig:
     )
     cells_override: tuple[CellSpec, ...] | None = None
 
+    # M5.2 (FR-005c chat-corpus): the chat-stream cohorts cycle through
+    # this corpus by iteration index so REST and gRPC see the same
+    # prompt for the same logical request. ``None`` falls back to the
+    # default committed ShareGPT subset (see ``DEFAULT_CHAT_CORPUS_PATH``);
+    # ``[]`` disables corpus mode and uses the synthetic-prompt helper
+    # (back-compat with pre-corpus tests).
+    chat_corpus_path: Path | None = None
+
     smoke: bool = False
 
 
@@ -192,6 +205,7 @@ async def dispatch_cell(
     https_edge_endpoint: str = "",
     client_external_geolocation_country: str | None = None,
     client_external_geolocation_region: str | None = None,
+    chat_corpus: list[RequestSample] | None = None,
 ) -> M5_2CellMeasurement:
     """Run a cell's five cohorts in series per research R-1 ordering:
 
@@ -217,10 +231,12 @@ async def dispatch_cell(
         https_edge_endpoint=https_edge_endpoint,
         client_external_geolocation_country=client_external_geolocation_country,
         client_external_geolocation_region=client_external_geolocation_region,
-        # M5.2 chat-path parity (FR-005c): the cell_id thread to the REST
-        # cohort matches the cell_id the gRPC cohorts already receive, so
-        # both protocols build the same chat prompt via build_chat_prompt.
+        # M5.2 (FR-005c chat-corpus): every cohort at this cell consumes
+        # the same corpus by iteration index — so the rest_https_edge,
+        # rest_plain_tcp, and all gRPC cohorts see byte-identical engine-
+        # input chat content for the same logical request.
         cell_id=f"rest-edge:{cell.key}",
+        corpus=chat_corpus,
     )
 
     rest_plain_tcp = await run_rest_cohort(
@@ -236,6 +252,7 @@ async def dispatch_cell(
         client=rest_client_plain_tcp,
         network_path="plain_tcp",
         cell_id=f"rest-tcp:{cell.key}",
+        corpus=chat_corpus,
     )
 
     default_grpc = await run_grpc_cohort(
@@ -253,6 +270,7 @@ async def dispatch_cell(
         cell_id=f"grpc-default:{cell.key}",
         rtt_probe_n=rtt_probe_n,
         warmup_n=warmup_n,
+        corpus=chat_corpus,
     )
 
     tuned_multiplexed: GRPCCohortResult | None = None
@@ -275,6 +293,7 @@ async def dispatch_cell(
             cell_id=f"grpc-tuned:{cell.key}",
             rtt_probe_n=rtt_probe_n,
             warmup_n=warmup_n,
+            corpus=chat_corpus,
         )
     else:
         tuned_multiplexed = await run_grpc_cohort(
@@ -292,6 +311,7 @@ async def dispatch_cell(
             cell_id=f"grpc-tuned-mux:{cell.key}",
             rtt_probe_n=rtt_probe_n,
             warmup_n=warmup_n,
+            corpus=chat_corpus,
         )
         tuned_channels = await run_grpc_cohort(
             path=cell.path,  # type: ignore[arg-type]
@@ -308,6 +328,7 @@ async def dispatch_cell(
             cell_id=f"grpc-tuned-ch:{cell.key}",
             rtt_probe_n=rtt_probe_n,
             warmup_n=warmup_n,
+            corpus=chat_corpus,
         )
 
     return M5_2CellMeasurement(
@@ -1066,6 +1087,26 @@ async def run_m5_2_sweep(config: M5_2SweepConfig, *, progress: bool = True) -> M
     cells = list(config.cells_override) if config.cells_override else enumerate_cells()
     concurrency_levels = sorted({c.concurrency for c in cells})
 
+    # M5.2 (FR-005c chat-corpus): load the corpus once at sweep start so
+    # every cohort × every cell consumes the same RequestSample objects
+    # by iteration index. ``chat_corpus_path=None`` uses the committed
+    # default (ShareGPT 1k subset); ``Path()`` (an empty path) disables
+    # corpus mode and falls back to the synthetic-prompt helper.
+    chat_corpus: list[RequestSample] | None
+    if config.chat_corpus_path is None:
+        chat_corpus_path = DEFAULT_CHAT_CORPUS_PATH
+        chat_corpus = load_corpus(chat_corpus_path) if chat_corpus_path.exists() else None
+    elif str(config.chat_corpus_path) == "":
+        chat_corpus = None
+    else:
+        chat_corpus = load_corpus(config.chat_corpus_path)
+    if progress and chat_corpus is not None:
+        print(
+            f"[m5_2] chat corpus: {len(chat_corpus)} samples from "
+            f"{config.chat_corpus_path or DEFAULT_CHAT_CORPUS_PATH}",
+            flush=True,
+        )
+
     cohort_configs = _build_cohort_configs_for_symmetry(config)
     block = build_symmetry_block(
         cohort_configs,
@@ -1125,6 +1166,7 @@ async def run_m5_2_sweep(config: M5_2SweepConfig, *, progress: bool = True) -> M
                     https_edge_endpoint=config.https_edge_endpoint,
                     client_external_geolocation_country=config.client_external_geolocation_country,
                     client_external_geolocation_region=config.client_external_geolocation_region,
+                    chat_corpus=chat_corpus,
                 )
                 write_cell_events_to_sidecar(measurement, writer)
                 rows, t_row = emit_cell_verdicts(

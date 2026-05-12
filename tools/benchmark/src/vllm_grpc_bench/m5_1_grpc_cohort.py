@@ -36,9 +36,10 @@ from dataclasses import dataclass
 from typing import Any
 
 import grpc
-from vllm_grpc.v1 import chat_pb2_grpc, completions_pb2_grpc
+from vllm_grpc.v1 import chat_pb2, chat_pb2_grpc, completions_pb2_grpc
 
 from vllm_grpc_bench.channel_config import ChannelConfig
+from vllm_grpc_bench.corpus import RequestSample
 from vllm_grpc_bench.m3_sweep import (
     DEFAULT_CHAT_MAX_TOKENS,
     _build_chat_request,
@@ -92,17 +93,31 @@ async def _send_chat_rpc(
     cell_id: str,
     timeout_s: float,
     max_tokens: int = DEFAULT_CHAT_MAX_TOKENS,
+    sample: RequestSample | None = None,
 ) -> Sample:
     stub = chat_pb2_grpc.ChatServiceStub(channel)
-    # M5.2 (FR-005c chat-path parity): shared prompt + max_tokens with the
-    # REST cohort. ``prompt_seed`` is retained for back-compat and traced
-    # for diagnostics but no longer shapes the wire prompt; the iteration
-    # and cell_id are what the shared helper consumes.
+    # M5.2 (FR-005c chat-corpus): when a corpus sample is provided, build
+    # the request from the sample's messages + max_tokens + temperature +
+    # seed. The fallback path (sample=None) uses the synthetic helper
+    # ``build_chat_prompt`` for back-compat with pre-corpus tests.
+    # ``prompt_seed`` is retained for back-compat but unused in both
+    # paths (corpus path uses sample.seed; synthetic path is independent).
     _ = prompt_seed
-    req = _build_chat_request(
-        build_chat_prompt(iteration=iteration, cell_id=cell_id),
-        max_tokens=max_tokens,
-    )
+    if sample is not None:
+        req = chat_pb2.ChatCompleteRequest(
+            messages=[
+                chat_pb2.ChatMessage(role=m["role"], content=m["content"]) for m in sample.messages
+            ],
+            model="mock-engine",
+            max_tokens=sample.max_tokens,
+            temperature=sample.temperature,
+            seed=sample.seed,
+        )
+    else:
+        req = _build_chat_request(
+            build_chat_prompt(iteration=iteration, cell_id=cell_id),
+            max_tokens=max_tokens,
+        )
     req_bytes = len(req.SerializeToString())
     t0 = time.perf_counter()
     arrival_times: list[float] = []
@@ -186,6 +201,7 @@ async def run_grpc_cohort(
     cell_id: str = "",
     rtt_probe_n: int = 32,
     warmup_n: int = 0,
+    corpus: list[RequestSample] | None = None,
 ) -> GRPCCohortResult:
     """Drive ``n`` RPCs against the gRPC endpoint under the chosen sub-cohort kind.
 
@@ -223,6 +239,11 @@ async def run_grpc_cohort(
                     timeout_s=timeout_s,
                 )
             else:
+                # M5.2 (FR-005c chat-corpus): pull the corpus sample by
+                # iteration index so REST and gRPC see the same prompt
+                # for the same i. Falls back to the synthetic helper
+                # when no corpus is provided (back-compat tests).
+                corpus_sample = corpus[i % len(corpus)] if corpus is not None else None
                 sample = await _send_chat_rpc(
                     channel,
                     iteration=i,
@@ -230,6 +251,7 @@ async def run_grpc_cohort(
                     metadata=metadata,
                     cell_id=cell_id,
                     timeout_s=timeout_s,
+                    sample=corpus_sample,
                 )
             samples.append(sample)
 

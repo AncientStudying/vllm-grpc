@@ -1,0 +1,29 @@
+{
+  "bucket_distribution": {
+    "long": 115,
+    "medium": 324,
+    "short": 561
+  },
+  "corpus_path": "tools/benchmark/corpus/chat_sharegpt_1000.json",
+  "corpus_sha256": "4442302df439fdc1967e9fb48a88910cee5d0f712592e733d47bdbbc1e0374f1",
+  "filter": {
+    "first_human_turn_only": true,
+    "max_chars": 2048,
+    "min_chars": 4
+  },
+  "schema": {
+    "max_tokens": 128,
+    "model": "Qwen/Qwen3-0.6B",
+    "seed": 42,
+    "temperature": 0.0
+  },
+  "source_file": "ShareGPT_V3_unfiltered_cleaned_split.json",
+  "source_file_sha256": "35f0e213ce091ed9b9af2a1f0755e9d39f9ccec34ab281cd4ca60d70f6479ba4",
+  "source_repo": "anon8231489123/ShareGPT_Vicuna_unfiltered",
+  "source_revision_sha": "192ab2185289094fc556ec8ce5ce1e8e587154ca",
+  "source_url": "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/192ab2185289094fc556ec8ce5ce1e8e587154ca/ShareGPT_V3_unfiltered_cleaned_split.json",
+  "subset": {
+    "count": 1000,
+    "random_seed": 42
+  }
+}

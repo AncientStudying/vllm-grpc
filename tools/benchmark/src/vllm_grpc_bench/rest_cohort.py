@@ -41,6 +41,7 @@ from dataclasses import dataclass
 import httpx
 import numpy as np
 
+from vllm_grpc_bench.corpus import RequestSample
 from vllm_grpc_bench.m3_sweep import DEFAULT_CHAT_MAX_TOKENS, build_chat_prompt
 from vllm_grpc_bench.m3_types import (
     NetworkPath,
@@ -156,16 +157,21 @@ async def _single_chat_stream_request(
     base_url: str,
     token: str,
     *,
-    prompt: str,
-    max_tokens: int,
+    sample: RequestSample,
     timeout_s: float,
 ) -> RESTCohortSample:
+    # M5.2 (FR-005c chat-corpus): the wire body is built from a
+    # ``RequestSample`` so REST and gRPC cohorts can share corpus-driven
+    # prompts. ``sample.model`` is M7-aspirational (e.g.,
+    # "Qwen/Qwen3-0.6B"); the harness substitutes "mock" since the
+    # FastAPI shim's MockEngine doesn't dispatch by model name. seed is
+    # NOT sent — the shim's pydantic request model doesn't accept it.
     body = {
         "model": "mock",
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": sample.messages,
         "stream": True,
-        "max_tokens": max_tokens,
-        "temperature": 1.0,
+        "max_tokens": sample.max_tokens,
+        "temperature": sample.temperature,
     }
     body_bytes = json.dumps(body).encode()
     headers = {"authorization": f"Bearer {token}", "content-type": "application/json"}
@@ -274,6 +280,7 @@ async def run_rest_cohort(
     client_external_geolocation_country: str | None = None,
     client_external_geolocation_region: str | None = None,
     cell_id: str = "",
+    corpus: list[RequestSample] | None = None,
 ) -> RESTCohortResult:
     """Drive ``n`` requests on the configured ``path`` with concurrency ``concurrency``.
 
@@ -298,17 +305,32 @@ async def run_rest_cohort(
 
         async def _one_request(i: int) -> RESTCohortSample:
             if path == "chat_stream":
-                # M5.2 (FR-005c chat-path parity): shared prompt format with
-                # the gRPC cohort. Both protocols call ``build_chat_prompt``
-                # so the engine sees byte-identical chat content for the
-                # same (iteration × cell_id) pair.
-                prompt = build_chat_prompt(iteration=i, cell_id=cell_id)
+                # M5.2 (FR-005c chat-corpus): when a corpus is provided,
+                # cycle through it deterministically by iteration index
+                # so REST and gRPC see the same sample for the same i.
+                # Fallback path (corpus=None) preserves the M5.1-era
+                # synthetic-prompt behavior for tests + back-compat.
+                if corpus is not None:
+                    sample = corpus[i % len(corpus)]
+                else:
+                    sample = RequestSample(
+                        id=f"synth-{i}",
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": build_chat_prompt(iteration=i, cell_id=cell_id),
+                            }
+                        ],
+                        model="mock",
+                        max_tokens=max_tokens,
+                        temperature=1.0,
+                        seed=42,
+                    )
                 return await _single_chat_stream_request(
                     client,
                     base_url,
                     token,
-                    prompt=prompt,
-                    max_tokens=max_tokens,
+                    sample=sample,
                     timeout_s=timeout_s,
                 )
             return await _single_embed_request(
