@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import os
 import secrets
-from pathlib import Path
 
 import httpx
 import pytest
@@ -38,10 +37,10 @@ def test_m5_1_modal_smoke_deploy_probe_cohort_teardown() -> None:
     token_env = "MODAL_BENCH_TOKEN"
 
     async def _run() -> None:
+        from vllm_grpc_bench.channel_config import M1_BASELINE
         from vllm_grpc_bench.m5_1_grpc_cohort import run_grpc_cohort
         from vllm_grpc_bench.modal_endpoint import provide_rest_grpc_endpoint
         from vllm_grpc_bench.rest_cohort import run_rest_cohort
-        from vllm_grpc_bench.channel_config import M1_BASELINE
 
         async with provide_rest_grpc_endpoint(
             region="eu-west-1", token_env=token_env
