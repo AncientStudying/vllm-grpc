@@ -86,12 +86,16 @@ async def serve_bench(token: str, region: str) -> dict[str, object]:
             self._expected = f"Bearer {expected}"
 
         async def intercept_service(  # type: ignore[no-untyped-def]
-            self, continuation, handler_call_details  # noqa: ANN001
+            self,
+            continuation,
+            handler_call_details,  # noqa: ANN001
         ):
             md = dict(handler_call_details.invocation_metadata or ())
             if md.get("authorization", "") != self._expected:
+
                 async def _unauth(request: Any, context: Any) -> Any:
                     await context.abort(grpc.StatusCode.UNAUTHENTICATED, "bearer token rejected")
+
                 return grpc.unary_unary_rpc_method_handler(_unauth)
             return await continuation(handler_call_details)
 
@@ -173,8 +177,7 @@ async def serve_bench(token: str, region: str) -> dict[str, object]:
 def main(token: str = "", region: str = "eu-west-1") -> None:
     if not token:
         print(
-            "ERROR: pass --token=<bearer-token> "
-            "(see specs/018-m5-1-rest-vs-grpc/quickstart.md)",
+            "ERROR: pass --token=<bearer-token> (see specs/018-m5-1-rest-vs-grpc/quickstart.md)",
             file=sys.stderr,
         )
         sys.exit(2)

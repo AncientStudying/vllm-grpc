@@ -554,9 +554,7 @@ async def run_m5_1_sweep(
     if not token:
         raise RuntimeError(f"Bearer-token env var {config.token_env_var!r} is not set.")
 
-    cells = (
-        list(config.cells_override) if config.cells_override is not None else enumerate_cells()
-    )
+    cells = list(config.cells_override) if config.cells_override is not None else enumerate_cells()
     m5_1_matrix: list[M5_1Cell] = []
     cohorts: list[RunCohort] = []
     shim_overheads_run: list[float] = []

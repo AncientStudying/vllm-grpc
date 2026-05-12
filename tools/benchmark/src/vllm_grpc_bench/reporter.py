@@ -1162,9 +1162,7 @@ def _supersedes_m1_entry_to_dict(entry: SupersedesM1Entry) -> dict[str, Any]:
         "m1_concurrency": entry.m1_concurrency,
         "m1_verdict_literal": entry.m1_verdict_literal,
         "m1_source_report": entry.m1_source_report,
-        "m5_1_verdict_per_width": {
-            str(k): v for k, v in entry.m5_1_verdict_per_width.items()
-        },
+        "m5_1_verdict_per_width": {str(k): v for k, v in entry.m5_1_verdict_per_width.items()},
         "m5_1_supporting_delta_pct": {
             str(k): v for k, v in entry.m5_1_supporting_delta_pct.items()
         },
@@ -1195,9 +1193,7 @@ def _m5_1_run_metadata_to_dict(meta: M5_1RunMetadata) -> dict[str, Any]:
             ),
         },
         "m5_1_matrix": [_m5_1_cell_to_dict(c) for c in meta.m5_1_matrix],
-        "supersedes_m1_time": [
-            _supersedes_m1_entry_to_dict(e) for e in meta.supersedes_m1_time
-        ],
+        "supersedes_m1_time": [_supersedes_m1_entry_to_dict(e) for e in meta.supersedes_m1_time],
     }
 
 

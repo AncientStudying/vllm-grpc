@@ -114,9 +114,7 @@ def test_verdict_mapper_emits_correct_literals() -> None:
     )
     assert _verdict_for_sub_cohort("tuned_grpc", -8.0, (-12.0, -4.0)) == "tuned_grpc_recommend"
     # default_grpc winning gets its own literal, NOT the tuned-multiplexed one.
-    assert (
-        _verdict_for_sub_cohort("default_grpc", -9.0, (-12.0, -6.0)) == "default_grpc_recommend"
-    )
+    assert _verdict_for_sub_cohort("default_grpc", -9.0, (-12.0, -6.0)) == "default_grpc_recommend"
     # CI strictly positive → rest_recommend.
     assert _verdict_for_sub_cohort("tuned_grpc_multiplexed", 12.0, (8.0, 16.0)) == "rest_recommend"
     assert _verdict_for_sub_cohort("default_grpc", 12.0, (8.0, 16.0)) == "rest_recommend"

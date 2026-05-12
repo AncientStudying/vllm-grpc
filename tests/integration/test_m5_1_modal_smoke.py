@@ -23,9 +23,7 @@ _REQUIRED_ENV = ("MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET")
 
 pytestmark = pytest.mark.skipif(
     not all(os.environ.get(k) for k in _REQUIRED_ENV),
-    reason="M5.1 Modal smoke test requires "
-    + ", ".join(_REQUIRED_ENV)
-    + " in the environment",
+    reason="M5.1 Modal smoke test requires " + ", ".join(_REQUIRED_ENV) + " in the environment",
 )
 
 
@@ -42,9 +40,7 @@ def test_m5_1_modal_smoke_deploy_probe_cohort_teardown() -> None:
         from vllm_grpc_bench.modal_endpoint import provide_rest_grpc_endpoint
         from vllm_grpc_bench.rest_cohort import run_rest_cohort
 
-        async with provide_rest_grpc_endpoint(
-            region="eu-west-1", token_env=token_env
-        ) as endpoints:
+        async with provide_rest_grpc_endpoint(region="eu-west-1", token_env=token_env) as endpoints:
             token = os.environ[token_env]
             # 1) REST /healthz unauth probe.
             async with httpx.AsyncClient(timeout=30.0) as c:
