@@ -31,6 +31,7 @@ import json
 import os
 import random
 import statistics
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -929,6 +930,12 @@ class M5_2Run:
     https_edge_vs_plain_tcp_rtt_delta_p95_ms: float
 
     smoke: bool = False
+    # Per-cell crash log per FR-005. One entry per (cell × exception) when the
+    # sweep's per-cell try/except catches a dispatch failure. The regenerator
+    # surfaces these as comparison_unavailable rows in the markdown's
+    # negative-results appendix so a reader can see which cells were
+    # incomplete and why. Empty on a clean run.
+    failed_cells: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _build_cohort_configs_for_symmetry(config: M5_2SweepConfig) -> list[CohortConfigInput]:
@@ -1034,13 +1041,18 @@ async def run_m5_2_sweep(config: M5_2SweepConfig, *, progress: bool = True) -> M
 
     1. Resolve token, build the 3-tier symmetry block, assert tier (a) +
        tier (b) (skipping c=1 tuned-pair).
-    2. (Optional) client geolocation lookup at run start.
-    3. Open the EventsSidecarWriter.
-    4. Run warmup cohorts (writer phase=warmup); records persist but are
+    2. Open the EventsSidecarWriter and write a skeleton run config
+       (``events_sidecar_sha256=""`` placeholder). A crash before the first
+       cell still leaves a regeneratable metadata artifact.
+    3. Run warmup cohorts (writer phase=warmup); records persist but are
        excluded from aggregates.
-    5. For each cell: dispatch_cell → write_cell_events → emit_cell_verdicts.
-    6. Close the writer; capture (gzipped_path, sha256).
-    7. Build the M5_2Run + write the run config JSON sidecar.
+    4. For each cell: try ``dispatch_cell → write_cell_events →
+       emit_cell_verdicts``. On exception, log type + traceback to stderr,
+       record the cell in ``failed_cells``, continue. Per-cell isolation
+       per FR-005 — a single cohort failure is documented, not fatal.
+    5. Close the writer; capture (gzipped_path, sha256). Update the run
+       config with the real sha + failed_cells list. The regenerator can
+       then run on the partial sweep.
     """
     token = os.environ.get(config.token_env_var, "")
     if not token:
@@ -1062,54 +1074,93 @@ async def run_m5_2_sweep(config: M5_2SweepConfig, *, progress: bool = True) -> M
     grpc_results: list[tuple[M5_2CohortKind, GRPCCohortResult]] = []
     protocol_rows: list[ProtocolComparisonRow] = []
     transport_rows: list[TransportOnlyRow] = []
+    failed_cells: list[dict[str, Any]] = []
 
     run_started = time.monotonic()
     run_started_at_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     config.events_sidecar_out_dir.mkdir(parents=True, exist_ok=True)
-    with EventsSidecarWriter(config.events_sidecar_out_dir, config.run_id) as writer:
+
+    # Skeleton run config — written before any cell dispatches so a crash
+    # before the first measurement still leaves a regeneratable metadata
+    # artifact. The events_sidecar_sha256 is filled in at sweep completion
+    # (the gzipped sidecar's hash isn't knowable until __exit__ runs).
+    _write_skeleton_run_config(
+        config=config,
+        block=block,
+        run_started_at_iso=run_started_at_iso,
+    )
+
+    writer = EventsSidecarWriter(config.events_sidecar_out_dir, config.run_id)
+    writer.__enter__()
+    try:
         for idx, cell in enumerate(cells):
             if progress:
                 print(
                     f"[m5_2] {idx + 1}/{len(cells)} dispatching cell {cell.key}",
                     flush=True,
                 )
-            tuned_cfg = frozen_tuned_channel_config(
-                cell.path,
-                cell.hidden_size,
-                m5_report_path=config.m5_report_path,
-            )
-            measurement = await dispatch_cell(
-                cell,
-                rest_https_edge_url=config.rest_https_edge_url,
-                rest_plain_tcp_url=config.rest_plain_tcp_url,
-                grpc_target=config.grpc_target,
-                token=token,
-                n=config.n_per_cohort,
-                tuned_channel_config=tuned_cfg,
-                timeout_s=config.timeout_s,
-                rtt_probe_n=config.rtt_probe_n,
-                warmup_n=config.warmup_n,
-                https_edge_endpoint=config.https_edge_endpoint,
-                client_external_geolocation_country=config.client_external_geolocation_country,
-                client_external_geolocation_region=config.client_external_geolocation_region,
-            )
-            write_cell_events_to_sidecar(measurement, writer)
-            rows, t_row = emit_cell_verdicts(
-                measurement,
-                rtt_exercise_threshold_ms=config.rtt_exercise_threshold_ms,
-            )
-            protocol_rows.extend(rows)
-            transport_rows.append(t_row)
-            rest_https_results.append(measurement.rest_https_edge)
-            rest_tcp_results.append(measurement.rest_plain_tcp)
-            grpc_results.append(("default_grpc", measurement.default_grpc))
-            if measurement.tuned_grpc is not None:
-                grpc_results.append(("tuned_grpc", measurement.tuned_grpc))
-            if measurement.tuned_multiplexed is not None:
-                grpc_results.append(("tuned_grpc_multiplexed", measurement.tuned_multiplexed))
-            if measurement.tuned_channels is not None:
-                grpc_results.append(("tuned_grpc_channels", measurement.tuned_channels))
+            try:
+                tuned_cfg = frozen_tuned_channel_config(
+                    cell.path,
+                    cell.hidden_size,
+                    m5_report_path=config.m5_report_path,
+                )
+                measurement = await dispatch_cell(
+                    cell,
+                    rest_https_edge_url=config.rest_https_edge_url,
+                    rest_plain_tcp_url=config.rest_plain_tcp_url,
+                    grpc_target=config.grpc_target,
+                    token=token,
+                    n=config.n_per_cohort,
+                    tuned_channel_config=tuned_cfg,
+                    timeout_s=config.timeout_s,
+                    rtt_probe_n=config.rtt_probe_n,
+                    warmup_n=config.warmup_n,
+                    https_edge_endpoint=config.https_edge_endpoint,
+                    client_external_geolocation_country=config.client_external_geolocation_country,
+                    client_external_geolocation_region=config.client_external_geolocation_region,
+                )
+                write_cell_events_to_sidecar(measurement, writer)
+                rows, t_row = emit_cell_verdicts(
+                    measurement,
+                    rtt_exercise_threshold_ms=config.rtt_exercise_threshold_ms,
+                )
+                protocol_rows.extend(rows)
+                transport_rows.append(t_row)
+                rest_https_results.append(measurement.rest_https_edge)
+                rest_tcp_results.append(measurement.rest_plain_tcp)
+                grpc_results.append(("default_grpc", measurement.default_grpc))
+                if measurement.tuned_grpc is not None:
+                    grpc_results.append(("tuned_grpc", measurement.tuned_grpc))
+                if measurement.tuned_multiplexed is not None:
+                    grpc_results.append(("tuned_grpc_multiplexed", measurement.tuned_multiplexed))
+                if measurement.tuned_channels is not None:
+                    grpc_results.append(("tuned_grpc_channels", measurement.tuned_channels))
+            except Exception as cell_exc:  # noqa: BLE001
+                import traceback as _tb
+
+                tb_str = "".join(_tb.format_exception(cell_exc))
+                print(
+                    f"[m5_2] CELL FAILED {idx + 1}/{len(cells)} {cell.key}: "
+                    f"type={type(cell_exc).__name__} repr={cell_exc!r}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                print(tb_str, file=sys.stderr, flush=True)
+                failed_cells.append(
+                    {
+                        "path": cell.path,
+                        "hidden_size": cell.hidden_size,
+                        "concurrency": cell.concurrency,
+                        "exception_type": type(cell_exc).__name__,
+                        "exception_repr": repr(cell_exc),
+                        "traceback": tb_str,
+                    }
+                )
+                continue
+    finally:
+        writer.__exit__(None, None, None)
 
     sidecar_path, sidecar_sha = writer.result
 
@@ -1148,10 +1199,74 @@ async def run_m5_2_sweep(config: M5_2SweepConfig, *, progress: bool = True) -> M
         https_edge_vs_plain_tcp_rtt_delta_median_ms=delta_med,
         https_edge_vs_plain_tcp_rtt_delta_p95_ms=delta_p95,
         smoke=config.smoke,
+        failed_cells=failed_cells,
     )
 
     _write_run_config_json(run, config)
+    if failed_cells and progress:
+        print(
+            f"[m5_2] sweep complete with {len(failed_cells)} failed cell(s): "
+            + ", ".join(
+                f"{f['path']}:h{f['hidden_size']}:c{f['concurrency']}({f['exception_type']})"
+                for f in failed_cells
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
     return run
+
+
+def _write_skeleton_run_config(
+    *,
+    config: M5_2SweepConfig,
+    block: SymmetryBlock,
+    run_started_at_iso: str,
+) -> Path:
+    """Write a placeholder run config JSON before any cell dispatches.
+
+    A crash before the first measurement still leaves a metadata artifact
+    on disk (with ``events_sidecar_sha256=""`` as the placeholder). The
+    final run config — overwriting this file — is written by
+    :func:`_write_run_config_json` once the sidecar has been gzipped and
+    its SHA-256 is known.
+    """
+    out_path = config.events_sidecar_out_dir / f"{config.run_id}.run_config.json"
+    payload: dict[str, Any] = {
+        "run_id": config.run_id,
+        "run_started_at_iso": run_started_at_iso,
+        "run_realized_runtime_s": 0.0,
+        "seed": config.seed,
+        "symmetry": _symmetry_to_dict(block),
+        "events_sidecar_path": str(
+            config.events_sidecar_out_dir / f"{config.run_id}.events.jsonl.gz"
+        ),
+        "events_sidecar_sha256": "",
+        "modal_region": config.modal_region,
+        "modal_instance_class": config.modal_instance_class,
+        "https_edge_endpoint": config.https_edge_endpoint,
+        "client_external_geolocation": (
+            None
+            if config.client_external_geolocation_country is None
+            else {
+                "country": config.client_external_geolocation_country,
+                "region": config.client_external_geolocation_region or "",
+            }
+        ),
+        "payload_parity_audit": {
+            "no_regression_confirmed_against_pr": "",
+            "measured_payload_bytes": {},
+        },
+        "smoke_run_outcome": {
+            "iso": run_started_at_iso,
+            "asserted_clauses_count": 0,
+            "per_cohort_rtt_probe_medians_ms": {},
+        },
+        "failed_cells": [],
+    }
+    out_path.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    )
+    return out_path
 
 
 def _write_run_config_json(run: M5_2Run, config: M5_2SweepConfig) -> Path:
@@ -1159,6 +1274,10 @@ def _write_run_config_json(run: M5_2Run, config: M5_2SweepConfig) -> Path:
     ``bench-results/m5_2-full/{run_id}.run_config.json``. The regenerator
     reads this to validate the events sidecar's SHA-256 and to re-assert
     the symmetry block at report-build time per FR-012b.
+
+    Overwrites the skeleton written by :func:`_write_skeleton_run_config`
+    at sweep start; on a clean sweep these two files are identical except
+    for the now-real ``events_sidecar_sha256`` and ``run_realized_runtime_s``.
     """
     out_path = config.events_sidecar_out_dir / f"{run.run_id}.run_config.json"
 
@@ -1173,6 +1292,7 @@ def _write_run_config_json(run: M5_2Run, config: M5_2SweepConfig) -> Path:
         "modal_region": run.modal_region,
         "modal_instance_class": run.modal_instance_class,
         "https_edge_endpoint": run.https_edge_endpoint,
+        "failed_cells": run.failed_cells,
         "client_external_geolocation": (
             None
             if run.client_external_geolocation_country is None

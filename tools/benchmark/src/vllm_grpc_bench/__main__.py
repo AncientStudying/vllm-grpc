@@ -1428,7 +1428,17 @@ async def _do_m5_2_run(args: argparse.Namespace, cfg: object, *, smoke: bool) ->
         print(f"Error: {exc}", file=sys.stderr)
         return 6
     except Exception as exc:  # noqa: BLE001
-        print(f"Error: M5.2 sweep failed: {exc}", file=sys.stderr)
+        import traceback as _tb
+
+        # Surface type + repr + traceback so an empty-message exception
+        # (httpx socket errors, asyncio.CancelledError, etc.) can be
+        # diagnosed from the CLI output alone. Previously the handler
+        # printed only ``str(exc)`` which is empty for many real failures.
+        print(
+            f"Error: M5.2 sweep failed: type={type(exc).__name__} repr={exc!r}",
+            file=sys.stderr,
+        )
+        _tb.print_exc(file=sys.stderr)
         return 7
 
     if smoke:

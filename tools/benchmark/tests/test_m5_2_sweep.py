@@ -272,6 +272,118 @@ def test_warmup_samples_emit_with_phase_warmup_when_present(tmp_path: Path) -> N
     assert all(r.rtt_at_issue_ms == 50.0 for r in edge_records[2:])
 
 
+async def test_run_m5_2_sweep_writes_skeleton_run_config_before_first_cell(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Resilience fix: the run config JSON is written BEFORE any cell
+    dispatches, so a crash on cell 1 (or earlier) still leaves a
+    metadata artifact on disk."""
+    from vllm_grpc_bench import m5_2_sweep
+    from vllm_grpc_bench.m5_2_sweep import (
+        M5_2SweepConfig,
+        run_m5_2_sweep,
+    )
+
+    monkeypatch.setenv("MODAL_BENCH_TOKEN", "tok")
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("synthetic dispatch failure on cell 1")
+
+    monkeypatch.setattr(m5_2_sweep, "dispatch_cell", _boom)
+    monkeypatch.setattr(
+        m5_2_sweep,
+        "frozen_tuned_channel_config",
+        lambda *_args, **_kwargs: None,
+    )
+
+    cfg = M5_2SweepConfig(
+        rest_https_edge_url="https://example.modal.run",
+        rest_plain_tcp_url="http://example.modal.host:8000",
+        grpc_target="example.modal.host:50051",
+        run_id="skel-test",
+        events_sidecar_out_dir=tmp_path,
+        cells_override=(CellSpec(path="embed", hidden_size=2048, concurrency=4),),
+        n_per_cohort=5,
+        warmup_n=0,
+    )
+    run = await run_m5_2_sweep(cfg, progress=False)
+    # Skeleton + final run config both exist (final overwrites skeleton).
+    cfg_path = tmp_path / "skel-test.run_config.json"
+    assert cfg_path.exists()
+    import json
+
+    body = json.loads(cfg_path.read_text())
+    # The skeleton/final run config records the failed cell.
+    assert body["failed_cells"], "failed_cells must be persisted to the run config"
+    assert body["failed_cells"][0]["exception_type"] == "RuntimeError"
+    assert body["failed_cells"][0]["path"] == "embed"
+    assert body["failed_cells"][0]["concurrency"] == 4
+    # No measurement rows reached the sweep's protocol verdicts list.
+    assert run.protocol_comparison_verdicts == []
+    assert run.transport_only_verdicts == []
+    assert len(run.failed_cells) == 1
+
+
+async def test_run_m5_2_sweep_continues_on_cell_failure(tmp_path: Path, monkeypatch) -> None:
+    """A single cell failure documents itself as a ``failed_cells`` entry
+    but does NOT abort the rest of the sweep."""
+    from vllm_grpc_bench import m5_2_sweep
+    from vllm_grpc_bench.m5_2_sweep import (
+        M5_2SweepConfig,
+        run_m5_2_sweep,
+    )
+
+    monkeypatch.setenv("MODAL_BENCH_TOKEN", "tok")
+
+    cell_a = CellSpec(path="embed", hidden_size=2048, concurrency=1)
+    cell_b = CellSpec(path="embed", hidden_size=4096, concurrency=1)
+
+    async def _dispatch(cell, **kwargs):
+        if cell.hidden_size == 4096:
+            raise RuntimeError("synthetic c=4096 failure")
+        return M5_2CellMeasurement(
+            cell=cell,
+            rest_https_edge=_fake_rest("https_edge"),
+            rest_plain_tcp=_fake_rest("plain_tcp"),
+            default_grpc=_fake_grpc("default_grpc"),
+            tuned_multiplexed=None,
+            tuned_channels=None,
+            tuned_grpc=_fake_grpc("tuned_grpc"),
+        )
+
+    monkeypatch.setattr(m5_2_sweep, "dispatch_cell", _dispatch)
+    monkeypatch.setattr(
+        m5_2_sweep,
+        "frozen_tuned_channel_config",
+        lambda *_args, **_kwargs: None,
+    )
+
+    cfg = M5_2SweepConfig(
+        rest_https_edge_url="https://example.modal.run",
+        rest_plain_tcp_url="http://example.modal.host:8000",
+        grpc_target="example.modal.host:50051",
+        run_id="resilience-test",
+        events_sidecar_out_dir=tmp_path,
+        cells_override=(cell_a, cell_b),
+        n_per_cohort=3,
+        warmup_n=0,
+    )
+    run = await run_m5_2_sweep(cfg, progress=False)
+    # Cell A (h=2048) produced verdict rows; cell B (h=4096) is in failed_cells.
+    assert len(run.failed_cells) == 1
+    assert run.failed_cells[0]["hidden_size"] == 4096
+    assert run.protocol_comparison_verdicts, "cell A verdicts must be emitted"
+    assert all(r.hidden_size == 2048 for r in run.protocol_comparison_verdicts)
+    # Sidecar SHA-256 is non-empty (writer closed cleanly).
+    assert run.events_sidecar_sha256
+    # Run config persists failed_cells.
+    import json
+
+    cfg_path = tmp_path / "resilience-test.run_config.json"
+    body = json.loads(cfg_path.read_text())
+    assert body["failed_cells"][0]["hidden_size"] == 4096
+
+
 def test_warmup_records_excluded_when_no_warmup_samples_present(tmp_path: Path) -> None:
     """Back-compat: when result.warmup_samples is empty (M5.1 callers),
     only measurement records reach the sidecar — no spurious empty
