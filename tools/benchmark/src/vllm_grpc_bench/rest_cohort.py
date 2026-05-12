@@ -69,6 +69,11 @@ class RESTCohortResult:
     continue to pass. The ``https_edge_record`` is populated only when
     ``network_path="https_edge"``; the M5.2 reporter uses it to surface
     HTTPS-edge-specific provenance per FR-008 / FR-014.
+
+    ``warmup_samples`` (M5.2, FR-012a (g)): the per-request samples from the
+    cohort's warmup pool. Aggregation helpers ignore these; the M5.2 sidecar
+    writer persists them with ``phase="warmup"`` for audit. Pre-M5.2 callers
+    leave the field empty so M5.1's record aggregation is unchanged.
     """
 
     samples: tuple[RESTCohortSample, ...]
@@ -76,6 +81,7 @@ class RESTCohortResult:
     rtt_record: RTTRecord | None
     network_path: NetworkPath | None = None
     https_edge_record: RestHttpsEdgeCohortRecord | None = None
+    warmup_samples: tuple[RESTCohortSample, ...] = ()
 
 
 async def probe_rest_rtt(
@@ -173,21 +179,27 @@ async def _single_chat_stream_request(
         if resp.status_code != 200:
             raise RuntimeError(f"REST chat_stream: expected 200, got {resp.status_code}")
         shim_overhead_ms = float(resp.headers.get("x-shim-overhead-ms", "0.0"))
-        first_line_bytes = 0
+        total_response_bytes = 0
         ttft_seconds = 0.0
         captured_first = False
-        # First-non-empty-data: TTFT anchor; then drain the rest so the
-        # connection is returned to the keep-alive pool cleanly.
+        # Record TTFT on the first non-empty ``data:`` SSE line. Then keep
+        # draining and summing every line's byte size (plus one byte for the
+        # trailing newline ``aiter_lines`` strips) so ``response_bytes`` is
+        # the total SSE body bytes — comparable to gRPC's
+        # ``sum(len(chunk.SerializeToString()) for chunk in stream)``. The
+        # earlier first-line-only behavior left REST chat_stream response
+        # byte sizes incommensurable with gRPC's, which made the bytes
+        # columns of the report misleading even though TTFT was correct.
         async for line in resp.aiter_lines():
+            total_response_bytes += len(line.encode()) + 1
             if not captured_first and line and line.startswith("data:") and "[DONE]" not in line:
                 ttft_seconds = time.perf_counter() - start
-                first_line_bytes = len(line.encode())
                 captured_first = True
     return RESTCohortSample(
         wall_clock_seconds=ttft_seconds,
         shim_overhead_ms=shim_overhead_ms,
         request_bytes=len(body_bytes),
-        response_bytes=first_line_bytes,
+        response_bytes=total_response_bytes,
     )
 
 
@@ -324,11 +336,14 @@ async def run_rest_cohort(
             await asyncio.gather(*workers)
             return collected
 
-        # Warmup phase — discarded. Fills the keep-alive pool and pays any
-        # per-connection HTTP/1.1 handshake cost so the measurement window
-        # starts on warm connections.
+        # Warmup phase. Fills the keep-alive pool and pays any per-connection
+        # HTTP/1.1 handshake cost so the measurement window starts on warm
+        # connections. M5.2 (FR-012a (g)): these samples are persisted to the
+        # events sidecar with phase="warmup" for audit, but never reach the
+        # cohort record's aggregates.
+        warmup_results: list[RESTCohortSample] = []
         if warmup_n > 0:
-            await _drive_pool(warmup_n)
+            warmup_results = await _drive_pool(warmup_n)
         # RTT probe goes AFTER warmup so the probe channel is also warm
         # (matches the cohort's measurement state).
         rtt = await probe_rest_rtt(base_url, client=client, n=rtt_probe_n, timeout_s=timeout_s)
@@ -363,6 +378,7 @@ async def run_rest_cohort(
         rtt_record=rtt,
         network_path=network_path,
         https_edge_record=https_edge_record,
+        warmup_samples=tuple(warmup_results),
     )
 
 

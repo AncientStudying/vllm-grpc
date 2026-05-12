@@ -223,3 +223,71 @@ def test_warmup_records_persisted_with_phase_warmup(tmp_path: Path) -> None:
     records = list(read_sidecar_iter(gz_path))
     phases = {r.phase for r in records}
     assert phases == {"warmup", "measurement"}
+
+
+def test_warmup_samples_emit_with_phase_warmup_when_present(tmp_path: Path) -> None:
+    """FR-012a (g) — the sweep layer writes warmup samples to the sidecar
+    BEFORE measurement samples (per cohort), labeling them
+    ``phase="warmup"`` and zeroing ``rtt_at_issue_ms`` (the RTT probe
+    hadn't run yet at warmup-issue time).
+    """
+    cell = CellSpec(path="chat_stream", hidden_size=2048, concurrency=4)
+    rest_edge = _fake_rest("https_edge", n=5)
+    rest_edge = RESTCohortResult(
+        samples=rest_edge.samples,
+        record=rest_edge.record,
+        rtt_record=rest_edge.rtt_record,
+        network_path=rest_edge.network_path,
+        warmup_samples=tuple(
+            RESTCohortSample(
+                wall_clock_seconds=0.030 + 0.001 * i,
+                shim_overhead_ms=0.4,
+                request_bytes=512,
+                response_bytes=1024,
+            )
+            for i in range(2)
+        ),
+    )
+    measurement = M5_2CellMeasurement(
+        cell=cell,
+        rest_https_edge=rest_edge,
+        rest_plain_tcp=_fake_rest("plain_tcp"),
+        default_grpc=_fake_grpc("default_grpc"),
+        tuned_multiplexed=_fake_grpc("tuned_grpc_multiplexed"),
+        tuned_channels=_fake_grpc("tuned_grpc_channels"),
+        tuned_grpc=None,
+    )
+    with EventsSidecarWriter(tmp_path, "warm-mixed") as w:
+        write_cell_events_to_sidecar(measurement, w)
+    gz_path, _ = w.result
+    records = list(read_sidecar_iter(gz_path))
+    edge_records = [r for r in records if r.cohort == "rest_https_edge"]
+    # Warmup records emit FIRST per cohort, then measurement.
+    assert edge_records[0].phase == "warmup"
+    assert edge_records[1].phase == "warmup"
+    assert all(r.phase == "measurement" for r in edge_records[2:])
+    # Warmup records carry rtt_at_issue_ms=0 (probe hadn't run yet).
+    assert all(r.rtt_at_issue_ms == 0.0 for r in edge_records[:2])
+    # Measurement records carry the cohort's measured RTT median.
+    assert all(r.rtt_at_issue_ms == 50.0 for r in edge_records[2:])
+
+
+def test_warmup_records_excluded_when_no_warmup_samples_present(tmp_path: Path) -> None:
+    """Back-compat: when result.warmup_samples is empty (M5.1 callers),
+    only measurement records reach the sidecar — no spurious empty
+    ``phase=warmup`` rows."""
+    cell = CellSpec(path="embed", hidden_size=2048, concurrency=4)
+    measurement = M5_2CellMeasurement(
+        cell=cell,
+        rest_https_edge=_fake_rest("https_edge"),
+        rest_plain_tcp=_fake_rest("plain_tcp"),
+        default_grpc=_fake_grpc("default_grpc"),
+        tuned_multiplexed=_fake_grpc("tuned_grpc_multiplexed"),
+        tuned_channels=_fake_grpc("tuned_grpc_channels"),
+        tuned_grpc=None,
+    )
+    with EventsSidecarWriter(tmp_path, "no-warm") as w:
+        write_cell_events_to_sidecar(measurement, w)
+    gz_path, _ = w.result
+    records = list(read_sidecar_iter(gz_path))
+    assert all(r.phase == "measurement" for r in records)

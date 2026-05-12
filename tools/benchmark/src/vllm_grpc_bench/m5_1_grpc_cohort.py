@@ -51,12 +51,19 @@ from vllm_grpc_bench.rtt_probe import measure_rtt
 
 @dataclass(frozen=True)
 class GRPCCohortResult:
-    """Aggregate output of one M5.1 gRPC cohort run."""
+    """Aggregate output of one M5.1 gRPC cohort run.
+
+    ``warmup_samples`` (M5.2, FR-012a (g)): the per-request samples from the
+    cohort's warmup pool. Aggregation ignores them; the M5.2 sidecar writer
+    persists them with ``phase="warmup"`` for audit. Pre-M5.2 callers leave
+    the field empty so M5.1's aggregation path is unchanged.
+    """
 
     samples: tuple[Sample, ...]
     rtt_record: RTTRecord
     sub_cohort_kind: GRPCSubCohortKind
     channels_opened: int
+    warmup_samples: tuple[Sample, ...] = ()
 
 
 @asynccontextmanager
@@ -251,13 +258,18 @@ async def run_grpc_cohort(
 
                 await asyncio.gather(*(_worker() for _ in range(concurrency)))
 
-        # Warmup phase — discarded. Pays the cold-channel HTTP/2 handshake
-        # cost on RPC #1 (and on each of c channels in channels-mode) so the
-        # measurement window starts on warm connections.
+        # Warmup phase. Pays the cold-channel HTTP/2 handshake cost on
+        # RPC #1 (and on each of c channels in channels-mode) so the
+        # measurement window starts on warm connections. M5.2
+        # (FR-012a (g)): warmup samples are snapshotted before the
+        # measurement window opens and persisted to the events sidecar
+        # with phase="warmup" for audit. They never reach the cohort
+        # record's aggregates.
+        warmup_snapshot: tuple[Sample, ...] = ()
         if warmup_n > 0:
             await _drive_measurement(warmup_n, into_samples=False)
-            samples.clear()  # Drop warmup samples — they reached _run_one's
-            #                  closure but aren't part of the cohort record.
+            warmup_snapshot = tuple(samples)
+            samples.clear()
         # RTT probe goes AFTER warmup so the probe channel is warm.
         rtt = await measure_rtt(channels[0], n=rtt_probe_n, metadata=metadata)
         # Measurement phase — samples reach the aggregator.
@@ -268,6 +280,7 @@ async def run_grpc_cohort(
         rtt_record=rtt,
         sub_cohort_kind=sub_cohort_kind,
         channels_opened=channels_needed,
+        warmup_samples=warmup_snapshot,
     )
 
 

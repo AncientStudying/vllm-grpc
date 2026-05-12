@@ -173,6 +173,86 @@ async def test_healthz_requires_no_bearer_token() -> None:
     assert resp.json() == {"ok": True}
 
 
+async def test_chat_stream_response_bytes_sums_all_sse_lines() -> None:
+    """M5.2 fix: ``response_bytes`` is the TOTAL SSE body bytes summed
+    across every yielded line, not just the first ``data:`` line. This
+    matches gRPC's ``sum(len(chunk.SerializeToString()) for chunk in
+    stream)`` semantic so a downstream consumer comparing
+    ``response_body_bytes`` across REST and gRPC chat_stream cohorts gets
+    commensurable values.
+    """
+    client, _ = _build_test_client(hidden_size=2048, c=1)
+    try:
+        result = await run_rest_cohort(
+            path="chat_stream",
+            base_url=_BASE_URL,
+            token=_TEST_TOKEN,
+            concurrency=1,
+            n=4,
+            hidden_size=2048,
+            rtt_probe_n=2,
+            client=client,
+        )
+    finally:
+        await client.aclose()
+    # Total response bytes should be substantially larger than a single SSE
+    # ``data: {...}`` line. With max_tokens=64 and many tokens per chunk,
+    # the cumulative response runs to hundreds of bytes per request.
+    for sample in result.samples:
+        assert sample.response_bytes > 100, (
+            f"chat_stream response_bytes must be the total across all SSE "
+            f"lines, not just the first; got {sample.response_bytes}"
+        )
+
+
+async def test_rest_cohort_returns_warmup_samples_when_warmup_n_positive() -> None:
+    """M5.2 (FR-012a (g)): warmup samples are returned alongside the
+    measurement samples so the events sidecar can persist them with
+    phase="warmup". Aggregates exclude warmup (the cohort record's
+    counters reflect ``n`` only, not ``n + warmup_n``).
+    """
+    client, _ = _build_test_client(hidden_size=2048, c=1)
+    try:
+        result = await run_rest_cohort(
+            path="embed",
+            base_url=_BASE_URL,
+            token=_TEST_TOKEN,
+            concurrency=1,
+            n=3,
+            hidden_size=2048,
+            rtt_probe_n=2,
+            warmup_n=2,
+            client=client,
+        )
+    finally:
+        await client.aclose()
+    # 3 measurement samples + 2 warmup samples, each on its own attribute.
+    assert len(result.samples) == 3
+    assert len(result.warmup_samples) == 2
+    # The cohort record (which feeds aggregates) is built from measurement
+    # samples only — the warmup bytes don't leak into the median fields.
+    assert result.record.request_bytes_median > 0
+
+
+async def test_rest_cohort_warmup_samples_empty_when_warmup_n_zero() -> None:
+    client, _ = _build_test_client(hidden_size=2048, c=1)
+    try:
+        result = await run_rest_cohort(
+            path="embed",
+            base_url=_BASE_URL,
+            token=_TEST_TOKEN,
+            concurrency=1,
+            n=3,
+            hidden_size=2048,
+            rtt_probe_n=2,
+            warmup_n=0,
+            client=client,
+        )
+    finally:
+        await client.aclose()
+    assert result.warmup_samples == ()
+
+
 async def test_v1_endpoint_rejects_missing_bearer_token() -> None:
     """``/v1/*`` requires bearer auth — bare GET/POST without header returns 401."""
     client, _ = _build_test_client(hidden_size=2048, c=1)

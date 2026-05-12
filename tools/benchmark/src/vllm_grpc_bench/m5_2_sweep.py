@@ -45,6 +45,7 @@ from vllm_grpc_bench.m3_types import (
     NetworkPath,
     ProtocolComparisonRow,
     ProtocolComparisonVerdict,
+    Sample,
     TransportOnlyRow,
     TransportOnlyVerdict,
 )
@@ -65,7 +66,7 @@ from vllm_grpc_bench.m5_2_symmetry import (
     build_symmetry_block,
     canonical_digest,
 )
-from vllm_grpc_bench.rest_cohort import RESTCohortResult, run_rest_cohort
+from vllm_grpc_bench.rest_cohort import RESTCohortResult, RESTCohortSample, run_rest_cohort
 
 # Re-export so importers can grab CellSpec / enumerate_cells from m5_2_sweep
 # without reaching into m5_1_sweep.
@@ -330,16 +331,29 @@ def _rest_samples_for_cell(
     network_path: NetworkPath,
     base_ms: float,
     phase: str,
+    *,
+    samples_override: tuple[RESTCohortSample, ...] | None = None,
 ) -> list[PerRequestEventRecord]:
     """Build per-request events for a REST cohort. The base monotonic
     timestamp is a fixed offset so the regenerator's aggregate computation
     is byte-stable across re-runs on the same in-memory samples.
+
+    ``samples_override`` lets the sidecar writer build warmup events from
+    ``result.warmup_samples`` while still using the cohort's measurement
+    rtt_record for the rtt_at_issue snapshot (per FR-012a (f); for warmup
+    records the snapshot is 0.0 since the RTT probe hadn't run yet).
     """
-    rtt_med = 0.0 if result.rtt_record is None else result.rtt_record.median_ms
+    measurement_phase = phase == "measurement"
+    rtt_med = (
+        (0.0 if result.rtt_record is None else result.rtt_record.median_ms)
+        if measurement_phase
+        else 0.0
+    )
+    samples = result.samples if samples_override is None else samples_override
     records: list[PerRequestEventRecord] = []
     cumulative = 0.0
-    rng = random.Random(hash(cell.key) & 0x7FFFFFFF)
-    for sample in result.samples:
+    rng = random.Random(hash(cell.key) & 0x7FFFFFFF ^ (0 if measurement_phase else 0xDEADBEEF))
+    for sample in samples:
         issue = _ts_offset_ms(base_ms, cumulative)
         done = _ts_offset_ms(base_ms, cumulative + sample.wall_clock_seconds)
         first_byte = done if cell.path == "chat_stream" else None
@@ -374,12 +388,17 @@ def _grpc_samples_for_cell(
     cohort: M5_2CohortKind,
     base_ms: float,
     phase: str,
+    *,
+    samples_override: tuple[Sample, ...] | None = None,
 ) -> list[PerRequestEventRecord]:
-    rtt_med = result.rtt_record.median_ms
+    measurement_phase = phase == "measurement"
+    rtt_med = result.rtt_record.median_ms if measurement_phase else 0.0
+    samples = result.samples if samples_override is None else samples_override
     records: list[PerRequestEventRecord] = []
     cumulative = 0.0
-    rng = random.Random((hash(cell.key) & 0x7FFFFFFF) ^ hash(cohort) & 0x7FFFFFFF)
-    for sample in result.samples:
+    seed_xor = 0 if measurement_phase else 0xDEADBEEF
+    rng = random.Random((hash(cell.key) & 0x7FFFFFFF) ^ (hash(cohort) & 0x7FFFFFFF) ^ seed_xor)
+    for sample in samples:
         issue = _ts_offset_ms(base_ms, cumulative)
         done = _ts_offset_ms(base_ms, cumulative + sample.wall_clock_seconds)
         first_byte: float | None = None
@@ -421,60 +440,72 @@ def write_cell_events_to_sidecar(
     """Stream every cohort's per-request events to the sidecar for one
     M5.2 cell. Records are written in cohort dispatch order (research R-1):
     rest_https_edge → rest_plain_tcp → default_grpc → (tuned variants).
+
+    For each cohort, ``warmup_samples`` (if any) are written FIRST with
+    ``phase="warmup"`` and ``rtt_at_issue_ms=0`` (the RTT probe hadn't run
+    yet at warmup-issue time), then the measurement samples follow with
+    ``phase="measurement"`` and the cohort's measured RTT median. This
+    matches FR-012a (g)'s rule that warmup is persisted for audit but
+    excluded from aggregates.
+
+    The ``phase`` kwarg overrides the per-cohort behavior — used by tests
+    that want every record stamped with a single phase.
     """
-    for rec in _rest_samples_for_cell(
-        measurement.cell,
-        measurement.rest_https_edge,
-        cohort="rest_https_edge",
-        network_path="https_edge",
-        base_ms=base_ms_per_cohort,
-        phase=phase,
-    ):
-        writer.write(rec)
-    for rec in _rest_samples_for_cell(
-        measurement.cell,
-        measurement.rest_plain_tcp,
-        cohort="rest_plain_tcp",
-        network_path="plain_tcp",
-        base_ms=base_ms_per_cohort,
-        phase=phase,
-    ):
-        writer.write(rec)
-    for rec in _grpc_samples_for_cell(
-        measurement.cell,
-        measurement.default_grpc,
-        cohort="default_grpc",
-        base_ms=base_ms_per_cohort,
-        phase=phase,
-    ):
-        writer.write(rec)
-    if measurement.tuned_grpc is not None:
-        for rec in _grpc_samples_for_cell(
+
+    def _write_rest(
+        cohort_name: M5_2CohortKind,
+        network_path: NetworkPath,
+        result: RESTCohortResult,
+    ) -> None:
+        if phase == "measurement" and result.warmup_samples:
+            for rec in _rest_samples_for_cell(
+                measurement.cell,
+                result,
+                cohort=cohort_name,
+                network_path=network_path,
+                base_ms=base_ms_per_cohort,
+                phase="warmup",
+                samples_override=result.warmup_samples,
+            ):
+                writer.write(rec)
+        for rec in _rest_samples_for_cell(
             measurement.cell,
-            measurement.tuned_grpc,
-            cohort="tuned_grpc",
+            result,
+            cohort=cohort_name,
+            network_path=network_path,
             base_ms=base_ms_per_cohort,
             phase=phase,
         ):
             writer.write(rec)
-    if measurement.tuned_multiplexed is not None:
+
+    def _write_grpc(cohort_name: M5_2CohortKind, result: GRPCCohortResult | None) -> None:
+        if result is None:
+            return
+        if phase == "measurement" and result.warmup_samples:
+            for rec in _grpc_samples_for_cell(
+                measurement.cell,
+                result,
+                cohort=cohort_name,
+                base_ms=base_ms_per_cohort,
+                phase="warmup",
+                samples_override=result.warmup_samples,
+            ):
+                writer.write(rec)
         for rec in _grpc_samples_for_cell(
             measurement.cell,
-            measurement.tuned_multiplexed,
-            cohort="tuned_grpc_multiplexed",
+            result,
+            cohort=cohort_name,
             base_ms=base_ms_per_cohort,
             phase=phase,
         ):
             writer.write(rec)
-    if measurement.tuned_channels is not None:
-        for rec in _grpc_samples_for_cell(
-            measurement.cell,
-            measurement.tuned_channels,
-            cohort="tuned_grpc_channels",
-            base_ms=base_ms_per_cohort,
-            phase=phase,
-        ):
-            writer.write(rec)
+
+    _write_rest("rest_https_edge", "https_edge", measurement.rest_https_edge)
+    _write_rest("rest_plain_tcp", "plain_tcp", measurement.rest_plain_tcp)
+    _write_grpc("default_grpc", measurement.default_grpc)
+    _write_grpc("tuned_grpc", measurement.tuned_grpc)
+    _write_grpc("tuned_grpc_multiplexed", measurement.tuned_multiplexed)
+    _write_grpc("tuned_grpc_channels", measurement.tuned_channels)
 
 
 # ---------------------------------------------------------------------------
