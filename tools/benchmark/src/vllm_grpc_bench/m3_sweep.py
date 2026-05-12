@@ -310,6 +310,28 @@ def _build_chat_request(prompt_text: str, max_tokens: int = 64) -> chat_pb2.Chat
     )
 
 
+# M5.2 (FR-005c chat-path parity). Both REST and gRPC chat cohorts now build
+# their request prompts and max_tokens from these shared helpers so the
+# payload-parity audit's Step 1 checks pass. Pre-M5.2, REST used
+# ``"Hello world request-{i} please complete this sentence"`` with
+# max_tokens=64 while gRPC used ``"M5.1 chat probe iter={seed} cell={id}"``
+# with max_tokens=32. The TTFT metric was insensitive to the divergence
+# under MockEngine, but the audit's strict-reading flagged the asymmetry,
+# so M5.2 aligns the two sides on a single deterministic format.
+DEFAULT_CHAT_MAX_TOKENS = 64
+
+
+def build_chat_prompt(*, iteration: int, cell_id: str) -> str:
+    """Deterministic per-request chat prompt shared by REST and gRPC cohorts.
+
+    Both protocols call this helper so the engine sees byte-identical chat
+    content for the same (iteration × cell_id) pair. The format intentionally
+    embeds both fields so a sidecar reader can map a recorded
+    ``request_uuid`` back to its prompt without re-running the harness.
+    """
+    return f"M5.2 chat probe iter={iteration} cell={cell_id}"
+
+
 async def _drive_embed_cell(
     addr: str,
     cell: BenchmarkCell,

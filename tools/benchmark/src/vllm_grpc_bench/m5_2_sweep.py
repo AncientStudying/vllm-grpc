@@ -217,6 +217,10 @@ async def dispatch_cell(
         https_edge_endpoint=https_edge_endpoint,
         client_external_geolocation_country=client_external_geolocation_country,
         client_external_geolocation_region=client_external_geolocation_region,
+        # M5.2 chat-path parity (FR-005c): the cell_id thread to the REST
+        # cohort matches the cell_id the gRPC cohorts already receive, so
+        # both protocols build the same chat prompt via build_chat_prompt.
+        cell_id=f"rest-edge:{cell.key}",
     )
 
     rest_plain_tcp = await run_rest_cohort(
@@ -231,6 +235,7 @@ async def dispatch_cell(
         warmup_n=warmup_n,
         client=rest_client_plain_tcp,
         network_path="plain_tcp",
+        cell_id=f"rest-tcp:{cell.key}",
     )
 
     default_grpc = await run_grpc_cohort(

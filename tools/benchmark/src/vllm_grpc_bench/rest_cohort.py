@@ -41,6 +41,7 @@ from dataclasses import dataclass
 import httpx
 import numpy as np
 
+from vllm_grpc_bench.m3_sweep import DEFAULT_CHAT_MAX_TOKENS, build_chat_prompt
 from vllm_grpc_bench.m3_types import (
     NetworkPath,
     RESTCohortRecord,
@@ -264,7 +265,7 @@ async def run_rest_cohort(
     n: int,
     hidden_size: int,
     timeout_s: float = 30.0,
-    max_tokens: int = 64,
+    max_tokens: int = DEFAULT_CHAT_MAX_TOKENS,
     rtt_probe_n: int = 32,
     warmup_n: int = 0,
     client: httpx.AsyncClient | None = None,
@@ -272,6 +273,7 @@ async def run_rest_cohort(
     https_edge_endpoint: str | None = None,
     client_external_geolocation_country: str | None = None,
     client_external_geolocation_region: str | None = None,
+    cell_id: str = "",
 ) -> RESTCohortResult:
     """Drive ``n`` requests on the configured ``path`` with concurrency ``concurrency``.
 
@@ -296,7 +298,11 @@ async def run_rest_cohort(
 
         async def _one_request(i: int) -> RESTCohortSample:
             if path == "chat_stream":
-                prompt = f"Hello world request-{i} please complete this sentence"
+                # M5.2 (FR-005c chat-path parity): shared prompt format with
+                # the gRPC cohort. Both protocols call ``build_chat_prompt``
+                # so the engine sees byte-identical chat content for the
+                # same (iteration × cell_id) pair.
+                prompt = build_chat_prompt(iteration=i, cell_id=cell_id)
                 return await _single_chat_stream_request(
                     client,
                     base_url,

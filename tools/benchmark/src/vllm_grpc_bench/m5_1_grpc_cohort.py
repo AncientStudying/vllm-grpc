@@ -40,10 +40,12 @@ from vllm_grpc.v1 import chat_pb2_grpc, completions_pb2_grpc
 
 from vllm_grpc_bench.channel_config import ChannelConfig
 from vllm_grpc_bench.m3_sweep import (
+    DEFAULT_CHAT_MAX_TOKENS,
     _build_chat_request,
     _build_embed_request,
     _classify_error,
     _client_kwargs,
+    build_chat_prompt,
 )
 from vllm_grpc_bench.m3_types import GRPCSubCohortKind, Path_, RTTRecord, Sample
 from vllm_grpc_bench.rtt_probe import measure_rtt
@@ -89,9 +91,18 @@ async def _send_chat_rpc(
     metadata: tuple[tuple[str, str], ...] | None,
     cell_id: str,
     timeout_s: float,
+    max_tokens: int = DEFAULT_CHAT_MAX_TOKENS,
 ) -> Sample:
     stub = chat_pb2_grpc.ChatServiceStub(channel)
-    req = _build_chat_request(f"M5.1 chat probe iter={prompt_seed} cell={cell_id}", max_tokens=32)
+    # M5.2 (FR-005c chat-path parity): shared prompt + max_tokens with the
+    # REST cohort. ``prompt_seed`` is retained for back-compat and traced
+    # for diagnostics but no longer shapes the wire prompt; the iteration
+    # and cell_id are what the shared helper consumes.
+    _ = prompt_seed
+    req = _build_chat_request(
+        build_chat_prompt(iteration=iteration, cell_id=cell_id),
+        max_tokens=max_tokens,
+    )
     req_bytes = len(req.SerializeToString())
     t0 = time.perf_counter()
     arrival_times: list[float] = []
