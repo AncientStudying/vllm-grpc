@@ -1,7 +1,7 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/017-m5-cross-host-validation/plan.md
+at specs/018-m5-1-rest-vs-grpc/plan.md
 <!-- SPECKIT END -->
 
 ## Codebase navigation

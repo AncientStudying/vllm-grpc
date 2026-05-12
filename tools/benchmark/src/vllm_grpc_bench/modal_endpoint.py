@@ -25,6 +25,7 @@ import os
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from vllm_grpc_bench.channel_config import ChannelConfig
@@ -37,6 +38,26 @@ _DICT_NAME = "vllm-grpc-bench-mock-handshake"
 _HANDSHAKE_TIMEOUT_S = 120.0
 _HANDSHAKE_POLL_S = 0.5
 
+# M5.1 dual-protocol handshake dict + timeout. Uses its own dict name so an
+# M5 deploy in flight does not collide with a parallel M5.1 deploy on the
+# same Modal workspace.
+_M5_1_DICT_NAME = "vllm-grpc-bench-rest-grpc-mock-handshake"
+_M5_1_HANDSHAKE_TIMEOUT_S = 180.0
+
+
+@dataclass(frozen=True)
+class RESTGRPCEndpoints:
+    """Dual-protocol endpoint bundle returned by ``provide_endpoint(variant='rest_grpc')``.
+
+    Carries both tunnel URLs plus the env-var name the bearer token was
+    read from (the token value itself is *never* stored — it remains in the
+    operator's environment and is read at use-site).
+    """
+
+    grpc_url: str
+    rest_url: str
+    auth_token_env_var: str
+
 
 class ModalDeployError(RuntimeError):
     """Raised when the Modal handshake fails (publishing, timeout, env)."""
@@ -48,9 +69,13 @@ def _strip_scheme(endpoint: str) -> str:
     Modal's ``modal.forward(unencrypted=False)`` may publish either
     ``tcp://host:port`` or ``grpcs://host:port`` depending on the Modal SDK
     version (contract m5-modal-app.md, "What the contract does NOT
-    guarantee"). gRPC channels accept the bare ``host:port`` form.
+    guarantee"). M5.1's ``serve_bench`` writes ``tcp+plaintext://host:port``
+    for the gRPC tunnel (matches the harness's documentation of the plain-
+    TCP-with-no-TLS choice forced by Modal's HTTPS edge ALPN constraint).
+    gRPC channels accept the bare ``host:port`` form.
     """
-    for prefix in ("tcp://", "grpcs://", "https://", "grpc://"):
+    # Longest prefix first so ``tcp+plaintext://`` wins over ``tcp://``.
+    for prefix in ("tcp+plaintext://", "tcp://", "grpcs://", "https://", "grpc://"):
         if endpoint.startswith(prefix):
             return endpoint[len(prefix) :]
     return endpoint
@@ -137,6 +162,93 @@ async def provide_endpoint(
                     await asyncio.wait_for(serve_call.get.aio(), timeout=30.0)
     finally:
         output_ctx.__exit__(None, None, None)
+
+
+@asynccontextmanager
+async def provide_rest_grpc_endpoint(
+    *,
+    region: str = "eu-west-1",
+    token_env: str = "MODAL_BENCH_TOKEN",
+) -> AsyncIterator[RESTGRPCEndpoints]:
+    """M5.1 dual-protocol deploy: deploys the FastAPI shim + gRPC server,
+    captures both tunnel URLs, yields a :class:`RESTGRPCEndpoints` bundle.
+
+    On context exit the Modal app is torn down via the shared ``modal.Dict``'s
+    ``teardown=True`` signal (same pattern as the M5 gRPC-only path). The
+    bearer-token value is *never* returned — only the env-var name is.
+    """
+    token = os.environ.get(token_env, "")
+    if not token:
+        raise ModalDeployError(
+            f"environment variable {token_env!r} is not set; "
+            "M5.1 requires a bearer token to be exported before the sweep "
+            "(see specs/018-m5-1-rest-vs-grpc/quickstart.md)"
+        )
+    try:
+        import modal
+
+        from scripts.python.modal_bench_rest_grpc_server import app, serve_bench
+    except ImportError as exc:
+        raise ModalDeployError(
+            f"failed to import M5.1 Modal app module: {exc}; "
+            "ensure modal is installed (`uv sync`) and the M5.1 deploy script "
+            "is on PYTHONPATH"
+        ) from exc
+
+    output_ctx = modal.enable_output()
+    output_ctx.__enter__()
+    try:
+        async with app.run.aio():
+            serve_call = await serve_bench.spawn.aio(token=token, region=region)
+            d = modal.Dict.from_name(_M5_1_DICT_NAME, create_if_missing=True)
+            for key in ("grpc", "rest", "token", "region", "ready", "teardown"):
+                with contextlib.suppress(Exception):
+                    await d.pop.aio(key)
+            grpc_url, rest_url = await _wait_for_rest_grpc_handshake(
+                d, _M5_1_HANDSHAKE_TIMEOUT_S, expected_token=token
+            )
+            try:
+                yield RESTGRPCEndpoints(
+                    grpc_url=_strip_scheme(grpc_url),
+                    rest_url=rest_url,
+                    auth_token_env_var=token_env,
+                )
+            finally:
+                with contextlib.suppress(Exception):
+                    await d.put.aio("teardown", True)
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(serve_call.get.aio(), timeout=30.0)
+    finally:
+        output_ctx.__exit__(None, None, None)
+
+
+async def _wait_for_rest_grpc_handshake(
+    d: object, timeout_s: float, *, expected_token: str
+) -> tuple[str, str]:
+    """Poll the M5.1 handshake dict for ``ready==True``; return (grpc_url, rest_url)."""
+    deadline = time.monotonic() + timeout_s
+    last_seen: dict[str, object] = {}
+    while time.monotonic() < deadline:
+        ready = await d.get.aio("ready", default=False)  # type: ignore[attr-defined]
+        if ready:
+            grpc_url = await d.get.aio("grpc", default="")  # type: ignore[attr-defined]
+            rest_url = await d.get.aio("rest", default="")  # type: ignore[attr-defined]
+            echoed = await d.get.aio("token", default="")  # type: ignore[attr-defined]
+            if not isinstance(grpc_url, str) or not grpc_url:
+                raise ModalDeployError("M5.1 Modal handshake completed but gRPC URL is empty")
+            if not isinstance(rest_url, str) or not rest_url:
+                raise ModalDeployError("M5.1 Modal handshake completed but REST URL is empty")
+            if echoed != expected_token:
+                raise ModalDeployError(
+                    "M5.1 Modal handshake completed but bearer-token echo does not match; "
+                    "another Modal app may be using the shared M5.1 handshake dict"
+                )
+            return grpc_url, rest_url
+        last_seen = {"ready": ready}
+        await asyncio.sleep(_HANDSHAKE_POLL_S)
+    raise ModalDeployError(
+        f"M5.1 Modal handshake timed out after {timeout_s:.0f}s; last_seen={last_seen!r}"
+    )
 
 
 @asynccontextmanager

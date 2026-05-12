@@ -146,6 +146,15 @@ class RunCohort:
     server_bound: bool = False
     low_rtt_caveat: bool = False
     discarded: bool = False
+    # M5.1 additions (data-model.md). All optional — pre-M5.1 cohorts leave
+    # these at their defaults so the M5.1 JSON schema remains a strict
+    # superset of M5's (FR-014, additive-only).
+    protocol: BenchProtocol | None = None
+    grpc_channel_model: GRPCSubCohortKind | None = None
+    connection_count: int | None = None
+    shim_overhead_ms: float | None = None
+    comparison_cell_key: str | None = None
+    rest_cohort_record: RESTCohortRecord | None = None
 
 
 @dataclass(frozen=True)
@@ -571,6 +580,139 @@ class M5RunMetadata:
     warmup_n: int
     server_bound_overhead_threshold_ms: float
     server_bound_cohort_count: int
+
+
+# ---------------------------------------------------------------------------
+# M5.1 additions (data-model.md from specs/018-m5-1-rest-vs-grpc).
+# Strictly additive — every dataclass is optional in existing call paths so
+# the M5 JSON schema remains a strict subset.
+# ---------------------------------------------------------------------------
+
+
+ComparisonVerdict = Literal[
+    "tuned_grpc_multiplexed_recommend",
+    "tuned_grpc_channels_recommend",
+    "tuned_grpc_recommend",
+    # Default-gRPC channel (M1-default config) outperforms REST at this cell.
+    # Surfaces the M1-default-channel side of the M5.1 dual sub-cohort split
+    # honestly rather than collapsing into a tuned-gRPC label.
+    "default_grpc_recommend",
+    "rest_recommend",
+    "no_winner",
+    "comparison_unavailable",
+]
+
+GRPCSubCohortKind = Literal[
+    "tuned_grpc_multiplexed",
+    "tuned_grpc_channels",
+    "tuned_grpc",
+    "default_grpc",
+]
+
+BenchProtocol = Literal["rest", "grpc"]
+# Backwards-compat alias for callers that import the M5.1 Literal as `Protocol`.
+# Cannot shadow ``typing.Protocol`` (already imported above), so the canonical
+# spelling is ``BenchProtocol``.
+
+
+@dataclass(frozen=True)
+class RESTCohortRecord:
+    """Per-(path × hidden_size × concurrency) REST cohort measurement."""
+
+    shim_overhead_ms_median: float
+    shim_overhead_ms_p95: float
+    connections_opened: int
+    connections_keepalive_reused: int
+    request_bytes_median: int
+    request_bytes_p95: int
+    response_bytes_median: int
+    response_bytes_p95: int
+
+
+@dataclass(frozen=True)
+class ShimOverheadRecord:
+    """Run-level aggregate of FastAPI shim intra-process overhead."""
+
+    shim_overhead_ms_median_across_run: float
+    shim_overhead_ms_p95_across_run: float
+    shim_overhead_ms_max_across_run: float
+    shim_overhead_material_in_any_cohort: bool
+
+
+@dataclass(frozen=True)
+class SupersedesM1Entry:
+    """One row in the M5.1 'Supersedes M1 (time-axis)' table (FR-020)."""
+
+    m1_path: Literal["chat_completion", "embed_completion"]
+    m1_concurrency: int
+    m1_verdict_literal: str
+    m1_source_report: str
+    m5_1_verdict_per_width: dict[int, ComparisonVerdict]
+    m5_1_supporting_delta_pct: dict[int, float]
+    m5_1_supporting_ci_pct: dict[int, tuple[float, float]]
+    classification: Literal["verdict_confirmed", "verdict_changed", "mixed"]
+    rationale: str
+    comparison_basis: Literal["m1_real_vllm_vs_m5_1_mock_engine"] = (
+        "m1_real_vllm_vs_m5_1_mock_engine"
+    )
+
+    def __post_init__(self) -> None:
+        if self.classification not in ("verdict_confirmed", "verdict_changed", "mixed"):
+            raise ValueError(
+                f"SupersedesM1Entry.classification must be one of "
+                f"(verdict_confirmed, verdict_changed, mixed); got {self.classification!r}"
+            )
+        if not self.rationale:
+            raise ValueError("SupersedesM1Entry.rationale must be non-empty")
+
+
+@dataclass(frozen=True)
+class CellVerdict:
+    """One row of the M5.1 per-cell comparison verdict."""
+
+    grpc_sub_cohort: GRPCSubCohortKind
+    verdict: ComparisonVerdict
+    delta_pct: float
+    ci_pct: tuple[float, float]
+    metric: Literal["ttft", "wallclock"]
+
+
+@dataclass(frozen=True)
+class M5_1Cell:
+    """One (path × hidden_size × concurrency) cell in the M5.1 matrix."""
+
+    path: Literal["chat_stream", "embed"]
+    hidden_size: Literal[2048, 4096, 8192]
+    concurrency: Literal[1, 4, 8]
+    rest_cohort_key: str
+    default_grpc_cohort_key: str
+    tuned_grpc_multiplexed_cohort_key: str
+    tuned_grpc_channels_cohort_key: str | None
+    verdicts: list[CellVerdict]
+    comparison_unavailable: bool
+    comparison_unavailable_reason: str | None
+    rtt_ms_median: float
+    rtt_ms_p95: float
+    low_rtt_caveat: bool
+
+    @property
+    def comparison_cell_key(self) -> str:
+        return f"{self.path}:h{self.hidden_size}:c{self.concurrency}"
+
+
+@dataclass(frozen=True)
+class M5_1RunMetadata:
+    """Top-level M5.1 metadata folded into the JSON root."""
+
+    modal_app_handle: str
+    modal_region: str
+    modal_instance_class: Literal["cpu"]
+    rest_shim_version_sha: str
+    rest_shim_uvicorn_workers: int
+    auth_token_env_var: str
+    shim_overhead: ShimOverheadRecord
+    supersedes_m1_time: list[SupersedesM1Entry]
+    m5_1_matrix: list[M5_1Cell]
 
 
 def non_discarded(cohorts: Iterable[RunCohort]) -> Iterator[RunCohort]:

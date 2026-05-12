@@ -6,13 +6,18 @@ import json
 from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from vllm_grpc_bench.m3_types import (
+    CellVerdict,
     Citation,
+    M5_1Cell,
+    M5_1RunMetadata,
     Recommendation,
     Run,
     RunCohort,
     SchemaCandidateResult,
+    SupersedesM1Entry,
     SupersedesM4Entry,
     SupersessionEntry,
 )
@@ -738,6 +743,36 @@ def write_three_way_md(report: ThreeWayReport, path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _cohort_to_m5_1_dict(c: RunCohort, sample_size: int) -> dict[str, object]:
+    """M5.1 cohort shape: M5 superset + protocol/grpc_channel_model/etc.
+
+    ``sample_size`` is explicitly threaded so the reporter can record the
+    actual cohort n (M5.1 cohorts don't carry it on ``RunCohort.cell.iterations``
+    because the dispatcher tracks n separately).
+    """
+    base = _cohort_to_m5_dict(c)
+    base["sample_size"] = sample_size
+    base["protocol"] = c.protocol
+    base["grpc_channel_model"] = c.grpc_channel_model
+    base["connection_count"] = c.connection_count
+    base["shim_overhead_ms"] = c.shim_overhead_ms
+    base["comparison_cell_key"] = c.comparison_cell_key
+    if c.rest_cohort_record is not None:
+        base["rest_cohort_record"] = {
+            "shim_overhead_ms_median": c.rest_cohort_record.shim_overhead_ms_median,
+            "shim_overhead_ms_p95": c.rest_cohort_record.shim_overhead_ms_p95,
+            "connections_opened": c.rest_cohort_record.connections_opened,
+            "connections_keepalive_reused": c.rest_cohort_record.connections_keepalive_reused,
+            "request_bytes_median": c.rest_cohort_record.request_bytes_median,
+            "request_bytes_p95": c.rest_cohort_record.request_bytes_p95,
+            "response_bytes_median": c.rest_cohort_record.response_bytes_median,
+            "response_bytes_p95": c.rest_cohort_record.response_bytes_p95,
+        }
+    else:
+        base["rest_cohort_record"] = None
+    return base
+
+
 def _cohort_to_m5_dict(c: RunCohort) -> dict[str, object]:
     """M5 cohort shape: M4 fields + RTT/server_bound/low_rtt_caveat/discarded.
 
@@ -1081,6 +1116,274 @@ def write_m5_markdown(run: Run, path: Path) -> Path:
             f"- M4 cells superseded: {len(run.supersedes_m4)} "
             f"({sum(1 for e in run.supersedes_m4 if e.verdict_changed)} verdict-changed)",
         ]
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+# ---------------------------------------------------------------------------
+# M5.1 report writers (specs/018-m5-1-rest-vs-grpc/contracts/m5_1-report-schema.md)
+# ---------------------------------------------------------------------------
+
+
+def _cell_verdict_to_dict(v: CellVerdict) -> dict[str, Any]:
+    return {
+        "grpc_sub_cohort": v.grpc_sub_cohort,
+        "verdict": v.verdict,
+        "delta_pct": v.delta_pct,
+        "ci_pct": list(v.ci_pct),
+        "metric": v.metric,
+    }
+
+
+def _m5_1_cell_to_dict(cell: M5_1Cell) -> dict[str, Any]:
+    return {
+        "path": cell.path,
+        "hidden_size": cell.hidden_size,
+        "concurrency": cell.concurrency,
+        "comparison_cell_key": cell.comparison_cell_key,
+        "rest_cohort_key": cell.rest_cohort_key,
+        "tuned_grpc_multiplexed_cohort_key": cell.tuned_grpc_multiplexed_cohort_key,
+        "tuned_grpc_channels_cohort_key": cell.tuned_grpc_channels_cohort_key,
+        "default_grpc_cohort_key": cell.default_grpc_cohort_key,
+        "verdicts": [_cell_verdict_to_dict(v) for v in cell.verdicts],
+        "comparison_unavailable": cell.comparison_unavailable,
+        "comparison_unavailable_reason": cell.comparison_unavailable_reason,
+        "rtt_ms_median": cell.rtt_ms_median,
+        "rtt_ms_p95": cell.rtt_ms_p95,
+        "low_rtt_caveat": cell.low_rtt_caveat,
+    }
+
+
+def _supersedes_m1_entry_to_dict(entry: SupersedesM1Entry) -> dict[str, Any]:
+    return {
+        "m1_path": entry.m1_path,
+        "m1_concurrency": entry.m1_concurrency,
+        "m1_verdict_literal": entry.m1_verdict_literal,
+        "m1_source_report": entry.m1_source_report,
+        "m5_1_verdict_per_width": {str(k): v for k, v in entry.m5_1_verdict_per_width.items()},
+        "m5_1_supporting_delta_pct": {
+            str(k): v for k, v in entry.m5_1_supporting_delta_pct.items()
+        },
+        "m5_1_supporting_ci_pct": {
+            str(k): list(v) for k, v in entry.m5_1_supporting_ci_pct.items()
+        },
+        "classification": entry.classification,
+        "comparison_basis": entry.comparison_basis,
+        "rationale": entry.rationale,
+    }
+
+
+def _m5_1_run_metadata_to_dict(meta: M5_1RunMetadata) -> dict[str, Any]:
+    shim_overhead = meta.shim_overhead
+    return {
+        "modal_app_handle": meta.modal_app_handle,
+        "modal_region": meta.modal_region,
+        "modal_instance_class": meta.modal_instance_class,
+        "rest_shim_version_sha": meta.rest_shim_version_sha,
+        "rest_shim_uvicorn_workers": meta.rest_shim_uvicorn_workers,
+        "auth_token_env_var": meta.auth_token_env_var,
+        "shim_overhead": {
+            "shim_overhead_ms_median_across_run": shim_overhead.shim_overhead_ms_median_across_run,
+            "shim_overhead_ms_p95_across_run": shim_overhead.shim_overhead_ms_p95_across_run,
+            "shim_overhead_ms_max_across_run": shim_overhead.shim_overhead_ms_max_across_run,
+            "shim_overhead_material_in_any_cohort": (
+                shim_overhead.shim_overhead_material_in_any_cohort
+            ),
+        },
+        "m5_1_matrix": [_m5_1_cell_to_dict(c) for c in meta.m5_1_matrix],
+        "supersedes_m1_time": [_supersedes_m1_entry_to_dict(e) for e in meta.supersedes_m1_time],
+    }
+
+
+def write_m5_1_json(
+    run_metadata: M5_1RunMetadata,
+    cohorts: list[RunCohort],
+    sample_size: int,
+    path: Path,
+    *,
+    run_id: str = "",
+    run_started_at: str = "",
+    run_completed_at: str = "",
+    harness_version_sha: str = "",
+) -> Path:
+    """Write the M5.1 report JSON per the strict-superset schema (FR-014).
+
+    Every M5 top-level key is present (with empty arrays where M5.1 does not
+    measure that axis); M5.1-specific keys live in new namespaces:
+    ``m5_1_matrix``, ``supersedes_m1_time``, ``rest_shim_meta``,
+    ``auth_token_env_var``.
+    """
+    meta_dict = _m5_1_run_metadata_to_dict(run_metadata)
+    payload = {
+        # M5 keys (preserved for compatibility; empty arrays where N/A).
+        "run_id": run_id,
+        "run_started_at": run_started_at,
+        "run_completed_at": run_completed_at,
+        "harness_version_sha": harness_version_sha,
+        "shared_baseline_cohorts": [],
+        "channel_axis_recommendations": [],
+        "schema_candidate_recommendations": [],
+        "supersedes_m4": [],
+        "supersedes_m3": [],
+        "rtt_distribution": {},
+        "modal_metadata": {
+            "modal_app_handle": meta_dict["modal_app_handle"],
+            "modal_region": meta_dict["modal_region"],
+            "modal_instance_class": meta_dict["modal_instance_class"],
+        },
+        # M5.1-specific top-level keys.
+        "m5_1_matrix": meta_dict["m5_1_matrix"],
+        "supersedes_m1_time": meta_dict["supersedes_m1_time"],
+        "rest_shim_meta": {
+            "shim_version_sha": meta_dict["rest_shim_version_sha"],
+            "uvicorn_workers": meta_dict["rest_shim_uvicorn_workers"],
+            "shim_overhead_ms_median_across_run": meta_dict["shim_overhead"][
+                "shim_overhead_ms_median_across_run"
+            ],
+            "shim_overhead_ms_p95_across_run": meta_dict["shim_overhead"][
+                "shim_overhead_ms_p95_across_run"
+            ],
+            "shim_overhead_ms_max_across_run": meta_dict["shim_overhead"][
+                "shim_overhead_ms_max_across_run"
+            ],
+            "shim_overhead_material_in_any_cohort": meta_dict["shim_overhead"][
+                "shim_overhead_material_in_any_cohort"
+            ],
+        },
+        "auth_token_env_var": meta_dict["auth_token_env_var"],
+        # Cohort-level entries.
+        "cohorts": [_cohort_to_m5_1_dict(c, sample_size) for c in cohorts],
+    }
+    # Token-shaped string guard (defensive; the harness never threads tokens
+    # into the report, but a regex check costs nothing).
+    import re
+
+    blob = json.dumps(payload, default=str)
+    if re.search(r"Bearer ", blob):
+        raise RuntimeError(
+            "write_m5_1_json: bearer-token-shaped string detected in report payload; "
+            "refusing to write"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(blob if False else json.dumps(payload, indent=2, default=str))
+    return path
+
+
+def write_m5_1_markdown(run_metadata: M5_1RunMetadata, path: Path) -> Path:
+    """Render the M5.1 Markdown report per FR-015."""
+    lines: list[str] = ["# M5.1: REST vs gRPC Head-to-Head on Real Wire", ""]
+    matrix = list(run_metadata.m5_1_matrix)
+
+    lines.append("## Executive summary")
+    lines.append("")
+    n_unavailable = sum(1 for c in matrix if c.comparison_unavailable)
+    n_low_rtt = sum(1 for c in matrix if c.low_rtt_caveat)
+    lines.append(
+        f"- 18-cell head-to-head matrix (2 paths × 3 widths × 3 concurrencies). "
+        f"{n_unavailable} `comparison_unavailable`, {n_low_rtt} `low_rtt_caveat`."
+    )
+    lines.append(
+        "- Bytes-axis findings from M1 (89% chat response reduction, ~25% embed "
+        "request reduction) remain in force unchanged (FR-021) — M5.1 measures "
+        "time only."
+    )
+    lines.append(
+        "- **Read instruction**: M5.1 measures MockEngine, not real vLLM. Engine "
+        "cost is held constant across protocols so the verdict reflects the "
+        "transport + framing component only. Real-engine re-validation is "
+        "deferred to M7."
+    )
+    lines.append(
+        "- **Methodology — Modal tunnel topology**: both protocols use Modal's "
+        "plain-TCP `modal.forward(..., unencrypted=True)` so the network path is "
+        "held constant. The original spec assumed REST would use Modal's HTTPS "
+        "edge (TLS-terminated, anycast-routed near client); the smoke run "
+        "measured a ~2× RTT gap that would have dominated every verdict. The "
+        "FR-019 'REST uses Modal-managed TLS' assumption is voided for M5.1, "
+        "accepted per Constitution V. M1 ran REST over the HTTPS edge — that "
+        "difference is part of why M5.1 supersedes M1's time-axis findings."
+    )
+    lines.append("")
+
+    lines.append("## Per-cell comparison matrix")
+    lines.append("")
+    for path_name in ("chat_stream", "embed"):
+        path_cells = [c for c in matrix if c.path == path_name]
+        if not path_cells:
+            continue
+        lines.append(f"### {path_name}")
+        lines.append("")
+        for hidden_size in (2048, 4096, 8192):
+            width_cells = [c for c in path_cells if c.hidden_size == hidden_size]
+            if not width_cells:
+                continue
+            lines.append(f"#### h={hidden_size}")
+            lines.append("")
+            lines.append("| concurrency | sub-cohort | verdict | delta % | 95% CI |")
+            lines.append("|-------------|------------|---------|---------|--------|")
+            for cell in sorted(width_cells, key=lambda c: c.concurrency):
+                if cell.comparison_unavailable:
+                    lines.append(f"| {cell.concurrency} | — | comparison_unavailable | — | — |")
+                else:
+                    for v in cell.verdicts:
+                        lines.append(
+                            f"| {cell.concurrency} | `{v.grpc_sub_cohort}` | "
+                            f"`{v.verdict}` | {v.delta_pct:+.1f}% | "
+                            f"[{v.ci_pct[0]:+.1f}, {v.ci_pct[1]:+.1f}] |"
+                        )
+            lines.append("")
+
+    lines.append("## REST shim overhead appendix")
+    lines.append("")
+    shim = run_metadata.shim_overhead
+    lines.append(f"- Median across run: {shim.shim_overhead_ms_median_across_run:.3f} ms")
+    lines.append(f"- p95 across run: {shim.shim_overhead_ms_p95_across_run:.3f} ms")
+    lines.append(f"- Max across run: {shim.shim_overhead_ms_max_across_run:.3f} ms")
+    if shim.shim_overhead_material_in_any_cohort:
+        lines.append(
+            "- ⚠️ Shim plumbing was material (>5ms) in at least one cohort — "
+            "REST-side time includes a non-negligible FastAPI handler overhead."
+        )
+    lines.append("")
+
+    if run_metadata.supersedes_m1_time:
+        lines.append("## Supersedes M1 (time-axis)")
+        lines.append("")
+        lines.append("| M1 path | c | M1 verdict | M5.1 verdicts by width | classification |")
+        lines.append("|---------|---|------------|-----------------------|----------------|")
+        for entry in run_metadata.supersedes_m1_time:
+            wm = entry.m5_1_verdict_per_width
+            widths_str = ", ".join(f"h{w}={wm[w]}" for w in sorted(wm))
+            marker = "**" if entry.classification == "verdict_changed" else ""
+            lines.append(
+                f"| {marker}{entry.m1_path}{marker} | {entry.m1_concurrency} | "
+                f"{entry.m1_verdict_literal} | {widths_str} | "
+                f"{marker}{entry.classification}{marker} |"
+            )
+        lines.append("")
+
+    lines.append("## Negative results — do not re-run speculatively")
+    lines.append("")
+    negative = [c for c in matrix if any(v.verdict == "no_winner" for v in c.verdicts)]
+    if negative:
+        lines.append(
+            "Cells with at least one `no_winner` verdict (Constitution V — these "
+            "are honestly reported negative results, not measurement bugs):"
+        )
+        lines.append("")
+        for cell in negative:
+            no_winners = [v for v in cell.verdicts if v.verdict == "no_winner"]
+            for v in no_winners:
+                lines.append(
+                    f"- {cell.comparison_cell_key} / `{v.grpc_sub_cohort}`: "
+                    f"delta {v.delta_pct:+.1f}% "
+                    f"(CI [{v.ci_pct[0]:+.1f}, {v.ci_pct[1]:+.1f}])"
+                )
+    else:
+        lines.append("- (none — every cell produced a head-to-head verdict)")
+    lines.append("")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n")
