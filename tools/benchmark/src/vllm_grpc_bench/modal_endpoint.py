@@ -52,11 +52,18 @@ class RESTGRPCEndpoints:
     Carries both tunnel URLs plus the env-var name the bearer token was
     read from (the token value itself is *never* stored — it remains in the
     operator's environment and is read at use-site).
+
+    M5.2 (T019) adds the optional ``rest_plain_tcp_url`` field. When the
+    operator opts into the third tunnel via ``with_rest_plain_tcp=True``,
+    the field carries the FastAPI shim's plain-TCP URL the
+    ``rest_plain_tcp`` cohort uses. Default ``None`` preserves M5.1's call
+    signature (M5.1 callers never inspect this field).
     """
 
     grpc_url: str
     rest_url: str
     auth_token_env_var: str
+    rest_plain_tcp_url: str | None = None
 
 
 class ModalDeployError(RuntimeError):
@@ -169,6 +176,7 @@ async def provide_rest_grpc_endpoint(
     *,
     region: str = "eu-west-1",
     token_env: str = "MODAL_BENCH_TOKEN",
+    with_rest_plain_tcp: bool = False,
 ) -> AsyncIterator[RESTGRPCEndpoints]:
     """M5.1 dual-protocol deploy: deploys the FastAPI shim + gRPC server,
     captures both tunnel URLs, yields a :class:`RESTGRPCEndpoints` bundle.
@@ -201,17 +209,29 @@ async def provide_rest_grpc_endpoint(
         async with app.run.aio():
             serve_call = await serve_bench.spawn.aio(token=token, region=region)
             d = modal.Dict.from_name(_M5_1_DICT_NAME, create_if_missing=True)
-            for key in ("grpc", "rest", "token", "region", "ready", "teardown"):
+            for key in (
+                "grpc",
+                "rest",
+                "rest_plain_tcp_url",
+                "token",
+                "region",
+                "ready",
+                "teardown",
+            ):
                 with contextlib.suppress(Exception):
                     await d.pop.aio(key)
-            grpc_url, rest_url = await _wait_for_rest_grpc_handshake(
-                d, _M5_1_HANDSHAKE_TIMEOUT_S, expected_token=token
+            grpc_url, rest_url, rest_plain_tcp_url = await _wait_for_rest_grpc_handshake(
+                d,
+                _M5_1_HANDSHAKE_TIMEOUT_S,
+                expected_token=token,
+                with_rest_plain_tcp=with_rest_plain_tcp,
             )
             try:
                 yield RESTGRPCEndpoints(
                     grpc_url=_strip_scheme(grpc_url),
                     rest_url=rest_url,
                     auth_token_env_var=token_env,
+                    rest_plain_tcp_url=rest_plain_tcp_url,
                 )
             finally:
                 with contextlib.suppress(Exception):
@@ -223,9 +243,19 @@ async def provide_rest_grpc_endpoint(
 
 
 async def _wait_for_rest_grpc_handshake(
-    d: object, timeout_s: float, *, expected_token: str
-) -> tuple[str, str]:
-    """Poll the M5.1 handshake dict for ``ready==True``; return (grpc_url, rest_url)."""
+    d: object,
+    timeout_s: float,
+    *,
+    expected_token: str,
+    with_rest_plain_tcp: bool = False,
+) -> tuple[str, str, str | None]:
+    """Poll the M5.1 handshake dict for ``ready==True``; return
+    ``(grpc_url, rest_url, rest_plain_tcp_url_or_none)``.
+
+    When ``with_rest_plain_tcp=True`` the function additionally waits for
+    the ``rest_plain_tcp_url`` key (M5.2's third tunnel) and raises if
+    that key is missing once ``ready=True``.
+    """
     deadline = time.monotonic() + timeout_s
     last_seen: dict[str, object] = {}
     while time.monotonic() < deadline:
@@ -243,7 +273,16 @@ async def _wait_for_rest_grpc_handshake(
                     "M5.1 Modal handshake completed but bearer-token echo does not match; "
                     "another Modal app may be using the shared M5.1 handshake dict"
                 )
-            return grpc_url, rest_url
+            rest_plain_tcp: str | None = None
+            if with_rest_plain_tcp:
+                raw_tcp = await d.get.aio("rest_plain_tcp_url", default="")  # type: ignore[attr-defined]
+                if not isinstance(raw_tcp, str) or not raw_tcp:
+                    raise ModalDeployError(
+                        "M5.2 Modal handshake completed but rest_plain_tcp_url is empty; "
+                        "is scripts/python/modal_bench_rest_grpc_server.py up to date?"
+                    )
+                rest_plain_tcp = raw_tcp
+            return grpc_url, rest_url, rest_plain_tcp
         last_seen = {"ready": ready}
         await asyncio.sleep(_HANDSHAKE_POLL_S)
     raise ModalDeployError(

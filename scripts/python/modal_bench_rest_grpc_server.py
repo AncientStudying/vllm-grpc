@@ -152,21 +152,42 @@ async def serve_bench(token: str, region: str) -> dict[str, object]:
             async with modal.forward.aio(_REST_PORT, unencrypted=True) as rest_tunnel:
                 rest_host, rest_port = rest_tunnel.tcp_socket
                 rest_endpoint = f"http://{rest_host}:{rest_port}"
-                await d.put.aio("grpc", grpc_endpoint)
-                await d.put.aio("rest", rest_endpoint)
-                await d.put.aio("token", token)
-                await d.put.aio("region", region)
-                await d.put.aio("ready", True)
-                while not await d.get.aio("teardown", default=False):
-                    if time.monotonic() - started > _FUNCTION_TIMEOUT_S - 30:
-                        break
-                    await asyncio.sleep(_TEARDOWN_POLL_S)
+                # M5.2 (T018): expose the FastAPI shim a second time as a
+                # plain-TCP tunnel so the M5.2 rest_plain_tcp cohort can
+                # measure REST over the same TCP-only path the gRPC cohort
+                # uses. The HTTPS-edge ``rest_endpoint`` above stays in
+                # place for the rest_https_edge cohort and for M5.1
+                # back-compat. The two REST tunnels terminate on the same
+                # FastAPI shim, so the in-container engine code path is
+                # held constant per FR-002. This is the ONLY Modal-side
+                # change M5.2 makes.
+                async with modal.forward.aio(_REST_PORT, unencrypted=True) as tcp_tunnel:
+                    tcp_host, tcp_port = tcp_tunnel.tcp_socket
+                    rest_plain_tcp_endpoint = f"tcp+plaintext://{tcp_host}:{tcp_port}"
+                    await d.put.aio("grpc", grpc_endpoint)
+                    await d.put.aio("rest", rest_endpoint)
+                    await d.put.aio("rest_plain_tcp_url", rest_plain_tcp_endpoint)
+                    await d.put.aio("token", token)
+                    await d.put.aio("region", region)
+                    await d.put.aio("ready", True)
+                    while not await d.get.aio("teardown", default=False):
+                        if time.monotonic() - started > _FUNCTION_TIMEOUT_S - 30:
+                            break
+                        await asyncio.sleep(_TEARDOWN_POLL_S)
     finally:
         rest_server.should_exit = True
         with contextlib.suppress(Exception):
             await asyncio.wait_for(rest_task, timeout=10.0)
         await grpc_server.stop(grace=5.0)
-        for key in ("grpc", "rest", "token", "region", "ready", "teardown"):
+        for key in (
+            "grpc",
+            "rest",
+            "rest_plain_tcp_url",
+            "token",
+            "region",
+            "ready",
+            "teardown",
+        ):
             with contextlib.suppress(Exception):
                 await d.pop.aio(key)
 

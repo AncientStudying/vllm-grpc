@@ -26,6 +26,7 @@ import grpc
 from vllm_grpc_bench.channel_config import Axis, ChannelConfig
 
 if TYPE_CHECKING:
+    from vllm_grpc_bench.m5_2_symmetry import SymmetryBlock
     from vllm_grpc_bench.mock_engine import MockEngine
 
 Path_ = Literal["embed", "chat_stream"]
@@ -713,6 +714,212 @@ class M5_1RunMetadata:
     shim_overhead: ShimOverheadRecord
     supersedes_m1_time: list[SupersedesM1Entry]
     m5_1_matrix: list[M5_1Cell]
+
+
+# ---------------------------------------------------------------------------
+# M5.2 additions (specs/019-m5-2-transport-tuning/data-model.md).
+# Strictly additive — M5.1's existing types remain importable and unchanged.
+# Implemented per tasks T004-T008. The M5.1 ``ComparisonVerdict`` literal stays
+# in place; M5.2's ``ProtocolComparisonVerdict`` replaces M5.1's
+# ``rest_recommend`` with ``rest_https_edge_recommend`` because the production-
+# equivalent REST baseline is now the HTTPS edge, not plain-TCP. M5.1 callers
+# that still emit ``rest_recommend`` continue to type-check.
+# ---------------------------------------------------------------------------
+
+
+ProtocolComparisonVerdict = Literal[
+    "tuned_grpc_multiplexed_recommend",
+    "tuned_grpc_channels_recommend",
+    "tuned_grpc_recommend",  # c=1 only — collapsed tuned cohort per FR-006.
+    "default_grpc_recommend",
+    "rest_https_edge_recommend",
+    "no_winner",
+    "comparison_unavailable",
+]
+
+# rest_https_edge vs rest_plain_tcp head-to-head. One row per cell per FR-009.
+TransportOnlyVerdict = Literal[
+    "rest_https_edge_recommend",
+    "rest_plain_tcp_recommend",
+    "no_winner",
+    "comparison_unavailable",
+]
+
+M5_2CohortKind = Literal[
+    "rest_https_edge",
+    "rest_plain_tcp",
+    "default_grpc",
+    "tuned_grpc_multiplexed",
+    "tuned_grpc_channels",
+    "tuned_grpc",  # c=1 collapse of the two tuned cohorts.
+]
+
+NetworkPath = Literal["https_edge", "plain_tcp"]
+
+# Five-way category enum for the Supersedes-M5.1 table per FR-016 + R-6. The
+# ``confirmed_unavailable`` literal is added per R-6 for the case where both
+# M5.1 and M5.2 are comparison_unavailable on the same cell.
+SupersedesM5_1Category = Literal[
+    "verdict_changed",
+    "verdict_confirmed",
+    "noise_resolved",
+    "transport_dependent",
+    "confirmed_unavailable",
+]
+
+
+@dataclass(frozen=True)
+class RestHttpsEdgeCohortRecord:
+    """Per-(path x hidden_size x concurrency) REST cohort measurement over
+    Modal's HTTPS edge (TLS-terminated, anycast-routed). Built by
+    ``rest_cohort.run_rest_cohort(network_path="https_edge", ...)``.
+
+    Mirrors M5.1's ``RESTCohortRecord`` shim-overhead + connection-pool fields
+    so the M5.2 reporter can iterate both REST cohorts uniformly. Adds the
+    M5.2-specific HTTPS-edge provenance the spec's FR-008 / FR-014 require.
+    """
+
+    # Inherited / mirrored from M5.1's RESTCohortRecord.
+    shim_overhead_ms_median: float
+    shim_overhead_ms_p95: float
+    connections_opened: int
+    connections_keepalive_reused: int
+    request_bytes_median: int
+    request_bytes_p95: int
+    response_bytes_median: int
+    response_bytes_p95: int
+
+    # M5.2-specific HTTPS-edge provenance.
+    network_path: Literal["https_edge"] = "https_edge"
+    https_edge_endpoint: str = ""
+    tls_handshake_ms_first_request: float | None = None
+    measured_rtt_ms_median: float = 0.0
+    measured_rtt_ms_p95: float = 0.0
+    client_external_geolocation_country: str | None = None
+    client_external_geolocation_region: str | None = None
+
+
+@dataclass(frozen=True)
+class SupersedesM5_1Entry:
+    """One row in the M5.2 'Supersedes M5.1' table per FR-016. Joins an M5.1
+    published verdict (against ``rest_plain_tcp``) to M5.2's protocol-
+    comparison verdict (against ``rest_https_edge``) on the same (path,
+    hidden_size, concurrency, gRPC cohort) coordinates. Category enum is
+    five-way per R-6.
+    """
+
+    path: Literal["chat_stream", "embed"]
+    hidden_size: int
+    concurrency: int
+    grpc_cohort: M5_2CohortKind
+
+    # M5.1's verdict literal. Free string for forward-compat — M5.1's
+    # ``ComparisonVerdict`` union is consumed verbatim, and any future literal
+    # M5.1 emits joins cleanly without an M5.2 type bump.
+    m5_1_verdict: str
+
+    # M5.2's protocol-comparison verdict against rest_https_edge.
+    m5_2_verdict: ProtocolComparisonVerdict
+
+    # M5.2's supporting CI-bounded numbers (same numbers the per-cell
+    # comparison matrix shows for this row). All in milliseconds, signed:
+    # negative = gRPC faster than REST, positive = REST faster than gRPC.
+    m5_2_delta_median_ms: float
+    m5_2_ci_lower_ms: float
+    m5_2_ci_upper_ms: float
+
+    category: SupersedesM5_1Category
+    rationale: str
+
+    def __post_init__(self) -> None:
+        if not self.rationale:
+            raise ValueError("SupersedesM5_1Entry.rationale must be non-empty")
+        if self.m5_2_ci_lower_ms > self.m5_2_ci_upper_ms:
+            raise ValueError("SupersedesM5_1Entry.m5_2_ci_lower_ms must be <= m5_2_ci_upper_ms")
+
+
+@dataclass(frozen=True)
+class ProtocolComparisonRow:
+    """One row in the per-cell protocol-comparison verdict family (FR-009).
+    One row per (cell, gRPC cohort). The REST side is always
+    ``rest_https_edge`` and the gRPC side is always over plain-TCP.
+    """
+
+    path: Literal["chat_stream", "embed"]
+    hidden_size: int
+    concurrency: int
+    grpc_cohort: M5_2CohortKind
+    verdict: ProtocolComparisonVerdict
+    comparison_unavailable_reason: str | None
+    delta_median_ms: float  # signed: negative = gRPC faster.
+    ci_lower_ms: float
+    ci_upper_ms: float
+    rest_cohort: Literal["rest_https_edge"] = "rest_https_edge"
+    grpc_cohort_network_path: Literal["plain_tcp"] = "plain_tcp"
+    rest_cohort_network_path: Literal["https_edge"] = "https_edge"
+    low_rtt_caveat: bool = False
+
+
+@dataclass(frozen=True)
+class TransportOnlyRow:
+    """One row in the per-cell transport-only verdict family (FR-009). One
+    row per cell. ``delta_median_ms`` is signed: positive means
+    ``rest_https_edge`` is slower than ``rest_plain_tcp`` (HTTPS-edge has a
+    measurable transport cost).
+    """
+
+    path: Literal["chat_stream", "embed"]
+    hidden_size: int
+    concurrency: int
+    verdict: TransportOnlyVerdict
+    comparison_unavailable_reason: str | None
+    delta_median_ms: float
+    ci_lower_ms: float
+    ci_upper_ms: float
+    low_rtt_caveat: bool = False
+
+
+@dataclass(frozen=True)
+class M5_2Run:
+    """Top-level container for a complete M5.2 sweep. Serialized into the
+    aggregate JSON at ``docs/benchmarks/m5_2-transport-vs-tuning.json`` by
+    the regenerator (NOT by the harness directly, per FR-012b).
+    """
+
+    run_id: str
+    run_started_at_iso: str
+    run_realized_runtime_s: float
+    seed: int
+
+    symmetry: SymmetryBlock
+
+    events_sidecar_path: str
+    events_sidecar_sha256: str
+
+    payload_parity_audit_no_regression_confirmed_against_pr: str
+    payload_parity_audit_measured_payload_bytes: dict[str, int]
+
+    smoke_run_outcome_iso: str
+    smoke_run_asserted_clauses_count: int
+    smoke_run_per_cohort_rtt_probe_medians_ms: dict[str, float]
+
+    rest_https_edge_cohorts: list[RestHttpsEdgeCohortRecord]
+    rest_plain_tcp_cohorts: list[RESTCohortRecord]
+    grpc_cohorts: list[RunCohort]
+
+    protocol_comparison_verdicts: list[ProtocolComparisonRow]
+    transport_only_verdicts: list[TransportOnlyRow]
+
+    supersedes_m5_1: list[SupersedesM5_1Entry]
+
+    modal_region: str
+    modal_instance_class: str
+    https_edge_endpoint: str
+    client_external_geolocation_country: str | None
+    client_external_geolocation_region: str | None
+
+    https_edge_vs_plain_tcp_rtt_delta_median_ms: float
+    https_edge_vs_plain_tcp_rtt_delta_p95_ms: float
 
 
 def non_discarded(cohorts: Iterable[RunCohort]) -> Iterator[RunCohort]:

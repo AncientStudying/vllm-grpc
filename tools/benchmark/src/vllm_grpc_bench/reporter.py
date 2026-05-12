@@ -1388,3 +1388,396 @@ def write_m5_1_markdown(run_metadata: M5_1RunMetadata, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n")
     return path
+
+
+# ---------------------------------------------------------------------------
+# M5.2 reporter (T037 + T038)
+#
+# The M5.2 reporter is invoked by the regenerator (not the sweep); inputs are
+# an :class:`M5_2Aggregates` (built from the events sidecar) plus the run
+# config dict (loaded from the run config JSON the sweep wrote). Output is
+# byte-deterministic markdown + aggregate JSON, suitable for
+# byte-identical-round-trip verification by the operator's pre-PR diff.
+# ---------------------------------------------------------------------------
+
+
+def _m5_2_aggregates_to_json_payload(
+    aggregates: Any,  # M5_2Aggregates — typed dynamically to avoid an import cycle
+    run_config: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the strict-superset M5.2 aggregate JSON payload.
+
+    Every M5.1 / M5 / M4 top-level key remains present (empty arrays where
+    M5.2 doesn't measure that axis); the M5.2-specific keys are
+    appended per ``contracts/m5_2-report-schema.md``.
+    """
+    geo = run_config.get("client_external_geolocation")
+    return {
+        # M5/M5.1 keys preserved empty for back-compat per FR-013.
+        "run_id": run_config.get("run_id", ""),
+        "run_started_at": run_config.get("run_started_at_iso", ""),
+        "run_completed_at": run_config.get("run_started_at_iso", ""),
+        "harness_version_sha": "",
+        "shared_baseline_cohorts": [],
+        "channel_axis_recommendations": [],
+        "schema_candidate_recommendations": [],
+        "supersedes_m4": [],
+        "supersedes_m3": [],
+        "supersedes_m1_time": [],
+        "m5_1_matrix": [],
+        "rtt_distribution": {},
+        "modal_metadata": {
+            "modal_app_handle": run_config.get("symmetry", {})
+            .get("tier_a", {})
+            .get("modal_deploy_handle", ""),
+            "modal_region": run_config.get("modal_region", ""),
+            "modal_instance_class": run_config.get("modal_instance_class", ""),
+        },
+        "cohorts": [],
+        # M5.2-specific top-level keys per data-model.md JSON delta.
+        "m5_2_run": {
+            "run_id": run_config.get("run_id", ""),
+            "run_started_at_iso": run_config.get("run_started_at_iso", ""),
+            "run_realized_runtime_s": run_config.get("run_realized_runtime_s", 0.0),
+            "seed": run_config.get("seed", 0),
+        },
+        "symmetry": run_config.get("symmetry", {}),
+        "events_sidecar_path": aggregates.sidecar_path or run_config.get("events_sidecar_path", ""),
+        "events_sidecar_sha256": aggregates.sidecar_sha256
+        or run_config.get("events_sidecar_sha256", ""),
+        "protocol_comparison_verdicts": [
+            {
+                "ci_lower_ms": row.ci_lower_ms,
+                "ci_upper_ms": row.ci_upper_ms,
+                "comparison_unavailable_reason": row.comparison_unavailable_reason,
+                "concurrency": row.concurrency,
+                "delta_median_ms": row.delta_median_ms,
+                "grpc_cohort": row.grpc_cohort,
+                "grpc_cohort_network_path": row.grpc_cohort_network_path,
+                "hidden_size": row.hidden_size,
+                "low_rtt_caveat": row.low_rtt_caveat,
+                "path": row.path,
+                "rest_cohort": row.rest_cohort,
+                "rest_cohort_network_path": row.rest_cohort_network_path,
+                "verdict": row.verdict,
+            }
+            for row in aggregates.protocol_comparison_verdicts
+        ],
+        "transport_only_verdicts": [
+            {
+                "ci_lower_ms": row.ci_lower_ms,
+                "ci_upper_ms": row.ci_upper_ms,
+                "comparison_unavailable_reason": row.comparison_unavailable_reason,
+                "concurrency": row.concurrency,
+                "delta_median_ms": row.delta_median_ms,
+                "hidden_size": row.hidden_size,
+                "low_rtt_caveat": row.low_rtt_caveat,
+                "path": row.path,
+                "verdict": row.verdict,
+            }
+            for row in aggregates.transport_only_verdicts
+        ],
+        "supersedes_m5_1": [
+            {
+                "category": entry.category,
+                "concurrency": entry.concurrency,
+                "grpc_cohort": entry.grpc_cohort,
+                "hidden_size": entry.hidden_size,
+                "m5_1_verdict": entry.m5_1_verdict,
+                "m5_2_ci_lower_ms": entry.m5_2_ci_lower_ms,
+                "m5_2_ci_upper_ms": entry.m5_2_ci_upper_ms,
+                "m5_2_delta_median_ms": entry.m5_2_delta_median_ms,
+                "m5_2_verdict": entry.m5_2_verdict,
+                "path": entry.path,
+                "rationale": entry.rationale,
+            }
+            for entry in aggregates.supersedes_m5_1
+        ],
+        "payload_parity_audit": run_config.get("payload_parity_audit")
+        or {
+            "no_regression_confirmed_against_pr": "",
+            "measured_payload_bytes": {},
+        },
+        "smoke_run_outcome": run_config.get("smoke_run_outcome")
+        or {
+            "iso": "",
+            "asserted_clauses_count": 0,
+            "per_cohort_rtt_probe_medians_ms": {},
+        },
+        "https_edge_vs_plain_tcp_rtt_delta_median_ms": (
+            aggregates.https_edge_vs_plain_tcp_rtt_delta_median_ms
+        ),
+        "https_edge_vs_plain_tcp_rtt_delta_p95_ms": (
+            aggregates.https_edge_vs_plain_tcp_rtt_delta_p95_ms
+        ),
+        "modal_region": run_config.get("modal_region", ""),
+        "modal_instance_class": run_config.get("modal_instance_class", ""),
+        "https_edge_endpoint": run_config.get("https_edge_endpoint", ""),
+        "client_external_geolocation": geo,
+    }
+
+
+_M5_2_REQUIRED_TOP_LEVEL_KEYS = frozenset(
+    {
+        "m5_2_run",
+        "symmetry",
+        "events_sidecar_path",
+        "events_sidecar_sha256",
+        "protocol_comparison_verdicts",
+        "transport_only_verdicts",
+        "supersedes_m5_1",
+        "payload_parity_audit",
+        "smoke_run_outcome",
+        "https_edge_vs_plain_tcp_rtt_delta_median_ms",
+        "https_edge_vs_plain_tcp_rtt_delta_p95_ms",
+        "modal_region",
+        "modal_instance_class",
+        "https_edge_endpoint",
+        "client_external_geolocation",
+    }
+)
+
+
+def write_m5_2_json(aggregates: Any, run_config: dict[str, Any], path: Path) -> Path:
+    """Write the M5.2 aggregate JSON deterministically.
+
+    Encoding: ``json.dumps(..., sort_keys=True, separators=(",", ":"),
+    ensure_ascii=False)`` so byte-identical round-trip holds across
+    regenerator invocations on equivalent inputs.
+
+    Validates the payload against the schema contract before writing;
+    raises :class:`M5_2SchemaValidationFailed` on missing keys.
+    """
+    from vllm_grpc_bench.m5_2_regen import M5_2SchemaValidationFailed
+
+    payload = _m5_2_aggregates_to_json_payload(aggregates, run_config)
+    missing = _M5_2_REQUIRED_TOP_LEVEL_KEYS - payload.keys()
+    if missing:
+        raise M5_2SchemaValidationFailed(
+            f"M5.2 JSON missing required top-level keys: {sorted(missing)}"
+        )
+    # Defensive: refuse to write any string containing the literal "Bearer "
+    # (token-shaped string guard, matching M5.1's convention).
+    import re
+
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    if re.search(r"Bearer ", blob):
+        raise RuntimeError(
+            "write_m5_2_json: bearer-token-shaped string detected; refusing to write"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(blob)
+    return path
+
+
+def write_m5_2_markdown(aggregates: Any, run_config: dict[str, Any], path: Path) -> Path:
+    """Render the M5.2 Markdown report deterministically per FR-014.
+
+    The report is structured as:
+
+    1. Executive section — headline finding per verdict family; HTTPS-edge
+       vs plain-TCP RTT delta; payload-parity audit metadata; smoke-gate
+       outcome; client external geolocation; events sidecar SHA-256 + path.
+    2. Per-cell comparison matrix — both verdict families per cell;
+       network path named on every row.
+    3. Supersedes-M5.1 table.
+    4. Negative-results appendix — every no_winner / comparison_unavailable
+       cell with full per-cohort CI bounds.
+    5. Field-provenance footnotes — sidecar filter / aggregate-JSON key
+       blockquotes at each section header per FR-012b.
+    """
+    lines: list[str] = ["# M5.2: REST Transport Path × gRPC Tuning Surface", ""]
+
+    # Executive section.
+    lines.append("## Executive summary")
+    lines.append("")
+    lines.append(
+        "> Computed from aggregate JSON key: `https_edge_vs_plain_tcp_rtt_delta_median_ms`."
+    )
+    lines.append("")
+    n_protocol = len(aggregates.protocol_comparison_verdicts)
+    n_transport = len(aggregates.transport_only_verdicts)
+    n_unavailable = sum(
+        1 for r in aggregates.protocol_comparison_verdicts if r.verdict == "comparison_unavailable"
+    )
+    n_low_rtt = sum(1 for r in aggregates.protocol_comparison_verdicts if r.low_rtt_caveat)
+    n_noise_resolved = sum(1 for e in aggregates.supersedes_m5_1 if e.category == "noise_resolved")
+    n_transport_dependent = sum(
+        1 for e in aggregates.supersedes_m5_1 if e.category == "transport_dependent"
+    )
+    lines.append(
+        f"- 18-cell five-cohort sweep at n=250. "
+        f"{n_protocol} protocol-comparison rows; {n_transport} transport-only rows; "
+        f"{n_unavailable} `comparison_unavailable`; {n_low_rtt} `low_rtt_caveat`."
+    )
+    lines.append(
+        f"- HTTPS-edge vs plain-TCP RTT delta: "
+        f"median {aggregates.https_edge_vs_plain_tcp_rtt_delta_median_ms:+.2f} ms, "
+        f"p95 {aggregates.https_edge_vs_plain_tcp_rtt_delta_p95_ms:+.2f} ms."
+    )
+    lines.append(
+        f"- Supersedes-M5.1: {n_noise_resolved} `noise_resolved` "
+        f"(n=250 resolution increase paid off); "
+        f"{n_transport_dependent} `transport_dependent` "
+        f"(HTTPS-edge moved the verdict)."
+    )
+    audit = run_config.get("payload_parity_audit") or {}
+    lines.append(
+        f"- Payload-parity audit (FR-005c): no regression confirmed against PR "
+        f"`{audit.get('no_regression_confirmed_against_pr', '<unrecorded>')}`."
+    )
+    smoke = run_config.get("smoke_run_outcome") or {}
+    lines.append(
+        f"- Smoke-gate outcome (FR-005a + SC-012): "
+        f"`{smoke.get('iso', '<unrecorded>')}`, "
+        f"asserted clauses: {smoke.get('asserted_clauses_count', 0)}."
+    )
+    geo = run_config.get("client_external_geolocation")
+    if geo:
+        lines.append(
+            f"- Client external geolocation: country=`{geo.get('country')}`, "
+            f"region=`{geo.get('region')}`."
+        )
+    lines.append(
+        f"- Events sidecar SHA-256: `{aggregates.sidecar_sha256}` at `{aggregates.sidecar_path}`."
+    )
+    lines.append(
+        "- **Read instruction**: M5.2 measures MockEngine (engine cost held "
+        "constant across protocols) so the verdict reflects transport + framing "
+        "only. Real-engine re-validation is deferred to M7."
+    )
+    lines.append("")
+
+    # Per-cell comparison matrix.
+    lines.append("## Per-cell comparison matrix")
+    lines.append("")
+    lines.append("> Computed from events sidecar filter: `phase=measurement AND status=success`.")
+    lines.append("")
+    cells = sorted(
+        {(r.path, r.hidden_size, r.concurrency) for r in aggregates.protocol_comparison_verdicts}
+    )
+    for path_name, hidden_size, concurrency in cells:
+        lines.append(f"### {path_name} × h{hidden_size} × c={concurrency}")
+        lines.append("")
+        lines.append(
+            "| family | gRPC cohort | gRPC net | REST cohort | REST net | "
+            "verdict | Δ median (ms) | 95% CI (ms) |"
+        )
+        lines.append(
+            "|--------|-------------|----------|-------------|----------|"
+            "---------|---------------|-------------|"
+        )
+        for row in aggregates.protocol_comparison_verdicts:
+            if (row.path, row.hidden_size, row.concurrency) != (
+                path_name,
+                hidden_size,
+                concurrency,
+            ):
+                continue
+            lines.append(
+                f"| protocol | `{row.grpc_cohort}` | "
+                f"`{row.grpc_cohort_network_path}` | "
+                f"`{row.rest_cohort}` | `{row.rest_cohort_network_path}` | "
+                f"`{row.verdict}` | {row.delta_median_ms:+.1f} | "
+                f"[{row.ci_lower_ms:+.1f}, {row.ci_upper_ms:+.1f}] |"
+            )
+        for row in aggregates.transport_only_verdicts:
+            if (row.path, row.hidden_size, row.concurrency) != (
+                path_name,
+                hidden_size,
+                concurrency,
+            ):
+                continue
+            lines.append(
+                f"| transport | — | — | `rest_https_edge` vs `rest_plain_tcp` | "
+                f"https_edge / plain_tcp | "
+                f"`{row.verdict}` | {row.delta_median_ms:+.1f} | "
+                f"[{row.ci_lower_ms:+.1f}, {row.ci_upper_ms:+.1f}] |"
+            )
+        lines.append("")
+
+    # Supersedes-M5.1 table.
+    if aggregates.supersedes_m5_1:
+        lines.append("## Supersedes M5.1")
+        lines.append("")
+        lines.append("> Computed from aggregate JSON key: `supersedes_m5_1`.")
+        lines.append("")
+        lines.append(
+            "| cell | gRPC cohort | M5.1 verdict | M5.2 verdict | "
+            "Δ median (ms) | 95% CI | category | rationale |"
+        )
+        lines.append(
+            "|------|-------------|--------------|--------------|"
+            "---------------|--------|----------|-----------|"
+        )
+        for entry in sorted(
+            aggregates.supersedes_m5_1,
+            key=lambda e: (e.path, e.hidden_size, e.concurrency, e.grpc_cohort),
+        ):
+            lines.append(
+                f"| {entry.path}:h{entry.hidden_size}:c{entry.concurrency} | "
+                f"`{entry.grpc_cohort}` | `{entry.m5_1_verdict}` | "
+                f"`{entry.m5_2_verdict}` | {entry.m5_2_delta_median_ms:+.1f} | "
+                f"[{entry.m5_2_ci_lower_ms:+.1f}, {entry.m5_2_ci_upper_ms:+.1f}] | "
+                f"`{entry.category}` | {entry.rationale} |"
+            )
+        lines.append("")
+
+    # Negative results appendix.
+    lines.append("## Negative results — do not re-run speculatively")
+    lines.append("")
+    lines.append(
+        "> Computed from aggregate JSON key: "
+        "`protocol_comparison_verdicts` filtered by verdict ∈ "
+        "{no_winner, comparison_unavailable}."
+    )
+    lines.append("")
+    negative_rows = [
+        r
+        for r in aggregates.protocol_comparison_verdicts
+        if r.verdict in ("no_winner", "comparison_unavailable")
+    ] + [
+        r
+        for r in aggregates.transport_only_verdicts
+        if r.verdict in ("no_winner", "comparison_unavailable")
+    ]
+    if not negative_rows:
+        lines.append("- (none — every cell produced a head-to-head verdict)")
+    else:
+        for r in sorted(
+            negative_rows,
+            key=lambda r: (r.path, r.hidden_size, r.concurrency, getattr(r, "grpc_cohort", "")),
+        ):
+            family = "protocol" if hasattr(r, "grpc_cohort") else "transport"
+            cohort_label = (
+                f"`{r.grpc_cohort}` vs `rest_https_edge`"
+                if hasattr(r, "grpc_cohort")
+                else "`rest_https_edge` vs `rest_plain_tcp`"
+            )
+            lines.append(
+                f"- ({family}) {r.path}:h{r.hidden_size}:c{r.concurrency} / "
+                f"{cohort_label}: `{r.verdict}` "
+                f"(Δ {r.delta_median_ms:+.1f} ms, "
+                f"CI [{r.ci_lower_ms:+.1f}, {r.ci_upper_ms:+.1f}])"
+            )
+    lines.append("")
+
+    # M1 bytes-axis + M5 transport-axis preservation note per FR-014 (d).
+    lines.append("## Preserved findings (NOT superseded by M5.2)")
+    lines.append("")
+    lines.append(
+        "- M1 bytes-axis (encoding-driven, transport-immune): the ~89% chat "
+        "response byte reduction and ~25% embed request byte reduction "
+        "stand unchanged. M5.2 measures time only."
+    )
+    lines.append(
+        "- M5 transport-axis (channel-tuning component): the per-axis "
+        "tuned-channel recommendations from `docs/benchmarks/m5-cross-host-validation.md` "
+        "remain in force; M5.2 reuses M5's frozen-tuned channel composition "
+        "without re-tuning (FR-007)."
+    )
+    lines.append("")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+    return path

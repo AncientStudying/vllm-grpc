@@ -41,7 +41,12 @@ from dataclasses import dataclass
 import httpx
 import numpy as np
 
-from vllm_grpc_bench.m3_types import RESTCohortRecord, RTTRecord
+from vllm_grpc_bench.m3_types import (
+    NetworkPath,
+    RESTCohortRecord,
+    RestHttpsEdgeCohortRecord,
+    RTTRecord,
+)
 
 
 @dataclass(frozen=True)
@@ -56,11 +61,21 @@ class RESTCohortSample:
 
 @dataclass(frozen=True)
 class RESTCohortResult:
-    """Aggregate output of one REST cohort run."""
+    """Aggregate output of one REST cohort run.
+
+    M5.2 (T021): the optional ``network_path`` tag labels which Modal tunnel
+    the cohort traversed (``"https_edge"`` or ``"plain_tcp"``). M5.1 callers
+    that don't pass ``network_path`` get ``None`` here so existing tests
+    continue to pass. The ``https_edge_record`` is populated only when
+    ``network_path="https_edge"``; the M5.2 reporter uses it to surface
+    HTTPS-edge-specific provenance per FR-008 / FR-014.
+    """
 
     samples: tuple[RESTCohortSample, ...]
     record: RESTCohortRecord
     rtt_record: RTTRecord | None
+    network_path: NetworkPath | None = None
+    https_edge_record: RestHttpsEdgeCohortRecord | None = None
 
 
 async def probe_rest_rtt(
@@ -69,10 +84,17 @@ async def probe_rest_rtt(
     client: httpx.AsyncClient,
     n: int = 32,
     timeout_s: float = 5.0,
+    network_path: NetworkPath | None = None,
 ) -> RTTRecord:
     """``n``-shot ``GET /healthz`` probe over the supplied client's keep-alive
     pool. Returns median/p95 + raw samples per FR-004 / research R-3.
+
+    M5.2 (T021): the optional ``network_path`` kwarg is accepted for API
+    parity with ``run_rest_cohort`` but has no effect on the probe path —
+    the probe travels whichever path the supplied ``client`` is configured
+    to use. The tag is recorded for the caller's audit logging.
     """
+    del network_path  # currently unused — present for cohort-runner parity
     if n < 1:
         raise ValueError(f"probe_rest_rtt: n must be >= 1 (got {n})")
     samples_ms: list[float] = []
@@ -234,6 +256,10 @@ async def run_rest_cohort(
     rtt_probe_n: int = 32,
     warmup_n: int = 0,
     client: httpx.AsyncClient | None = None,
+    network_path: NetworkPath | None = None,
+    https_edge_endpoint: str | None = None,
+    client_external_geolocation_country: str | None = None,
+    client_external_geolocation_region: str | None = None,
 ) -> RESTCohortResult:
     """Drive ``n`` requests on the configured ``path`` with concurrency ``concurrency``.
 
@@ -313,7 +339,31 @@ async def run_rest_cohort(
             await client.aclose()
 
     record = _aggregate(results, concurrency=concurrency, n=n)
-    return RESTCohortResult(samples=tuple(results), record=record, rtt_record=rtt)
+    https_edge_record: RestHttpsEdgeCohortRecord | None = None
+    if network_path == "https_edge":
+        https_edge_record = RestHttpsEdgeCohortRecord(
+            shim_overhead_ms_median=record.shim_overhead_ms_median,
+            shim_overhead_ms_p95=record.shim_overhead_ms_p95,
+            connections_opened=record.connections_opened,
+            connections_keepalive_reused=record.connections_keepalive_reused,
+            request_bytes_median=record.request_bytes_median,
+            request_bytes_p95=record.request_bytes_p95,
+            response_bytes_median=record.response_bytes_median,
+            response_bytes_p95=record.response_bytes_p95,
+            https_edge_endpoint=https_edge_endpoint or base_url,
+            tls_handshake_ms_first_request=None,
+            measured_rtt_ms_median=rtt.median_ms,
+            measured_rtt_ms_p95=rtt.p95_ms,
+            client_external_geolocation_country=client_external_geolocation_country,
+            client_external_geolocation_region=client_external_geolocation_region,
+        )
+    return RESTCohortResult(
+        samples=tuple(results),
+        record=record,
+        rtt_record=rtt,
+        network_path=network_path,
+        https_edge_record=https_edge_record,
+    )
 
 
 def _aggregate(samples: list[RESTCohortSample], *, concurrency: int, n: int) -> RESTCohortRecord:
