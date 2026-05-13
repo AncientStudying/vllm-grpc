@@ -1355,6 +1355,7 @@ def _run_m5_2(args: argparse.Namespace) -> int:
         from vllm_grpc_bench.modal_endpoint import (
             ModalDeployError,
             provide_rest_grpc_endpoint,
+            refresh_rest_grpc_urls,
         )
 
         try:
@@ -1387,6 +1388,22 @@ def _run_m5_2(args: argparse.Namespace) -> int:
                         smoke=smoke,
                         run_id=run_id,
                     )
+                    # M5.2 preemption-aware URL refresh. When the Modal
+                    # serve_bench Function gets preempted mid-sweep and
+                    # restarted on a new worker, the new worker writes
+                    # fresh tunnel URLs to the same modal.Dict. This
+                    # closure polls that Dict and returns a fresh bundle
+                    # so the sweep can retry the failed cell.
+                    _current_endpoints = endpoints
+
+                    async def _refresh() -> object | None:
+                        nonlocal _current_endpoints
+                        fresh = await refresh_rest_grpc_urls(_current_endpoints)
+                        if fresh is not None:
+                            _current_endpoints = fresh
+                        return fresh
+
+                    cfg.refresh_endpoints_fn = _refresh
                     return await _do_m5_2_run(args, cfg, smoke=smoke)
             cfg = _build_m5_2_config(
                 args,
@@ -1397,6 +1414,9 @@ def _run_m5_2(args: argparse.Namespace) -> int:
                 smoke=smoke,
                 run_id=run_id,
             )
+            # In skip-deploy mode we don't own a Modal Dict reference, so
+            # no preemption refresh is possible. A connect failure will be
+            # treated as a real failure per the existing fail-fast path.
             return await _do_m5_2_run(args, cfg, smoke=smoke)
         except ModalDeployError as exc:
             print(f"Error: M5.2 Modal deploy failed: {exc}", file=sys.stderr)

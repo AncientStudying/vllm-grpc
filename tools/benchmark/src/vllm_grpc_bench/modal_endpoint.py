@@ -258,6 +258,78 @@ async def provide_rest_grpc_endpoint(
         output_ctx.__exit__(None, None, None)
 
 
+async def refresh_rest_grpc_urls(
+    cached: RESTGRPCEndpoints,
+    *,
+    poll_timeout_s: float = 90.0,
+    poll_interval_s: float = 2.0,
+) -> RESTGRPCEndpoints | None:
+    """Re-read the Modal handshake Dict for fresh URLs after a suspected
+    preemption event.
+
+    When Modal preempts a running Function and restarts it on a new worker,
+    the new ``serve_bench`` invocation writes new tunnel URLs to the same
+    shared ``modal.Dict`` (per the Modal docs at
+    https://modal.com/docs/guide/preemption — "Your Function will be
+    restarted with the same input"). This helper polls that Dict for up to
+    ``poll_timeout_s`` seconds, returning a new ``RESTGRPCEndpoints`` once
+    the Dict's URLs differ from ``cached``'s URLs.
+
+    Returns ``None`` if:
+    * No fresh URLs appear within the timeout (probably not preemption —
+      either Modal worker is still healthy or the new worker failed to
+      start). The caller should treat the original ConnectError as a real
+      failure.
+    * The Dict isn't readable (e.g., shared Modal session went away).
+
+    The cached endpoints' bearer-token env var name is preserved on the
+    returned bundle; only the URLs are updated.
+    """
+    try:
+        import modal
+
+        d = modal.Dict.from_name(_M5_1_DICT_NAME, create_if_missing=False)
+    except Exception:  # noqa: BLE001 — modal import or dict lookup
+        return None
+
+    deadline = time.monotonic() + poll_timeout_s
+    while time.monotonic() < deadline:
+        try:
+            grpc_raw = await d.get.aio("grpc", default="")  # type: ignore[attr-defined]
+            rest_raw = await d.get.aio("rest", default="")  # type: ignore[attr-defined]
+            tcp_raw = await d.get.aio("rest_plain_tcp_url", default="")  # type: ignore[attr-defined]
+            edge_raw = await d.get.aio("rest_https_edge_url", default="")  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 — Dict access can fail in transit
+            await asyncio.sleep(poll_interval_s)
+            continue
+        if not (
+            isinstance(grpc_raw, str)
+            and isinstance(rest_raw, str)
+            and isinstance(tcp_raw, str)
+            and isinstance(edge_raw, str)
+            and grpc_raw
+            and rest_raw
+        ):
+            await asyncio.sleep(poll_interval_s)
+            continue
+        # Fresh URLs are detected when the gRPC URL differs from the
+        # cached one. The gRPC URL is the most stable handshake key (REST
+        # URLs may match transiently if anycast routes to the same edge POP).
+        cached_grpc_target = _strip_scheme(cached.grpc_url)
+        new_grpc_target = _strip_scheme(grpc_raw)
+        if new_grpc_target == cached_grpc_target:
+            await asyncio.sleep(poll_interval_s)
+            continue
+        return RESTGRPCEndpoints(
+            grpc_url=new_grpc_target,
+            rest_url=rest_raw,
+            auth_token_env_var=cached.auth_token_env_var,
+            rest_plain_tcp_url=tcp_raw or None,
+            rest_https_edge_url=edge_raw or None,
+        )
+    return None
+
+
 async def _wait_for_rest_grpc_handshake(
     d: object,
     timeout_s: float,

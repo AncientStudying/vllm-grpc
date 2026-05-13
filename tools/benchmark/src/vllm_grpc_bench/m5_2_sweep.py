@@ -94,6 +94,40 @@ __all__ = [
 ]
 
 
+def _is_connect_error(exc: BaseException) -> bool:
+    """Identify exceptions that suggest the Modal serve_bench Function was
+    preempted (or otherwise lost its tunnel).
+
+    httpx surfaces dead tunnels as ``httpx.ConnectError`` / ``httpx.ReadError``
+    or generic ``httpcore.ConnectError``. gRPC surfaces them as
+    ``grpc.aio.AioRpcError`` with ``StatusCode.UNAVAILABLE``. Some chained
+    exceptions (e.g., ``ExceptionGroup``) wrap these — we walk the chain.
+    """
+    import httpx
+
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        cur = stack.pop()
+        if id(cur) in seen:
+            continue
+        seen.add(id(cur))
+        if isinstance(
+            cur,
+            httpx.ConnectError | httpx.ReadError | httpx.RemoteProtocolError | ConnectionError,
+        ):
+            return True
+        # Walk __cause__ + __context__ + ExceptionGroup children.
+        if cur.__cause__ is not None:
+            stack.append(cur.__cause__)
+        if cur.__context__ is not None:
+            stack.append(cur.__context__)
+        # ExceptionGroup support — present on Python 3.11+.
+        if hasattr(cur, "exceptions"):
+            stack.extend(cur.exceptions)  # type: ignore[attr-defined]
+    return False
+
+
 SMOKE_CELLS: tuple[CellSpec, ...] = (
     CellSpec(path="chat_stream", hidden_size=2048, concurrency=1),
     CellSpec(path="chat_stream", hidden_size=2048, concurrency=4),
@@ -155,6 +189,19 @@ class M5_2SweepConfig:
     # ``[]`` disables corpus mode and uses the synthetic-prompt helper
     # (back-compat with pre-corpus tests).
     chat_corpus_path: Path | None = None
+
+    # M5.2 preemption-aware URL refresh. When a cell's dispatch fails with
+    # an httpx ConnectError (or equivalent), the sweep calls this
+    # callable to poll the Modal handshake Dict for fresh URLs (which the
+    # restarted ``serve_bench`` writes after a preemption per
+    # https://modal.com/docs/guide/preemption). If new URLs are found,
+    # the sweep mutates ``rest_https_edge_url`` / ``rest_plain_tcp_url``
+    # / ``grpc_target`` on this config and retries the cell ONCE. If
+    # ``None`` (or no fresh URLs detected), the cell is logged as a
+    # ``failed_cell`` per the existing resilience path. The callable
+    # takes no arguments and returns a fresh ``RESTGRPCEndpoints`` (or
+    # ``None`` when no preemption detected).
+    refresh_endpoints_fn: Any = None
 
     smoke: bool = False
 
@@ -1137,6 +1184,24 @@ async def run_m5_2_sweep(config: M5_2SweepConfig, *, progress: bool = True) -> M
         run_started_at_iso=run_started_at_iso,
     )
 
+    async def _dispatch_with_corpus(c: CellSpec, tuned: ChannelConfig) -> M5_2CellMeasurement:
+        return await dispatch_cell(
+            c,
+            rest_https_edge_url=config.rest_https_edge_url,
+            rest_plain_tcp_url=config.rest_plain_tcp_url,
+            grpc_target=config.grpc_target,
+            token=token,
+            n=config.n_per_cohort,
+            tuned_channel_config=tuned,
+            timeout_s=config.timeout_s,
+            rtt_probe_n=config.rtt_probe_n,
+            warmup_n=config.warmup_n,
+            https_edge_endpoint=config.https_edge_endpoint,
+            client_external_geolocation_country=config.client_external_geolocation_country,
+            client_external_geolocation_region=config.client_external_geolocation_region,
+            chat_corpus=chat_corpus,
+        )
+
     writer = EventsSidecarWriter(config.events_sidecar_out_dir, config.run_id)
     writer.__enter__()
     try:
@@ -1152,22 +1217,53 @@ async def run_m5_2_sweep(config: M5_2SweepConfig, *, progress: bool = True) -> M
                     cell.hidden_size,
                     m5_report_path=config.m5_report_path,
                 )
-                measurement = await dispatch_cell(
-                    cell,
-                    rest_https_edge_url=config.rest_https_edge_url,
-                    rest_plain_tcp_url=config.rest_plain_tcp_url,
-                    grpc_target=config.grpc_target,
-                    token=token,
-                    n=config.n_per_cohort,
-                    tuned_channel_config=tuned_cfg,
-                    timeout_s=config.timeout_s,
-                    rtt_probe_n=config.rtt_probe_n,
-                    warmup_n=config.warmup_n,
-                    https_edge_endpoint=config.https_edge_endpoint,
-                    client_external_geolocation_country=config.client_external_geolocation_country,
-                    client_external_geolocation_region=config.client_external_geolocation_region,
-                    chat_corpus=chat_corpus,
-                )
+                try:
+                    measurement = await _dispatch_with_corpus(cell, tuned_cfg)
+                except Exception as first_exc:  # noqa: BLE001
+                    # M5.2 preemption-aware refresh: when a cell fails
+                    # with a connect-style error, poll the Modal Dict for
+                    # fresh URLs (Modal restarts the Function on a new
+                    # worker after preemption; the new worker writes new
+                    # URLs to the same Dict). On detection, mutate the
+                    # config in place and retry the cell ONCE.
+                    if not _is_connect_error(first_exc) or config.refresh_endpoints_fn is None:
+                        raise
+                    print(
+                        f"[m5_2] cell {idx + 1}/{len(cells)} {cell.key}: "
+                        f"connect error ({type(first_exc).__name__}); "
+                        "polling Modal Dict for fresh URLs (preemption check) …",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    refreshed = await config.refresh_endpoints_fn()
+                    if refreshed is None:
+                        print(
+                            f"[m5_2] cell {idx + 1}/{len(cells)} {cell.key}: "
+                            "no fresh URLs detected within timeout — "
+                            "treating original error as a real connect failure.",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        raise
+                    print(
+                        f"[m5_2] cell {idx + 1}/{len(cells)} {cell.key}: "
+                        f"preemption detected — updating URLs and retrying. "
+                        f"new grpc={refreshed.grpc_url[:40]}, "
+                        f"new rest_edge={(refreshed.rest_https_edge_url or '')[:40]}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    config.grpc_target = refreshed.grpc_url
+                    if refreshed.rest_https_edge_url:
+                        config.rest_https_edge_url = refreshed.rest_https_edge_url
+                        config.https_edge_endpoint = refreshed.rest_https_edge_url
+                    if refreshed.rest_plain_tcp_url:
+                        # Strip the tcp+plaintext:// prefix and prepend http:// for httpx.
+                        tcp = refreshed.rest_plain_tcp_url
+                        if tcp.startswith("tcp+plaintext://"):
+                            tcp = "http://" + tcp[len("tcp+plaintext://") :]
+                        config.rest_plain_tcp_url = tcp
+                    measurement = await _dispatch_with_corpus(cell, tuned_cfg)
                 write_cell_events_to_sidecar(measurement, writer)
                 rows, t_row = emit_cell_verdicts(
                     measurement,
