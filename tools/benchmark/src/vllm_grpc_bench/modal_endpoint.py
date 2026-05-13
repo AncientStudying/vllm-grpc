@@ -295,10 +295,10 @@ async def refresh_rest_grpc_urls(
     deadline = time.monotonic() + poll_timeout_s
     while time.monotonic() < deadline:
         try:
-            grpc_raw = await d.get.aio("grpc", default="")  # type: ignore[attr-defined]
-            rest_raw = await d.get.aio("rest", default="")  # type: ignore[attr-defined]
-            tcp_raw = await d.get.aio("rest_plain_tcp_url", default="")  # type: ignore[attr-defined]
-            edge_raw = await d.get.aio("rest_https_edge_url", default="")  # type: ignore[attr-defined]
+            grpc_raw = await d.get.aio("grpc", default="")
+            rest_raw = await d.get.aio("rest", default="")
+            tcp_raw = await d.get.aio("rest_plain_tcp_url", default="")
+            edge_raw = await d.get.aio("rest_https_edge_url", default="")
         except Exception:  # noqa: BLE001 — Dict access can fail in transit
             await asyncio.sleep(poll_interval_s)
             continue

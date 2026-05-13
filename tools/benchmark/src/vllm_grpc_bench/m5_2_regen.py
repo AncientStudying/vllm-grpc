@@ -382,7 +382,7 @@ def compute_aggregates(
             "tuned_grpc_channels",
             "default_grpc",
         ):
-            grpc_samples = metrics_index.get((ck, grpc_cohort), [])  # type: ignore[arg-type]
+            grpc_samples = metrics_index.get((ck, grpc_cohort), [])
             if not grpc_samples:
                 continue
             if not edge_samples:
@@ -391,7 +391,7 @@ def compute_aggregates(
                         path=path,  # type: ignore[arg-type]
                         hidden_size=hidden_size,
                         concurrency=concurrency,
-                        grpc_cohort=grpc_cohort,  # type: ignore[arg-type]
+                        grpc_cohort=grpc_cohort,
                         verdict="comparison_unavailable",
                         comparison_unavailable_reason="missing_rest_https_edge_cohort",
                         delta_median_ms=0.0,
@@ -406,8 +406,8 @@ def compute_aggregates(
                     path=path,  # type: ignore[arg-type]
                     hidden_size=hidden_size,
                     concurrency=concurrency,
-                    grpc_cohort=grpc_cohort,  # type: ignore[arg-type]
-                    verdict=_protocol_verdict_literal(grpc_cohort, lo, hi),  # type: ignore[arg-type]
+                    grpc_cohort=grpc_cohort,
+                    verdict=_protocol_verdict_literal(grpc_cohort, lo, hi),
                     comparison_unavailable_reason=None,
                     delta_median_ms=delta,
                     ci_lower_ms=lo,

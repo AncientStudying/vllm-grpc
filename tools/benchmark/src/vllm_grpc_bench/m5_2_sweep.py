@@ -38,7 +38,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+import grpc
 import httpx
+from grpc.aio import AioRpcError
 
 from vllm_grpc_bench.channel_config import M1_BASELINE, ChannelConfig
 from vllm_grpc_bench.corpus import (
@@ -108,22 +110,11 @@ def _is_connect_error(exc: BaseException) -> bool:
     in-flight RTT probe or measurement request. Some chained exceptions
     (e.g., ``ExceptionGroup``) wrap these — we walk the chain.
     """
-    import httpx
-
-    try:
-        import grpc
-        from grpc.aio import AioRpcError
-    except ImportError:  # pragma: no cover — grpc is a hard dep, but guard anyway
-        AioRpcError = None  # type: ignore[assignment]
-        grpc = None  # type: ignore[assignment]
-
-    _grpc_connect_codes: set[object] = set()
-    if grpc is not None:
-        _grpc_connect_codes = {
-            grpc.StatusCode.UNAVAILABLE,
-            grpc.StatusCode.INTERNAL,
-            grpc.StatusCode.CANCELLED,
-        }
+    _grpc_connect_codes = {
+        grpc.StatusCode.UNAVAILABLE,
+        grpc.StatusCode.INTERNAL,
+        grpc.StatusCode.CANCELLED,
+    }
 
     seen: set[int] = set()
     stack: list[BaseException] = [exc]
@@ -137,7 +128,7 @@ def _is_connect_error(exc: BaseException) -> bool:
             httpx.ConnectError | httpx.ReadError | httpx.RemoteProtocolError | ConnectionError,
         ):
             return True
-        if AioRpcError is not None and isinstance(cur, AioRpcError):
+        if isinstance(cur, AioRpcError):
             try:
                 if cur.code() in _grpc_connect_codes:
                     return True
@@ -150,7 +141,7 @@ def _is_connect_error(exc: BaseException) -> bool:
             stack.append(cur.__context__)
         # ExceptionGroup support — present on Python 3.11+.
         if hasattr(cur, "exceptions"):
-            stack.extend(cur.exceptions)  # type: ignore[attr-defined]
+            stack.extend(cur.exceptions)
     return False
 
 
@@ -1045,7 +1036,7 @@ def _build_cohort_configs_for_symmetry(config: M5_2SweepConfig) -> list[CohortCo
     symmetry assertion uses the c-aware skip path in
     :func:`assert_symmetry`.
     """
-    common = {
+    common: dict[str, Any] = {
         "prompt_corpus_hash": canonical_digest({"seed": config.seed, "n": config.n_per_cohort}),
         "modal_deploy_handle": f"{config.modal_app_handle}-{config.run_id}",
         "modal_app_handle": config.modal_app_handle,

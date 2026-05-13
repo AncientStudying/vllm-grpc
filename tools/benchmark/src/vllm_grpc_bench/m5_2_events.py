@@ -183,8 +183,8 @@ def _coerce_record_dict(raw: dict[str, object]) -> PerRequestEventRecord | None:
         return PerRequestEventRecord(
             cohort=raw["cohort"],  # type: ignore[arg-type]
             path=raw["path"],  # type: ignore[arg-type]
-            hidden_size=int(raw["hidden_size"]),  # type: ignore[arg-type]
-            concurrency=int(raw["concurrency"]),  # type: ignore[arg-type]
+            hidden_size=int(raw["hidden_size"]),  # type: ignore[call-overload]
+            concurrency=int(raw["concurrency"]),  # type: ignore[call-overload]
             network_path=raw["network_path"],  # type: ignore[arg-type]
             request_uuid=str(raw["request_uuid"]),
             issue_ts_ms=float(raw["issue_ts_ms"]),  # type: ignore[arg-type]
@@ -195,8 +195,8 @@ def _coerce_record_dict(raw: dict[str, object]) -> PerRequestEventRecord | None:
             rtt_at_issue_ms=float(raw["rtt_at_issue_ms"]),  # type: ignore[arg-type]
             phase=raw["phase"],  # type: ignore[arg-type]
             server_bound=bool(raw["server_bound"]),
-            request_body_bytes=int(raw["request_body_bytes"]),  # type: ignore[arg-type]
-            response_body_bytes=int(raw["response_body_bytes"]),  # type: ignore[arg-type]
+            request_body_bytes=int(raw["request_body_bytes"]),  # type: ignore[call-overload]
+            response_body_bytes=int(raw["response_body_bytes"]),  # type: ignore[call-overload]
             status=str(raw["status"]),
         )
     except (TypeError, ValueError) as exc:

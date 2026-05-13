@@ -31,7 +31,8 @@ from vllm_grpc_bench.runner import run_grpc_target_streaming, run_target, run_ta
 
 if TYPE_CHECKING:
     from vllm_grpc_bench.m3_types import M4SweepConfig
-    from vllm_grpc_bench.m5_1_sweep import M5_1Run, M5_1SweepConfig
+    from vllm_grpc_bench.m5_1_sweep import CellSpec, M5_1Run, M5_1SweepConfig
+    from vllm_grpc_bench.m5_2_sweep import M5_2SweepConfig
 
 _DEFAULT_CORPUS = Path(__file__).parent.parent.parent / "corpus" / "chat_nonstreaming.json"
 
@@ -1291,10 +1292,10 @@ def _build_m5_2_config(
     https_edge_endpoint: str,
     smoke: bool,
     run_id: str,
-) -> object:
+) -> M5_2SweepConfig:
     from vllm_grpc_bench.m5_2_sweep import SMOKE_CELLS, M5_2SweepConfig
 
-    cells_override: tuple | None = SMOKE_CELLS if smoke else None
+    cells_override: tuple[CellSpec, ...] | None = SMOKE_CELLS if smoke else None
     n = 5 if smoke else int(args.m5_2_n)
     warmup_n = 2 if smoke else int(args.m5_2_warmup_n)
     rtt_probe_n = 4 if smoke else 16
