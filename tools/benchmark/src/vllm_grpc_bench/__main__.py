@@ -1501,6 +1501,19 @@ async def _do_m5_2_run(args: argparse.Namespace, cfg: object, *, smoke: bool) ->
         "Next: run the regenerator on the sidecar + run config "
         "(see specs/019-m5-2-transport-tuning/quickstart.md Step 5)."
     )
+    if run.failed_cells:
+        failed_summary = ", ".join(
+            f"{fc['path']}:h{fc['hidden_size']}:c{fc['concurrency']}({fc['exception_type']})"
+            for fc in run.failed_cells
+        )
+        print(
+            f"Error: M5.2 sweep finished with {len(run.failed_cells)} failed cell(s): "
+            f"{failed_summary}. Run config persists the full crash log under "
+            f"'failed_cells'; rerun the sweep (the sidecar is incomplete and "
+            "cannot be used for the publishable report).",
+            file=sys.stderr,
+        )
+        return 9
     return 0
 
 

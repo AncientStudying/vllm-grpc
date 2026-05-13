@@ -43,6 +43,69 @@ def test_is_connect_error_identifies_httpx_read_error() -> None:
     assert _is_connect_error(exc)
 
 
+def test_is_connect_error_identifies_grpc_aio_unavailable() -> None:
+    """Regression test for the overnight-sweep bug where cell 11
+    (embed:h2048:c4) hit a Modal preemption mid-RTT-probe. The probe
+    raised ``grpc.aio.AioRpcError`` with ``StatusCode.UNAVAILABLE``
+    against the preempted worker; the original ``_is_connect_error``
+    docstring claimed this case was covered, but the implementation only
+    checked httpx classes — so the cell skipped the URL-refresh retry
+    and was logged as a hard failure. This test pins the fix in place.
+    """
+    import grpc
+    from grpc.aio import AioRpcError
+
+    exc = AioRpcError(
+        code=grpc.StatusCode.UNAVAILABLE,
+        initial_metadata=grpc.aio.Metadata(),
+        trailing_metadata=grpc.aio.Metadata(),
+        details="failed to connect to all addresses",
+        debug_error_string=None,
+    )
+    assert _is_connect_error(exc)
+
+
+def test_is_connect_error_identifies_grpc_aio_internal_and_cancelled() -> None:
+    """HTTP/2 GOAWAY mid-flight surfaces as INTERNAL; transport close
+    mid-stream surfaces as CANCELLED. Both are observed during Modal
+    preemption windows and MUST trigger the refresh path."""
+    import grpc
+    from grpc.aio import AioRpcError
+
+    for code in (grpc.StatusCode.INTERNAL, grpc.StatusCode.CANCELLED):
+        exc = AioRpcError(
+            code=code,
+            initial_metadata=grpc.aio.Metadata(),
+            trailing_metadata=grpc.aio.Metadata(),
+            details=f"transport: {code.name}",
+            debug_error_string=None,
+        )
+        assert _is_connect_error(exc), f"{code.name} should be treated as connect-style"
+
+
+def test_is_connect_error_ignores_grpc_aio_application_errors() -> None:
+    """Application-level gRPC errors (INVALID_ARGUMENT, NOT_FOUND, etc.)
+    are NOT preemption; they're real bugs. The refresh path must NOT
+    swallow them.
+    """
+    import grpc
+    from grpc.aio import AioRpcError
+
+    for code in (
+        grpc.StatusCode.INVALID_ARGUMENT,
+        grpc.StatusCode.NOT_FOUND,
+        grpc.StatusCode.PERMISSION_DENIED,
+    ):
+        exc = AioRpcError(
+            code=code,
+            initial_metadata=grpc.aio.Metadata(),
+            trailing_metadata=grpc.aio.Metadata(),
+            details=f"app-level: {code.name}",
+            debug_error_string=None,
+        )
+        assert not _is_connect_error(exc), f"{code.name} must not trigger refresh"
+
+
 def test_is_connect_error_walks_chained_exceptions() -> None:
     """A chained exception (e.g. cohort runner wraps a httpx error in
     a RuntimeError) MUST still trigger the refresh path."""
@@ -128,12 +191,15 @@ async def test_sweep_retries_failed_cell_when_refresh_returns_fresh_urls(
 
 
 @pytest.mark.asyncio
-async def test_sweep_falls_back_to_failed_cell_when_refresh_returns_none(
+async def test_sweep_retries_on_same_urls_when_refresh_returns_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When refresh returns None (no preemption detected — URLs unchanged
-    or Modal unreachable), the cell is logged as a normal failed_cell —
-    no retry happens."""
+    """Transient-failure fallback: when refresh returns ``None`` (URLs
+    unchanged — no preemption), the sweep STILL retries the cell ONCE on
+    the same URLs because the cohort runner builds fresh httpx / gRPC
+    clients each dispatch, and that's usually enough to clear a stale-
+    connection failure. Two dispatches both failing → failed_cell.
+    """
     from vllm_grpc_bench import m5_2_sweep
 
     monkeypatch.setenv("MODAL_BENCH_TOKEN", "tok")
@@ -163,27 +229,81 @@ async def test_sweep_falls_back_to_failed_cell_when_refresh_returns_none(
     )
 
     run = await run_m5_2_sweep(cfg, progress=False)
-    # dispatch_cell was called ONCE; refresh said no preemption; no retry.
-    assert dispatch_calls["n"] == 1
+    # Initial dispatch + 1 fallback retry on same URLs; both fail → failed_cell.
+    assert dispatch_calls["n"] == 2
     assert len(run.failed_cells) == 1
     assert run.failed_cells[0]["exception_type"] == "ConnectError"
 
 
 @pytest.mark.asyncio
-async def test_sweep_with_no_refresh_callable_treats_connect_error_as_failed_cell(
+async def test_sweep_fallback_retry_succeeds_on_transient_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When refresh_endpoints_fn is None (e.g. skip-deploy mode), a connect
-    error falls straight through to the failed_cell path — no refresh
-    attempt, no retry."""
+    """When the connect-style error is a transient blip (one stale TCP
+    connection, server backpressure clearing, etc.) and refresh returns
+    ``None`` (no preemption), the fallback retry on the same URLs
+    succeeds. This is the path that would have saved cell 18
+    (embed:h8192:c8) during the overnight sweep.
+    """
     from vllm_grpc_bench import m5_2_sweep
 
     monkeypatch.setenv("MODAL_BENCH_TOKEN", "tok")
 
-    async def _fail(c: CellSpec, **kwargs) -> M5_2CellMeasurement:
+    cell = CellSpec(path="embed", hidden_size=2048, concurrency=1)
+    dispatch_calls = {"n": 0}
+
+    async def _flaky_dispatch(c: CellSpec, **kwargs) -> M5_2CellMeasurement:
+        dispatch_calls["n"] += 1
+        if dispatch_calls["n"] == 1:
+            raise httpx.ReadError("transient server-side connection close")
+        return _fake_measurement(c)
+
+    async def _refresh_returns_none() -> RESTGRPCEndpoints | None:
+        return None
+
+    monkeypatch.setattr(m5_2_sweep, "dispatch_cell", _flaky_dispatch)
+    monkeypatch.setattr(m5_2_sweep, "frozen_tuned_channel_config", lambda *_a, **_k: None)
+
+    cfg = M5_2SweepConfig(
+        rest_https_edge_url="https://stable.modal.run",
+        rest_plain_tcp_url="http://stable.modal.host:8000",
+        grpc_target="stable.modal.host:50051",
+        run_id="transient-recovery-test",
+        events_sidecar_out_dir=tmp_path,
+        cells_override=(cell,),
+        n_per_cohort=3,
+        warmup_n=0,
+        refresh_endpoints_fn=_refresh_returns_none,
+    )
+
+    run = await run_m5_2_sweep(cfg, progress=False)
+    assert dispatch_calls["n"] == 2, "fallback retry must run on same URLs"
+    assert run.failed_cells == [], "second attempt succeeded — cell should not be marked failed"
+    assert len(run.protocol_comparison_verdicts) >= 1
+    # URLs were NOT mutated since refresh returned None.
+    assert cfg.grpc_target == "stable.modal.host:50051"
+
+
+@pytest.mark.asyncio
+async def test_sweep_with_no_refresh_callable_still_retries_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When ``refresh_endpoints_fn`` is None (e.g. skip-deploy mode), the
+    sweep still retries connect-style errors ONCE on the same URLs (the
+    transient-failure fallback path). Two dispatches both failing →
+    failed_cell.
+    """
+    from vllm_grpc_bench import m5_2_sweep
+
+    monkeypatch.setenv("MODAL_BENCH_TOKEN", "tok")
+
+    dispatch_calls = {"n": 0}
+
+    async def _always_fail(c: CellSpec, **kwargs) -> M5_2CellMeasurement:
+        dispatch_calls["n"] += 1
         raise httpx.ConnectError("dead")
 
-    monkeypatch.setattr(m5_2_sweep, "dispatch_cell", _fail)
+    monkeypatch.setattr(m5_2_sweep, "dispatch_cell", _always_fail)
     monkeypatch.setattr(m5_2_sweep, "frozen_tuned_channel_config", lambda *_a, **_k: None)
 
     cfg = M5_2SweepConfig(
@@ -199,6 +319,7 @@ async def test_sweep_with_no_refresh_callable_treats_connect_error_as_failed_cel
     )
 
     run = await run_m5_2_sweep(cfg, progress=False)
+    assert dispatch_calls["n"] == 2
     assert len(run.failed_cells) == 1
 
 
