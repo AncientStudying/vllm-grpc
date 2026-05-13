@@ -23,6 +23,7 @@ This contract pins the **JSON wire shape**; the Python dataclasses backing each 
 | `modal_instance_class` | string | string | e.g., `"cpu-only"` or specific Modal class. |
 | `https_edge_endpoint` | string | string | The HTTPS-edge URL the rest_https_edge cohort used. |
 | `client_external_geolocation` | object \| null | — | `{country: string, region: string}` or `null` if the lookup was skipped or failed. |
+| `failed_cells` | array of object, OPTIONAL | `M5_2Run.failed_cells` (post-impl R-13) | Per-cell crash log persisted to the RUN CONFIG JSON (`{run_id}.run_config.json`), NOT to the aggregate report JSON. Each entry: `{path, hidden_size, concurrency, exception_type, exception_repr, traceback}`. Empty on clean runs; non-empty when the sweep's per-cell try/except caught a failure. The aggregate report JSON MAY include this key (currently the regenerator does not emit it), or readers can consult the run config directly. The negative-results appendix in the markdown SHOULD eventually surface failed cells explicitly; today they appear as missing rows. |
 
 ## `symmetry` block detail
 

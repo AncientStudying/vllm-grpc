@@ -31,6 +31,7 @@ The `--m5_2-report-out` flag is a path prefix (without extension); the regenerat
    - `client_external_geolocation` (object \| null).
    - `payload_parity_audit` (object — added by the operator during Phase J before the regenerator runs; see `contracts/m5_2-payload-parity-audit.md`).
    - `smoke_run_outcome` (object — copied from the prior `--m5_2-smoke` invocation's output).
+   - `failed_cells` (list of object, OPTIONAL — added 2026-05-12 post-implementation per research [R-13](../research.md)). Each entry: `{path, hidden_size, concurrency, exception_type, exception_repr, traceback}`. Empty on a clean run; non-empty when the sweep's per-cell try/except caught a dispatch failure. The regenerator currently treats this key as **optional** — older run configs without it remain valid; the regenerator does NOT raise `RunConfigInvalid` on absence. Future enhancement: the regenerator could surface `failed_cells` as explicit `comparison_unavailable` rows in the markdown's negative-results appendix (today they appear implicitly as missing cells).
 
 ## Algorithm
 

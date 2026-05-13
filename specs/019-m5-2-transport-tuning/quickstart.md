@@ -25,6 +25,21 @@ Optional: pin a known token if you intend to re-run the sweep against the same d
 export MODAL_BENCH_TOKEN="my-stable-test-token-for-rerun-only"
 ```
 
+## Step 1.5 — (Optional) Regenerate the chat corpus
+
+> Added 2026-05-12 per research [R-12](research.md). The chat corpus is committed at `tools/benchmark/corpus/chat_sharegpt_1000.json` (the ShareGPT V3 1k-sample subset). Skip this step unless you intend to change the corpus size, filter, or pin to a different ShareGPT revision.
+
+The committed corpus is byte-stable. Re-generating it with the default parameters produces a byte-identical JSON (modulo timestamp comments) because the script pins the source revision SHA, the source-file SHA-256, the filter criteria, and the random seed:
+
+```bash
+uv run python scripts/python/gen_chat_corpus.py \
+    --count 1000 --min-chars 4 --max-chars 2048 --max-tokens 128 --seed 42
+```
+
+The first invocation downloads ShareGPT V3 (~673 MB) into the gitignored `bench-results/sharegpt-raw/` cache; subsequent invocations skip the download on SHA match. Output: `tools/benchmark/corpus/chat_sharegpt_1000.json` + `.provenance.json`.
+
+The harness reads `chat_sharegpt_1000.json` by default. Override via `M5_2SweepConfig.chat_corpus_path` (currently config-only; no CLI flag).
+
 ## Step 2 — Run the pre-flight smoke gate (FR-005a + SC-012)
 
 ```bash
@@ -59,16 +74,26 @@ The harness:
 2. Looks up the client's external geolocation via `https://ipinfo.io/json` (skip with `--m5_2-skip-geolocation-lookup` in air-gapped environments).
 3. Builds and asserts the 3-tier symmetry block per FR-005b. Aborts on tier (a) or tier (b) divergence with exit code 5 and the diverging field named in stderr.
 4. Probes RTT against all three endpoints. Aborts on RTT validity failure with exit code 6.
-5. Runs warmup cohorts per protocol-side per path. Warmup records ARE written to the sidecar (`phase: "warmup"`) but excluded from aggregates.
-6. Enumerates the 18 matrix cells (2 paths × 3 widths × 3 concurrencies). For each cell, dispatches (in series): `rest_https_edge` → `rest_plain_tcp` → `default_grpc` → `tuned_grpc_multiplexed` (c≥2) → `tuned_grpc_channels` (c≥2) OR `tuned_grpc` (c=1). Per-request events stream to the un-gzipped sidecar.
-7. On full-sweep completion: closes the sidecar, gzips it (`gzip -9`), computes the SHA-256 hex.
-8. Emits `bench-results/m5_2-full/{run_id}.run_config.json` with the symmetry block, sidecar path, sidecar SHA-256, modal region/instance class, run timestamps, etc.
-9. Does NOT emit the markdown or aggregate JSON directly (per FR-012b — the regenerator builds those from the sidecar + run config).
-10. Tears down the Modal app.
+5. Loads the chat corpus (`tools/benchmark/corpus/chat_sharegpt_1000.json` by default; logged as `[m5_2] chat corpus: 1000 samples from ...`). Both REST and gRPC chat cohorts cycle through this corpus by iteration index (per research [R-12](research.md)).
+6. Runs warmup cohorts per protocol-side per path. Warmup records ARE written to the sidecar (`phase: "warmup"`) but excluded from aggregates.
+7. Enumerates the 18 matrix cells (2 paths × 3 widths × 3 concurrencies). For each cell, dispatches (in series): `rest_https_edge` → `rest_plain_tcp` → `default_grpc` → `tuned_grpc_multiplexed` (c≥2) → `tuned_grpc_channels` (c≥2) OR `tuned_grpc` (c=1). Per-request events stream to the un-gzipped sidecar.
+8. On full-sweep completion: closes the sidecar, gzips it (`gzip -9`), computes the SHA-256 hex.
+9. Emits `bench-results/m5_2-full/{run_id}.run_config.json` with the symmetry block, sidecar path, sidecar SHA-256, modal region/instance class, run timestamps, etc.
+10. Does NOT emit the markdown or aggregate JSON directly (per FR-012b — the regenerator builds those from the sidecar + run config).
+11. Tears down the Modal app.
 
-**Expected wall-clock: 25–30 minutes** (per SC-007 / Edge Case "n=250 doubles per-cohort runtime"). Monitor with `modal app list | grep vllm-grpc-bench-rest-grpc-mock` (should be empty after a clean teardown).
+**Expected wall-clock: 25–66 minutes** (per SC-007 / Edge Case "n=250 doubles per-cohort runtime"). Monitor with `modal app list | grep vllm-grpc-bench-rest-grpc-mock` (should be empty after a clean teardown).
 
-If a cohort fails irrecoverably mid-sweep (e.g., `rest_https_edge` 502 storms), the sidecar is closed cleanly, the failure is recorded as cell-level `comparison_unavailable` per FR-005, and the harness exits with code 7. The Modal app is torn down before exit. Investigate the cause, fix, and re-run.
+**Preemption recovery (R-13)**: Modal occasionally preempts long-running Functions and restarts them on a new worker (https://modal.com/docs/guide/preemption). The new worker writes fresh tunnel URLs to the same Modal Dict; the harness detects the resulting `ConnectError`, polls the Dict for fresh URLs, and retries the affected cell once. Expect stderr lines like:
+
+```
+[m5_2] cell N/18 <cell_key>: connect error (ConnectError); polling Modal Dict for fresh URLs (preemption check) …
+[m5_2] cell N/18 <cell_key>: preemption detected — updating URLs and retrying. new grpc=<host>:50051, new rest_edge=https://<id>.modal.run
+```
+
+A successful refresh + retry costs ~90 s (Dict poll timeout) and resumes the sweep transparently. If refresh returns `None` (no fresh URLs detected within the timeout), the cell falls through to the `failed_cells` log and the sweep proceeds to the next cell.
+
+**Per-cell isolation**: If a cohort fails irrecoverably mid-sweep (e.g., `rest_https_edge` 502 storms after a failed preemption refresh), the harness logs the cell to `failed_cells` (in the run config JSON) with the exception type + repr + traceback, and continues to the next cell. The sidecar + run config are closed cleanly so the regenerator can still build a partial report from whatever cells succeeded.
 
 ## Step 4 — Phase J: Payload-parity code-review audit (FR-005c)
 
@@ -368,3 +393,27 @@ git rebase -i HEAD~N    # N = number of commits since K3
 ```
 
 Re-verify `git log -1 --oneline` before `gh pr create`.
+
+### Full sweep finished but `failed_cells` lists 1+ entries
+
+Per R-13's preemption-aware resilience, the sweep persists each cell crash to `bench-results/m5_2-full/{run_id}.run_config.json` under the `failed_cells` key. Each entry carries `path`, `hidden_size`, `concurrency`, `exception_type`, `exception_repr`, and `traceback`. Three common patterns:
+
+1. **`ConnectError` after a preemption + a failed refresh retry**: Modal preempted mid-cell, the refresh poll found no fresh URLs within 90 s, the cell gave up. Inspect the Modal Dashboard for worker health; consider re-running the affected cells in a follow-up sweep (or re-running the full sweep — the regenerator is robust to partial data).
+2. **`ConnectError` with no preemption diagnostic line**: the harness's connect-error detection didn't trigger a refresh (e.g., the refresh callable was `None` because `--m5_2-skip-deploy` mode). This is real network failure — the Modal deploy is unreachable. Re-deploy or check operator credentials.
+3. **Non-connect exception**: a real code bug. The `exception_type` + `traceback` in the run config name the failure site. File a bug.
+
+In all cases the sweep's `events_sidecar_sha256` matches the gzipped sidecar (verifiable via `shasum -a 256`), and the regenerator can build a partial M5.2 report from whatever cells succeeded. The report's negative-results appendix will surface the failed cells (currently as missing rows; future enhancement could explicitly mark them).
+
+To recover ONLY the failed cells (instead of re-running all 18):
+```bash
+# Read the failed_cells list from the run config:
+jq '.failed_cells[] | {path, hidden_size, concurrency}' \
+    bench-results/m5_2-full/{run_id}.run_config.json
+
+# Re-run with the surviving cells excluded (requires manual cells_override
+# construction or a future --m5_2-resume-from flag).
+```
+
+### Sweep aborts BEFORE the first cell with `ConnectError`
+
+The initial Modal handshake succeeded but the first cohort's first request can't reach Modal. Causes: Modal app already torn down; firewall/proxy on the local machine; tunnel URLs stale from a previous run. The `[m5_2] CELL FAILED 1/18 ...` line will show the full exception type + repr (verbose-error-reporting fix). Re-deploy by re-running `--m5_2` (drop `--m5_2-skip-deploy` if set).

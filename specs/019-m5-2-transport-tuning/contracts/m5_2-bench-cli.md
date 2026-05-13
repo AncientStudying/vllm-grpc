@@ -34,6 +34,15 @@ Triggering `--m5_2` puts the harness in M5.2 mode. M5.1 / M5 / M4 / M3 flags tha
 
 Flags reused from M5/M5.1 (unchanged semantics): `--bench-results-dir`, `--seed`, `--no-progress`.
 
+### Config-only fields (no CLI surface)
+
+Some M5.2 sweep configuration is currently set at the `M5_2SweepConfig` dataclass level only — no CLI flag is wired up. If you need to override these, edit the harness invocation directly (or open a follow-up to add a CLI flag).
+
+| Field | Default | Purpose |
+|---|---|---|
+| `chat_corpus_path` | `tools/benchmark/corpus/chat_sharegpt_1000.json` (the `DEFAULT_CHAT_CORPUS_PATH` constant) | Chat-corpus override per research [R-12](../research.md). `None` uses the default; `Path("")` disables corpus mode and uses the synthetic-prompt helper. Both REST and gRPC chat cohorts cycle through this corpus by iteration index. |
+| `refresh_endpoints_fn` | wired by `__main__._run_m5_2` in deploy mode | Preemption-aware URL refresh callback per research [R-13](../research.md). When a cell fails with a connect-style error, the harness polls the Modal Dict for fresh URLs and retries the cell once. Skip-deploy mode does not wire this up. |
+
 ## Behavior — `--m5_2-smoke`
 
 1. Validate flag combinations; exit code 2 if any conflict.
@@ -59,11 +68,19 @@ Flags reused from M5/M5.1 (unchanged semantics): `--bench-results-dir`, `--seed`
 5. Build the 3-tier symmetry block via `m5_2_symmetry.build_symmetry_block`.
 6. Invoke `m5_2_symmetry.assert_symmetry(block, concurrency_levels=[1, 4, 8])`. Exit code 5 on tier (a) or tier (b) divergence with the diverging field + cohort/pair named in stderr.
 7. Probe RTT against all four endpoints (gRPC plain-TCP + REST HTTPS-edge + REST plain-TCP + healthz on the shim via each transport). Exit code 6 if any probe fails or median RTT falls below `--m5_2-rtt-validity-threshold-ms`.
-8. Run warmup cohorts per protocol-side per path. Discard. Per-request warmup records are persisted to the sidecar with `phase: "warmup"` for audit but excluded from aggregates.
-9. Enumerate the 18 matrix cells (2 paths × 3 widths × 3 concurrencies). For each cell, dispatch (in series, per R-4 / M5.1 R-4): rest_https_edge → rest_plain_tcp → default_grpc → tuned_grpc_multiplexed (c≥2 only) → tuned_grpc_channels (c≥2 only) → tuned_grpc (c=1 only). Per-request events written to the sidecar at issue + done time. Apply M5.1's borderline-expand cascade per cohort (but the cascade does NOT expand beyond `--m5_2-n` = 250 in M5.2 per FR-011).
-10. On full-sweep completion: close the events sidecar (gzip + SHA-256 + emit final path + checksum).
-11. Emit the M5.2 run config JSON (`bench-results/m5_2-full/{run_id}.run_config.json`) containing the symmetry block, the events sidecar path + SHA-256, the smoke-run-outcome metadata (the operator's previous `--m5_2-smoke` output is included by reference — recorded in the run config), the modal region/instance class, and the run's `run_started_at_iso` / `run_realized_runtime_s`. The harness MUST NOT emit markdown or aggregate JSON directly (FR-012b).
-12. Tear down the Modal app cleanly. Exit code 0.
+8. Load the chat corpus (`tools/benchmark/corpus/chat_sharegpt_1000.json` by default per [R-12](../research.md)). Log `[m5_2] chat corpus: N samples from PATH` to stderr.
+9. Write a skeleton `bench-results/m5_2-full/{run_id}.run_config.json` (with `events_sidecar_sha256=""` placeholder) so a crash before the first cell still leaves a regeneratable metadata artifact (post-implementation resilience per [R-13](../research.md)).
+10. Run warmup cohorts per protocol-side per path. Discard. Per-request warmup records are persisted to the sidecar with `phase: "warmup"` for audit but excluded from aggregates.
+11. Enumerate the 18 matrix cells (2 paths × 3 widths × 3 concurrencies). For each cell, dispatch (in series, per R-4 / M5.1 R-4): rest_https_edge → rest_plain_tcp → default_grpc → tuned_grpc_multiplexed (c≥2 only) → tuned_grpc_channels (c≥2 only) → tuned_grpc (c=1 only). Per-request events written to the sidecar at issue + done time. Apply M5.1's borderline-expand cascade per cohort (but the cascade does NOT expand beyond `--m5_2-n` = 250 in M5.2 per FR-011).
+    - **Per-cell isolation** (R-13): if a cell raises an exception during dispatch, the harness writes the cell to a `failed_cells` list in the run config (with `exception_type`, `exception_repr`, `traceback`) and continues to the next cell. The sweep does NOT abort on a single-cell failure.
+    - **Preemption recovery** (R-13): on a connect-style error (httpx.ConnectError / ReadError, identified via chain walk), the harness polls the Modal Dict for fresh URLs (90 s timeout). If detected, the sweep mutates the config's URLs in place and retries the cell ONCE. Stderr logs:
+        - `[m5_2] cell N/18 <cell_key>: connect error (ConnectError); polling Modal Dict for fresh URLs (preemption check) …`
+        - `[m5_2] cell N/18 <cell_key>: preemption detected — updating URLs and retrying. new grpc=<host>:50051, new rest_edge=https://<id>.modal.run`
+    - If no fresh URLs are detected within the timeout: `[m5_2] cell N/18 <cell_key>: no fresh URLs detected within timeout — treating original error as a real connect failure.` The cell falls through to `failed_cells`.
+12. On full-sweep completion: close the events sidecar (gzip + SHA-256 + emit final path + checksum).
+13. Finalize the run config JSON with the real `events_sidecar_sha256` + `run_realized_runtime_s` + the `failed_cells` list (may be empty on a clean run; non-empty if R-13 caught any per-cell failures). The harness MUST NOT emit markdown or aggregate JSON directly (FR-012b).
+14. If `failed_cells` is non-empty, print to stderr: `[m5_2] sweep complete with N failed cell(s): <cell_a>(<exc>), <cell_b>(<exc>), ...`
+15. Tear down the Modal app cleanly. Exit code 0 (NOT non-zero on partial-data; the run config + sidecar are still publishable via the regenerator, and the operator decides whether to re-run failed cells).
 
 The operator then invokes the regenerator per the contract in `contracts/m5_2-regenerator.md` to produce the markdown + aggregate JSON from the sidecar + run config.
 

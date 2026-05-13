@@ -161,6 +161,42 @@
 
 ---
 
+## Phase 7: Unplanned Methodology Fixes (post-implementation 2026-05-12)
+
+**Purpose**: Records the work added retroactively after Phase 3 to address gaps that the original T001–T042 task list did not anticipate. Every task here landed before the K-series narrative commits and is now part of the M5.2 PR scope. These tasks are recorded retroactively per `plan.md` § Phase L, `research.md` R-12/R-13, and `spec.md` § "Session 2026-05-12 — post-implementation revisions". They are marked `[X]` because the work is complete; they exist in `tasks.md` so a future reviewer reading the spec-kit artifacts top-to-bottom understands the full scope shipped.
+
+### L-1: Payload-parity audit fixes (chat-path) — covered by FR-005c Step 1
+
+- [X] T064 [P] Add `warmup_samples` to `RESTCohortResult` + `GRPCCohortResult`; persist warmup records to the sidecar with `phase="warmup"` and `rtt_at_issue_ms=0.0` per FR-012a (g). Files: `rest_cohort.py`, `m5_1_grpc_cohort.py`, `m5_2_sweep.py::write_cell_events_to_sidecar`. Recorded in [`contracts/m5_2-events-jsonl-sidecar.md` § "Field semantics" — `phase`](contracts/m5_2-events-jsonl-sidecar.md#field-semantics) (Fix B lineage).
+- [X] T065 Fix REST chat `response_body_bytes` to sum across all SSE lines (including the trailing `data: [DONE]`) so the column is comparable to gRPC's per-`ChatStreamChunk` byte sum. File: `rest_cohort._single_chat_stream_request`. Recorded in [`contracts/m5_2-events-jsonl-sidecar.md` § "Field semantics" — `response_body_bytes`](contracts/m5_2-events-jsonl-sidecar.md#field-semantics) (Fix A lineage).
+- [X] T066 [P] Introduce the `RequestSample`-backed chat corpus path. Add a `bucket` field to `corpus.RequestSample`; add `DEFAULT_CHAT_CORPUS_PATH = "tools/benchmark/corpus/chat_sharegpt_1000.json"`; add a `corpus`/`sample` kwarg surface to `rest_cohort.run_rest_cohort` and `m5_1_grpc_cohort.run_grpc_cohort` so both protocols consume the same `RequestSample` by `iteration % len(corpus)`. Files: `corpus.py`, `rest_cohort.py`, `m5_1_grpc_cohort.py`.
+- [X] T067 [P] Add `scripts/python/gen_chat_corpus.py` that downloads `anon8231489123/ShareGPT_Vicuna_unfiltered` (pinned revision SHA `192ab21...7154ca`, source-file SHA-256 `35f0e213ce091ed9b9af2a1f0755e9d39f9ccec34ab281cd4ca60d70f6479ba4`), filters to single-turn `human → gpt` prompts in three buckets (short / medium / long), subsets to 1000 samples with seed=42, and emits `tools/benchmark/corpus/chat_sharegpt_1000.json` plus a sibling `.provenance.json`. Commit both. Recorded in [`research.md` R-12](research.md).
+- [X] T068 Strengthen `contracts/m5_2-payload-parity-audit.md` Step 1 to mandate the corpus-driven path and add the "Historical note (2026-05-12, pre-corpus integration)" subsection naming the deprecated synthetic-prompt phase. Forbid "Hello world" / "M5.1 chat probe" via the audit's checklist (test below enforces).
+- [X] T069 [P] Add `test_chat_payload_parity.py` (8 tests) — locks `messages`, `max_tokens`, `temperature` symmetry across REST and gRPC chat dispatch paths. Add `test_chat_corpus_parity.py` (8 tests) — locks the `RequestSample`-by-iteration discipline; forbids the legacy synthetic-prompt phrases. Files: `tools/benchmark/tests/`.
+
+### L-2: Preemption-aware URL refresh — covered by [R-13](research.md)
+
+- [X] T070 Add `modal_endpoint.refresh_rest_grpc_urls(app_handle)` that re-reads the Modal `modal.Dict` keys (`rest_https_edge_url`, `rest_plain_tcp_url`, `grpc_url`) with a 90 s polling timeout and returns a fresh `EndpointConfig`. File: `modal_endpoint.py`.
+- [X] T071 Add `M5_2SweepConfig.refresh_endpoints_fn: Callable[[], EndpointConfig] | None` and `m5_2_sweep._is_connect_error(exc)` predicate. In `dispatch_cell`, on a connect-style exception (and `refresh_endpoints_fn is not None`), call the closure, update the cell's `EndpointConfig`, and retry the cell once. Multiple consecutive connect failures escalate to `failed_cells` instead of crashing the sweep. Files: `m5_2_sweep.py`.
+- [X] T072 In `__main__._run_m5_2`, build a `refresh_endpoints_fn` closure from the active Modal app handle and thread it into `M5_2SweepConfig`. The smoke flow uses the same closure. File: `__main__.py`.
+- [X] T073 [P] Add `test_m5_2_preemption_resilience.py` (8 tests) — fakes a connect-style exception on first dispatch, verifies the retry path calls `refresh_endpoints_fn`, updates the endpoint, and the cell completes on retry. Also verifies the escalation path (multiple consecutive failures → `failed_cells` entry, sweep continues). File: `tools/benchmark/tests/`.
+
+### L-3: Per-cell isolation + skeleton run_config + verbose error reporting
+
+- [X] T074 Add per-cell try/except in `dispatch_cell` catching everything except `KeyboardInterrupt` / `SystemExit`, recording `{path, hidden_size, concurrency, exception_type, exception_repr, traceback}` to `M5_2Run.failed_cells: list[dict]`. A clean run has `failed_cells == []`. File: `m5_2_sweep.py`.
+- [X] T075 Add `_write_skeleton_run_config()` called BEFORE the first cell dispatches. Writes `bench-results/m5_2-full/{run_id}.run_config.json` with `run_id`, `run_started_at_iso`, `seed`, `symmetry`, `modal_region`, `https_edge_endpoint`, and `failed_cells: []`. The sweep patches `run_realized_runtime_s` + `failed_cells` at the end of the run. File: `m5_2_sweep.py`.
+- [X] T076 Print verbose error reporting from the CLI's `_run_m5_2` error handler: emit `type(exc).__name__`, `repr(exc)`, and the full traceback on any uncaught exception so the operator sees the underlying failure mode without re-running with `--verbose`. File: `__main__.py`.
+- [X] T077 Document the `failed_cells` key in the regenerator contract ([`contracts/m5_2-regenerator.md` § Inputs](contracts/m5_2-regenerator.md#inputs)) as OPTIONAL — older run configs without it remain valid; the regenerator does NOT raise `RunConfigInvalid` on absence. Document it in the report-schema contract ([`contracts/m5_2-report-schema.md` § "Top-level keys"](contracts/m5_2-report-schema.md#top-level-keys-additive-to-m51)) as an OPTIONAL top-level key.
+- [X] T078 Document the new behaviors in [`contracts/m5_2-bench-cli.md`](contracts/m5_2-bench-cli.md) Behavior section: corpus load step, skeleton run_config write, per-cell isolation, preemption recovery log lines, verbose error reporting on uncaught exceptions.
+- [X] T079 Update [`quickstart.md`](quickstart.md) Step 1.5 (corpus regen instructions), Step 3 (corpus loading + preemption recovery notes), and the troubleshooting section (failed_cells + pre-first-cell ConnectError).
+- [X] T080 Update [`data-model.md`](data-model.md) with `failed_cells` on `M5_2Run`, extended `RequestSample` (with `bucket`), and the `M5_2SweepConfig` additions (`chat_corpus_path`, `refresh_endpoints_fn`). Add the `failed_cells` row to the JSON schema delta table.
+- [X] T081 Update [`spec.md`](spec.md) with the "Session 2026-05-12 — post-implementation revisions" subsection (4 Q/A entries). Strengthen FR-005c with Step 1's chat-corpus mandate. Strengthen FR-016 with topology-aware framing requirement + the forbidden-phrases list ("shifted", "surfaces the change", "was wrong", "superseded").
+- [X] T082 Update [`research.md`](research.md) with R-12 (ShareGPT corpus methodology) and R-13 (preemption-aware URL refresh). Update the closing summary to "13 R-items".
+
+**Checkpoint**: All retroactive scope captured under Phase 7. The K-series narrative commits land **after** this checkpoint; Phase 6's procedural steps (T055–T063) remain the gating sequence to PR.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Order
@@ -171,6 +207,7 @@
 4. **Phase 4: User Story 2 (P2)** (T043–T046) — depends on Phase 3 completion (US2 task T043's ANALYSIS.md § M5.2 section cites US1's report). Can run in parallel with Phase 5 task drafting *until* T058 (regenerator round-trip diff) completes, because K2 commits the consolidation as a single unit.
 5. **Phase 5: User Story 3 (P3)** (T047–T054) — depends on Phase 4 completion (US3's "high-level phase summary" links to ANALYSIS.md § M<N> destinations created by US2). Can be drafted in parallel with Phase 4 edits, but the K3 commit MUST land after K2.
 6. **Phase 6: Polish** (T055–T063) — operator-driven procedural steps. T055 (smoke gate) before T056 (full sweep). T056 before T057 (audit). T057 before T058 (regenerator) — the audit's PR-SHA reference goes into the run config the regenerator reads. T058 before T059 (K1 commit). T059 before T060 (K2 cites K1). T060 before T061 (K3 last on branch). T061 before T062 before T063 (PR open).
+7. **Phase 7: Unplanned methodology fixes** (T064–T082) — retroactive scope completed 2026-05-12 between Phase 3 and Phase 6. T064–T069 (L-1 chat-payload-parity + ShareGPT corpus) gate the FR-005c audit at T057. T070–T073 (L-2 preemption resilience) gate the full sweep at T056 surviving Modal preemption. T074–T076 (L-3 per-cell isolation + skeleton config + verbose errors) gate every sweep producing recoverable artifacts on partial failure. T077–T082 (docs sync) gate the regenerator and the spec-kit artifacts being consistent with shipped code at the K2 commit at T060.
 
 ### User Story Dependencies
 

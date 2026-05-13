@@ -10,20 +10,27 @@ The audit is a structured code reading. It is NOT a harness-automated assertion 
 
 ## Step 1 — Read the chat-path payload construction side-by-side
 
-Open three files in side-by-side panes (or three terminals):
+Open these files in side-by-side panes:
 
-- `tools/benchmark/src/vllm_grpc_bench/rest_cohort.py` — search for the function that builds the chat request body (look for `messages`, `max_tokens`, `temperature`, `stream`).
-- `tools/benchmark/src/vllm_grpc_bench/m5_1_grpc_cohort.py` — search for the function that builds the gRPC chat request (look for `ChatCompletionRequest`, `Message`).
-- The corpus loader (likely `tools/benchmark/src/vllm_grpc_bench/corpus.py`) — confirm both protocols read the same corpus and the same prompt for a given `(path, hidden_size)`.
+- `tools/benchmark/src/vllm_grpc_bench/rest_cohort.py` — the function that builds the chat request body (look for `messages`, `max_tokens`, `temperature`, `stream`). The REST cohort now consumes a `RequestSample` from the chat corpus.
+- `tools/benchmark/src/vllm_grpc_bench/m5_1_grpc_cohort.py` — the function that builds the gRPC chat request (look for `_send_chat_rpc`, `ChatCompleteRequest`, `ChatMessage`). The gRPC cohort consumes the same `RequestSample` when the harness threads one through.
+- `tools/benchmark/src/vllm_grpc_bench/m5_2_sweep.py` — confirm `dispatch_cell` threads `chat_corpus` into BOTH REST cohort calls AND all gRPC cohort calls.
+- `tools/benchmark/src/vllm_grpc_bench/corpus.py` — the `RequestSample` schema + `load_corpus(path)` + `DEFAULT_CHAT_CORPUS_PATH` constant.
+- `tools/benchmark/corpus/chat_sharegpt_1000.json` (and `.provenance.json`) — the committed ShareGPT V3 subset.
 
-**Confirm**:
-- [ ] Both protocols read the **same prompt content** from the corpus for a given `(chat_stream, hidden_size)` cell.
-- [ ] Both protocols set the **same `max_tokens` value**.
-- [ ] Both protocols set the **same `temperature` value**.
-- [ ] Both protocols set the **`stream=true` flag** (chat is streaming on both sides; SSE for REST, bidi-stream for gRPC per M5.1).
-- [ ] No protocol-specific transform reshapes the prompt content (e.g., a REST-only sanitization step or a gRPC-only protobuf field reordering that changes semantic meaning).
+**Confirm** (post-implementation 2026-05-12 — chat-corpus-driven parity is now MANDATORY per spec [FR-005c Step 1 strict-reading addition](../spec.md)):
+- [ ] Both protocols read the **same `RequestSample` from `chat_corpus` by `iteration % len(corpus)`** for a given iteration. The corpus is loaded once in `run_m5_2_sweep` and threaded through `dispatch_cell` to all cohort runners.
+- [ ] Both protocols set **`max_tokens` from `sample.max_tokens`** (NOT a hardcoded default; NOT a `DEFAULT_CHAT_MAX_TOKENS` override). REST writes it into the JSON body; gRPC writes it into the protobuf `ChatCompleteRequest.max_tokens` field.
+- [ ] Both protocols set **`temperature` from `sample.temperature`**. REST writes it into the JSON body; gRPC writes it into the protobuf `optional temperature` field.
+- [ ] Both protocols pass `sample.messages` verbatim — same prompt content, same role labelling, same `messages` array.
+- [ ] REST uses `stream=true` (SSE over HTTP/1.1); gRPC uses `CompleteStream` (bidi-stream). Both stream by design.
+- [ ] No protocol-specific transform reshapes the prompt content (e.g., a REST-only sanitization or gRPC-only protobuf field reordering).
+- [ ] The corpus's source identity is verifiable: `tools/benchmark/corpus/chat_sharegpt_1000.provenance.json` records the ShareGPT V3 revision SHA, source-file SHA-256, filter criteria, and random seed. Re-running `scripts/python/gen_chat_corpus.py` with the default parameters produces a byte-identical corpus JSON.
+- [ ] `test_chat_corpus_parity.py` passes — the test suite locks in the corpus-driven path and forbids the legacy synthetic-prompt phrases ("Hello world", "M5.1 chat probe").
 
 If any check fails, **STOP** and fix the harness; the audit cannot be completed until parity is restored. The fix lands in the M5.2 PR (NOT in a follow-up).
+
+> **Historical note (2026-05-12, pre-corpus integration)**: An earlier version of the M5.2 harness used synthetic per-iteration prompts (`build_chat_prompt(iteration, cell_id)` with a hardcoded `DEFAULT_CHAT_MAX_TOKENS=64`) on both sides. The strict-reading audit Step 1 flagged this as a parity gap (different prompts, different max_tokens at the M5.1-inherited stage). The corpus integration above resolves the gap. See [research.md R-12](../research.md) for the methodology rationale.
 
 ## Step 2 — Read the embed-path payload construction side-by-side (THE PRIMARY REGRESSION GUARD)
 
@@ -74,6 +81,8 @@ Append to `bench-results/m5_2-full/{run_id}.run_config.json` under the `payload_
 ```
 
 The chat REST and gRPC byte sizes (`N1` vs `N2`) are not byte-equal because of the JSON-vs-protobuf wrapper difference; the regression-relevant constraint is that **`chat_rest_https_edge` == `chat_rest_plain_tcp`** (both REST cohorts are byte-identical) AND **`embed_rest_https_edge` == `embed_rest_plain_tcp` == `embed_grpc`** (embedding-input byte size is identical across protocols — the regression failure mode).
+
+> **Note on `measured_payload_bytes` representativeness**: Since the chat corpus is ShareGPT V3 with variable-length prompts (short / medium / long buckets per R-12), the recorded chat byte values are **representative medians** across the corpus, NOT fixed per-request values. A reader audits chat-path parity by re-running the harness and confirming the median byte sizes match across the two REST cohorts (which iterate the same corpus). The audit's `measured_payload_bytes` field MAY include per-width breakouts (e.g., `embed_rest_https_edge_h2048`, `embed_rest_https_edge_h4096`, `embed_rest_https_edge_h8192`) as a superset of the contract's documented shape; the regenerator passes the dict through unchanged.
 
 ## Step 5 — Surface the audit in the report's executive metadata
 
