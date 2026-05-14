@@ -31,7 +31,8 @@ from vllm_grpc_bench.runner import run_grpc_target_streaming, run_target, run_ta
 
 if TYPE_CHECKING:
     from vllm_grpc_bench.m3_types import M4SweepConfig
-    from vllm_grpc_bench.m5_1_sweep import M5_1Run, M5_1SweepConfig
+    from vllm_grpc_bench.m5_1_sweep import CellSpec, M5_1Run, M5_1SweepConfig
+    from vllm_grpc_bench.m5_2_sweep import M5_2SweepConfig
 
 _DEFAULT_CORPUS = Path(__file__).parent.parent.parent / "corpus" / "chat_nonstreaming.json"
 
@@ -240,6 +241,96 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("bench-results/m4-full"),
         help="M4: output directory for transient per-iteration JSON.",
+    )
+
+    # ---- M5.2 mode (REST transport path x gRPC tuning surface) ----
+    parser.add_argument(
+        "--m5_2",
+        action="store_true",
+        help="Run the M5.2 transport-vs-tuning sweep (see specs/019-m5-2-transport-tuning).",
+    )
+    parser.add_argument(
+        "--m5_2-smoke",
+        action="store_true",
+        help="M5.2: pre-flight smoke gate (FR-005a). Runs the 4-cell smoke "
+        "set + M5.2-specific assertions before any cohort dispatches.",
+    )
+    parser.add_argument(
+        "--m5_2-modal-region",
+        default="eu-west-1",
+        help="M5.2: Modal region for the dual-protocol deploy (default eu-west-1).",
+    )
+    parser.add_argument(
+        "--m5_2-modal-token-env",
+        default="MODAL_BENCH_TOKEN",
+        help="M5.2: env-var name carrying the bearer token (token VALUE never logged).",
+    )
+    parser.add_argument(
+        "--m5_2-modal-endpoint",
+        default=None,
+        help="M5.2: pre-existing endpoint "
+        "'grpc=tcp+plaintext://...,rest_https_edge=https://...,"
+        "rest_plain_tcp=tcp+plaintext://...' (implies --m5_2-skip-deploy).",
+    )
+    parser.add_argument(
+        "--m5_2-skip-deploy",
+        action="store_true",
+        help="M5.2: skip deploy and reuse --m5_2-modal-endpoint.",
+    )
+    parser.add_argument(
+        "--m5_2-n",
+        type=int,
+        default=250,
+        help="M5.2: per-cohort sample size (default 250 per FR-011; "
+        "borderline-expand cascade does NOT expand beyond this).",
+    )
+    parser.add_argument(
+        "--m5_2-warmup-n",
+        type=int,
+        default=20,
+        help="M5.2: warmup requests per (path x protocol) before measurement.",
+    )
+    parser.add_argument(
+        "--m5_2-rtt-validity-threshold-ms",
+        type=float,
+        default=1.0,
+        help="M5.2: refuse verdict below this median RTT (default 1.0 ms).",
+    )
+    parser.add_argument(
+        "--m5_2-rtt-exercise-threshold-ms",
+        type=float,
+        default=20.0,
+        help="M5.2: low_rtt_caveat fires below this median RTT (default 20.0 ms).",
+    )
+    parser.add_argument(
+        "--m5_2-shim-overhead-warn-pct",
+        type=float,
+        default=5.0,
+        help="M5.2: warn if shim overhead exceeds this fraction of cohort wallclock.",
+    )
+    parser.add_argument(
+        "--m5_2-events-sidecar-out",
+        type=Path,
+        default=Path("bench-results/m5_2-full"),
+        help="M5.2: events sidecar output directory.",
+    )
+    parser.add_argument(
+        "--m5_2-report-out",
+        type=Path,
+        default=None,
+        help="M5.2: override default report output prefix "
+        "(default docs/benchmarks/m5_2-transport-vs-tuning).",
+    )
+    parser.add_argument(
+        "--m5_2-skip-geolocation-lookup",
+        action="store_true",
+        help="M5.2: skip the best-effort ipinfo.io client-geolocation lookup.",
+    )
+    parser.add_argument(
+        "--m5_2-run-id",
+        default=None,
+        help="M5.2: override the auto-generated run identifier (used for "
+        "the events sidecar + run config filename).",
     )
 
     # ---- M5.1 mode (REST vs gRPC head-to-head on real wire) ----
@@ -1126,6 +1217,307 @@ def _build_m5_1_config(
     )
 
 
+# ---------------------------------------------------------------------------
+# M5.2 mode dispatcher (T039 + T040 + T042)
+# ---------------------------------------------------------------------------
+
+
+def _validate_m5_2_args(args: argparse.Namespace) -> int:
+    """Pre-flight validation for M5.2 mode. Returns exit code; 0 means OK."""
+    import os as _os
+
+    # Mutual exclusion with M3 / M4 / M5 / M5.1 modes.
+    if (
+        getattr(args, "m3", False)
+        or getattr(args, "m4", False)
+        or getattr(args, "m5", False)
+        or getattr(args, "m5_1", False)
+    ):
+        print(
+            "Error: --m5_2 is mutually exclusive with --m3, --m4, --m5, and --m5_1",
+            file=sys.stderr,
+        )
+        return 2
+    if bool(args.m5_2_skip_deploy) and not args.m5_2_modal_endpoint:
+        print(
+            "Error: --m5_2-skip-deploy requires --m5_2-modal-endpoint",
+            file=sys.stderr,
+        )
+        return 2
+    if float(args.m5_2_rtt_exercise_threshold_ms) < float(args.m5_2_rtt_validity_threshold_ms):
+        print(
+            "Error: --m5_2-rtt-exercise-threshold-ms must be >= --m5_2-rtt-validity-threshold-ms",
+            file=sys.stderr,
+        )
+        return 2
+    token_env = str(args.m5_2_modal_token_env)
+    if not _os.environ.get(token_env):
+        print(
+            f"Error: bearer-token env var {token_env!r} is unset; "
+            "export it before running --m5_2 "
+            "(see specs/019-m5-2-transport-tuning/quickstart.md)",
+            file=sys.stderr,
+        )
+        return 4
+    return 0
+
+
+def _parse_m5_2_endpoint(spec: str) -> tuple[str, str, str] | None:
+    """Parse the ``--m5_2-modal-endpoint`` form into (grpc, https_edge, plain_tcp).
+
+    Returns ``None`` on malformed input. The format is
+    ``grpc=...,rest_https_edge=...,rest_plain_tcp=...``.
+    """
+    grpc: str | None = None
+    edge: str | None = None
+    tcp: str | None = None
+    for pair in spec.split(","):
+        if pair.startswith("grpc="):
+            grpc = _strip_endpoint_scheme(pair[len("grpc=") :])
+        elif pair.startswith("rest_https_edge="):
+            edge = pair[len("rest_https_edge=") :]
+        elif pair.startswith("rest_plain_tcp="):
+            tcp = pair[len("rest_plain_tcp=") :]
+    if grpc and edge and tcp:
+        return grpc, edge, tcp
+    return None
+
+
+def _build_m5_2_config(
+    args: argparse.Namespace,
+    *,
+    rest_https_edge_url: str,
+    rest_plain_tcp_url: str,
+    grpc_target: str,
+    https_edge_endpoint: str,
+    smoke: bool,
+    run_id: str,
+) -> M5_2SweepConfig:
+    from vllm_grpc_bench.m5_2_sweep import SMOKE_CELLS, M5_2SweepConfig
+
+    cells_override: tuple[CellSpec, ...] | None = SMOKE_CELLS if smoke else None
+    n = 5 if smoke else int(args.m5_2_n)
+    warmup_n = 2 if smoke else int(args.m5_2_warmup_n)
+    rtt_probe_n = 4 if smoke else 16
+    return M5_2SweepConfig(
+        rest_https_edge_url=rest_https_edge_url,
+        rest_plain_tcp_url=rest_plain_tcp_url,
+        grpc_target=grpc_target,
+        run_id=run_id,
+        events_sidecar_out_dir=Path(args.m5_2_events_sidecar_out),
+        token_env_var=str(args.m5_2_modal_token_env),
+        modal_region=str(args.m5_2_modal_region),
+        https_edge_endpoint=https_edge_endpoint,
+        n_per_cohort=n,
+        expand_n=n,
+        rtt_probe_n=rtt_probe_n,
+        warmup_n=warmup_n,
+        rtt_validity_threshold_ms=float(args.m5_2_rtt_validity_threshold_ms),
+        rtt_exercise_threshold_ms=float(args.m5_2_rtt_exercise_threshold_ms),
+        shim_overhead_warn_pct=float(args.m5_2_shim_overhead_warn_pct),
+        cells_override=cells_override,
+        smoke=smoke,
+    )
+
+
+def _run_m5_2(args: argparse.Namespace) -> int:
+    """M5.2 sweep entry-point — dispatches via run_m5_2_sweep."""
+    import asyncio as _asyncio
+    import uuid as _uuid
+
+    rc = _validate_m5_2_args(args)
+    if rc != 0:
+        return rc
+
+    smoke = bool(getattr(args, "m5_2_smoke", False))
+    run_id = (
+        str(args.m5_2_run_id)
+        if getattr(args, "m5_2_run_id", None)
+        else f"m5_2-{'smoke-' if smoke else ''}{_uuid.uuid4().hex[:12]}"
+    )
+
+    # Endpoint resolution.
+    rest_https_edge_url: str | None = None
+    rest_plain_tcp_url: str | None = None
+    grpc_target: str | None = None
+    if args.m5_2_modal_endpoint:
+        parsed = _parse_m5_2_endpoint(str(args.m5_2_modal_endpoint))
+        if parsed is None:
+            print(
+                "Error: --m5_2-modal-endpoint must include 'grpc=', 'rest_https_edge=', "
+                "and 'rest_plain_tcp=' parts",
+                file=sys.stderr,
+            )
+            return 2
+        grpc_target, rest_https_edge_url, rest_plain_tcp_url = parsed
+
+    async def _run_with_deploy() -> int:
+        nonlocal rest_https_edge_url, rest_plain_tcp_url, grpc_target
+        from vllm_grpc_bench.modal_endpoint import (
+            ModalDeployError,
+            provide_rest_grpc_endpoint,
+            refresh_rest_grpc_urls,
+        )
+
+        try:
+            if rest_https_edge_url is None:
+                async with provide_rest_grpc_endpoint(
+                    region=str(args.m5_2_modal_region),
+                    token_env=str(args.m5_2_modal_token_env),
+                    with_rest_plain_tcp=True,
+                ) as endpoints:
+                    # M5.2 (T018-fix): the HTTPS-edge URL is its OWN tunnel
+                    # on a second in-container port (not aliased to
+                    # endpoints.rest_url, which M5.1 forwards as plain-TCP).
+                    assert endpoints.rest_https_edge_url is not None
+                    assert endpoints.rest_plain_tcp_url is not None
+                    rest_https_edge_url = endpoints.rest_https_edge_url
+                    # Plain-TCP URL: strip the tcp+plaintext:// scheme prefix
+                    # so httpx can consume the bare host:port form, then
+                    # re-prepend http:// so it can speak HTTP/1.1.
+                    tcp_url = _strip_endpoint_scheme(endpoints.rest_plain_tcp_url)
+                    if not tcp_url.startswith("http://"):
+                        tcp_url = f"http://{tcp_url}"
+                    rest_plain_tcp_url = tcp_url
+                    grpc_target = endpoints.grpc_url
+                    cfg = _build_m5_2_config(
+                        args,
+                        rest_https_edge_url=rest_https_edge_url,
+                        rest_plain_tcp_url=rest_plain_tcp_url,
+                        grpc_target=grpc_target,
+                        https_edge_endpoint=rest_https_edge_url,
+                        smoke=smoke,
+                        run_id=run_id,
+                    )
+                    # M5.2 preemption-aware URL refresh. When the Modal
+                    # serve_bench Function gets preempted mid-sweep and
+                    # restarted on a new worker, the new worker writes
+                    # fresh tunnel URLs to the same modal.Dict. This
+                    # closure polls that Dict and returns a fresh bundle
+                    # so the sweep can retry the failed cell.
+                    _current_endpoints = endpoints
+
+                    async def _refresh() -> object | None:
+                        nonlocal _current_endpoints
+                        fresh = await refresh_rest_grpc_urls(_current_endpoints)
+                        if fresh is not None:
+                            _current_endpoints = fresh
+                        return fresh
+
+                    cfg.refresh_endpoints_fn = _refresh
+                    return await _do_m5_2_run(args, cfg, smoke=smoke)
+            cfg = _build_m5_2_config(
+                args,
+                rest_https_edge_url=rest_https_edge_url,
+                rest_plain_tcp_url=rest_plain_tcp_url or "",
+                grpc_target=grpc_target or "",
+                https_edge_endpoint=rest_https_edge_url,
+                smoke=smoke,
+                run_id=run_id,
+            )
+            # In skip-deploy mode we don't own a Modal Dict reference, so
+            # no preemption refresh is possible. A connect failure will be
+            # treated as a real failure per the existing fail-fast path.
+            return await _do_m5_2_run(args, cfg, smoke=smoke)
+        except ModalDeployError as exc:
+            print(f"Error: M5.2 Modal deploy failed: {exc}", file=sys.stderr)
+            return 3
+
+    return _asyncio.run(_run_with_deploy())
+
+
+async def _do_m5_2_run(args: argparse.Namespace, cfg: object, *, smoke: bool) -> int:
+    """Run the M5.2 sweep + emit the smoke-PASS line on smoke success.
+
+    Errors are mapped to the contract's exit codes (5 = symmetry, 6 = RTT,
+    7 = cohort failure, 8 = sidecar write).
+    """
+    import time as _time
+
+    from vllm_grpc_bench.m5_2_sweep import (
+        M5_2SmokeAssertionFailure,
+        run_m5_2_sweep,
+    )
+    from vllm_grpc_bench.m5_2_symmetry import SymmetryAssertionFailed
+
+    try:
+        run = await run_m5_2_sweep(cfg, progress=True)  # type: ignore[arg-type]
+    except SymmetryAssertionFailed as exc:
+        print(f"Error: M5.2 symmetry assertion failed: {exc}", file=sys.stderr)
+        return 5
+    except M5_2SmokeAssertionFailure as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 6
+    except Exception as exc:  # noqa: BLE001
+        import traceback as _tb
+
+        # Surface type + repr + traceback so an empty-message exception
+        # (httpx socket errors, asyncio.CancelledError, etc.) can be
+        # diagnosed from the CLI output alone. Previously the handler
+        # printed only ``str(exc)`` which is empty for many real failures.
+        print(
+            f"Error: M5.2 sweep failed: type={type(exc).__name__} repr={exc!r}",
+            file=sys.stderr,
+        )
+        _tb.print_exc(file=sys.stderr)
+        return 7
+
+    if smoke:
+        # T042: emit the structured smoke-pass line the operator copies into
+        # the PR description per SC-012.
+        iso = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())
+        rtt_summary = []
+        for label, kind in (
+            ("rest_https_edge", "rest_https_edge"),
+            ("rest_plain_tcp", "rest_plain_tcp"),
+            ("default_grpc", "default_grpc"),
+        ):
+            medians = []
+            if kind in ("rest_https_edge", "rest_plain_tcp"):
+                target = (
+                    run.rest_https_edge_results
+                    if kind == "rest_https_edge"
+                    else run.rest_plain_tcp_results
+                )
+                medians = [r.rtt_record.median_ms for r in target if r.rtt_record is not None]
+            else:
+                medians = [r.rtt_record.median_ms for k, r in run.grpc_results if k == kind]
+            if medians:
+                rtt_summary.append(f"{label}={medians[0]:.1f}")
+        tuned_medians = [
+            r.rtt_record.median_ms for k, r in run.grpc_results if k.startswith("tuned_grpc")
+        ]
+        if tuned_medians:
+            rtt_summary.append(f"tuned_grpc_*={tuned_medians[0]:.1f}")
+        print(
+            f"M5_2 smoke gate: PASS — {iso}, asserted_clauses_count: 4, "
+            f"per-cohort RTT medians (ms): {', '.join(rtt_summary)}"
+        )
+        return 0
+
+    print(
+        f"M5.2 sweep complete: run_id={run.run_id}, "
+        f"sidecar={run.events_sidecar_path}, SHA-256={run.events_sidecar_sha256}, "
+        f"realized {run.run_realized_runtime_s:.1f}s. "
+        "Next: run the regenerator on the sidecar + run config "
+        "(see specs/019-m5-2-transport-tuning/quickstart.md Step 5)."
+    )
+    if run.failed_cells:
+        failed_summary = ", ".join(
+            f"{fc['path']}:h{fc['hidden_size']}:c{fc['concurrency']}({fc['exception_type']})"
+            for fc in run.failed_cells
+        )
+        print(
+            f"Error: M5.2 sweep finished with {len(run.failed_cells)} failed cell(s): "
+            f"{failed_summary}. Run config persists the full crash log under "
+            f"'failed_cells'; rerun the sweep (the sidecar is incomplete and "
+            "cannot be used for the publishable report).",
+            file=sys.stderr,
+        )
+        return 9
+    return 0
+
+
 def _emit_m5_1_outputs(args: argparse.Namespace, run: M5_1Run) -> int:
     """Render JSON + Markdown and exit with success/failure code."""
     from vllm_grpc_bench.reporter import write_m5_1_json, write_m5_1_markdown
@@ -1147,6 +1539,9 @@ def _emit_m5_1_outputs(args: argparse.Namespace, run: M5_1Run) -> int:
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+
+    if getattr(args, "m5_2", False) or getattr(args, "m5_2_smoke", False):
+        sys.exit(_run_m5_2(args))
 
     if getattr(args, "m5_1", False):
         sys.exit(_run_m5_1(args))

@@ -36,14 +36,17 @@ from dataclasses import dataclass
 from typing import Any
 
 import grpc
-from vllm_grpc.v1 import chat_pb2_grpc, completions_pb2_grpc
+from vllm_grpc.v1 import chat_pb2, chat_pb2_grpc, completions_pb2_grpc
 
 from vllm_grpc_bench.channel_config import ChannelConfig
+from vllm_grpc_bench.corpus import RequestSample
 from vllm_grpc_bench.m3_sweep import (
+    DEFAULT_CHAT_MAX_TOKENS,
     _build_chat_request,
     _build_embed_request,
     _classify_error,
     _client_kwargs,
+    build_chat_prompt,
 )
 from vllm_grpc_bench.m3_types import GRPCSubCohortKind, Path_, RTTRecord, Sample
 from vllm_grpc_bench.rtt_probe import measure_rtt
@@ -51,12 +54,19 @@ from vllm_grpc_bench.rtt_probe import measure_rtt
 
 @dataclass(frozen=True)
 class GRPCCohortResult:
-    """Aggregate output of one M5.1 gRPC cohort run."""
+    """Aggregate output of one M5.1 gRPC cohort run.
+
+    ``warmup_samples`` (M5.2, FR-012a (g)): the per-request samples from the
+    cohort's warmup pool. Aggregation ignores them; the M5.2 sidecar writer
+    persists them with ``phase="warmup"`` for audit. Pre-M5.2 callers leave
+    the field empty so M5.1's aggregation path is unchanged.
+    """
 
     samples: tuple[Sample, ...]
     rtt_record: RTTRecord
     sub_cohort_kind: GRPCSubCohortKind
     channels_opened: int
+    warmup_samples: tuple[Sample, ...] = ()
 
 
 @asynccontextmanager
@@ -82,9 +92,32 @@ async def _send_chat_rpc(
     metadata: tuple[tuple[str, str], ...] | None,
     cell_id: str,
     timeout_s: float,
+    max_tokens: int = DEFAULT_CHAT_MAX_TOKENS,
+    sample: RequestSample | None = None,
 ) -> Sample:
     stub = chat_pb2_grpc.ChatServiceStub(channel)
-    req = _build_chat_request(f"M5.1 chat probe iter={prompt_seed} cell={cell_id}", max_tokens=32)
+    # M5.2 (FR-005c chat-corpus): when a corpus sample is provided, build
+    # the request from the sample's messages + max_tokens + temperature +
+    # seed. The fallback path (sample=None) uses the synthetic helper
+    # ``build_chat_prompt`` for back-compat with pre-corpus tests.
+    # ``prompt_seed`` is retained for back-compat but unused in both
+    # paths (corpus path uses sample.seed; synthetic path is independent).
+    _ = prompt_seed
+    if sample is not None:
+        req = chat_pb2.ChatCompleteRequest(
+            messages=[
+                chat_pb2.ChatMessage(role=m["role"], content=m["content"]) for m in sample.messages
+            ],
+            model="mock-engine",
+            max_tokens=sample.max_tokens,
+            temperature=sample.temperature,
+            seed=sample.seed,
+        )
+    else:
+        req = _build_chat_request(
+            build_chat_prompt(iteration=iteration, cell_id=cell_id),
+            max_tokens=max_tokens,
+        )
     req_bytes = len(req.SerializeToString())
     t0 = time.perf_counter()
     arrival_times: list[float] = []
@@ -168,6 +201,7 @@ async def run_grpc_cohort(
     cell_id: str = "",
     rtt_probe_n: int = 32,
     warmup_n: int = 0,
+    corpus: list[RequestSample] | None = None,
 ) -> GRPCCohortResult:
     """Drive ``n`` RPCs against the gRPC endpoint under the chosen sub-cohort kind.
 
@@ -205,6 +239,11 @@ async def run_grpc_cohort(
                     timeout_s=timeout_s,
                 )
             else:
+                # M5.2 (FR-005c chat-corpus): pull the corpus sample by
+                # iteration index so REST and gRPC see the same prompt
+                # for the same i. Falls back to the synthetic helper
+                # when no corpus is provided (back-compat tests).
+                corpus_sample = corpus[i % len(corpus)] if corpus is not None else None
                 sample = await _send_chat_rpc(
                     channel,
                     iteration=i,
@@ -212,6 +251,7 @@ async def run_grpc_cohort(
                     metadata=metadata,
                     cell_id=cell_id,
                     timeout_s=timeout_s,
+                    sample=corpus_sample,
                 )
             samples.append(sample)
 
@@ -251,13 +291,18 @@ async def run_grpc_cohort(
 
                 await asyncio.gather(*(_worker() for _ in range(concurrency)))
 
-        # Warmup phase — discarded. Pays the cold-channel HTTP/2 handshake
-        # cost on RPC #1 (and on each of c channels in channels-mode) so the
-        # measurement window starts on warm connections.
+        # Warmup phase. Pays the cold-channel HTTP/2 handshake cost on
+        # RPC #1 (and on each of c channels in channels-mode) so the
+        # measurement window starts on warm connections. M5.2
+        # (FR-012a (g)): warmup samples are snapshotted before the
+        # measurement window opens and persisted to the events sidecar
+        # with phase="warmup" for audit. They never reach the cohort
+        # record's aggregates.
+        warmup_snapshot: tuple[Sample, ...] = ()
         if warmup_n > 0:
             await _drive_measurement(warmup_n, into_samples=False)
-            samples.clear()  # Drop warmup samples — they reached _run_one's
-            #                  closure but aren't part of the cohort record.
+            warmup_snapshot = tuple(samples)
+            samples.clear()
         # RTT probe goes AFTER warmup so the probe channel is warm.
         rtt = await measure_rtt(channels[0], n=rtt_probe_n, metadata=metadata)
         # Measurement phase — samples reach the aggregator.
@@ -268,6 +313,7 @@ async def run_grpc_cohort(
         rtt_record=rtt,
         sub_cohort_kind=sub_cohort_kind,
         channels_opened=channels_needed,
+        warmup_samples=warmup_snapshot,
     )
 
 

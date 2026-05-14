@@ -32,6 +32,15 @@ import modal
 _APP_NAME = "vllm-grpc-bench-rest-grpc-mock"
 _GRPC_PORT = 50051
 _REST_PORT = 8000
+# M5.2 (T018-fix): a SECOND in-container REST port for the HTTPS-edge
+# tunnel. Modal refuses two ``modal.forward`` calls to the same port, even
+# with different ``unencrypted`` flags — the only way to expose REST both
+# over plain-TCP and over the HTTPS edge is to bind uvicorn to two ports.
+# Both servers wrap the same FastAPI shim + the same ``MockEngine``
+# instance, so FR-002's "identical in-container engine code path" still
+# holds. Network path is the only operative variable between the two REST
+# cohorts.
+_REST_HTTPS_EDGE_PORT = 8001
 _DICT_NAME = "vllm-grpc-bench-rest-grpc-mock-handshake"
 _TEARDOWN_POLL_S = 0.5
 _FUNCTION_TIMEOUT_S = 60 * 60 * 12
@@ -132,6 +141,22 @@ async def serve_bench(token: str, region: str) -> dict[str, object]:
     rest_server = uvicorn.Server(uv_config)
     rest_task = asyncio.create_task(rest_server.serve())
 
+    # M5.2 (T018-fix): a SECOND uvicorn server bound to _REST_HTTPS_EDGE_PORT
+    # wrapping the SAME FastAPI shim instance. Forwarded as the HTTPS edge
+    # (no ``unencrypted=True``) so the rest_https_edge cohort can measure
+    # REST over the production-equivalent TLS-terminated, anycast-routed
+    # network path.
+    uv_config_edge = uvicorn.Config(
+        shim,
+        host="0.0.0.0",
+        port=_REST_HTTPS_EDGE_PORT,
+        workers=1,
+        log_level="warning",
+        loop="asyncio",
+    )
+    rest_edge_server = uvicorn.Server(uv_config_edge)
+    rest_edge_task = asyncio.create_task(rest_edge_server.serve())
+
     d = modal.Dict.from_name(_DICT_NAME, create_if_missing=True)
     started = time.monotonic()
     try:
@@ -151,22 +176,51 @@ async def serve_bench(token: str, region: str) -> dict[str, object]:
             grpc_endpoint = f"tcp+plaintext://{grpc_host}:{grpc_port}"
             async with modal.forward.aio(_REST_PORT, unencrypted=True) as rest_tunnel:
                 rest_host, rest_port = rest_tunnel.tcp_socket
+                # M5.1 back-compat: ``rest`` key is the plain-TCP REST URL.
+                # M5.1 deliberately voided FR-019's HTTPS-edge requirement
+                # (see methodology section of m5_1-rest-vs-grpc.md) to hold
+                # the network path constant across protocols.
                 rest_endpoint = f"http://{rest_host}:{rest_port}"
-                await d.put.aio("grpc", grpc_endpoint)
-                await d.put.aio("rest", rest_endpoint)
-                await d.put.aio("token", token)
-                await d.put.aio("region", region)
-                await d.put.aio("ready", True)
-                while not await d.get.aio("teardown", default=False):
-                    if time.monotonic() - started > _FUNCTION_TIMEOUT_S - 30:
-                        break
-                    await asyncio.sleep(_TEARDOWN_POLL_S)
+                rest_plain_tcp_endpoint = f"tcp+plaintext://{rest_host}:{rest_port}"
+                # M5.2: a separate HTTPS-edge tunnel on a SECOND in-container
+                # port. Modal won't allow two forwards to the same port, so
+                # the second uvicorn server on _REST_HTTPS_EDGE_PORT (8001)
+                # is required. The forward is HTTPS-edge (no
+                # ``unencrypted=True``), TLS-terminated + anycast-routed.
+                async with modal.forward.aio(_REST_HTTPS_EDGE_PORT) as edge_tunnel:
+                    # ``modal.forward`` without ``unencrypted=True`` exposes
+                    # the URL via the ``url`` attribute (e.g.
+                    # ``https://<id>.modal.run``).
+                    rest_https_edge_endpoint = edge_tunnel.url
+                    await d.put.aio("grpc", grpc_endpoint)
+                    await d.put.aio("rest", rest_endpoint)
+                    await d.put.aio("rest_plain_tcp_url", rest_plain_tcp_endpoint)
+                    await d.put.aio("rest_https_edge_url", rest_https_edge_endpoint)
+                    await d.put.aio("token", token)
+                    await d.put.aio("region", region)
+                    await d.put.aio("ready", True)
+                    while not await d.get.aio("teardown", default=False):
+                        if time.monotonic() - started > _FUNCTION_TIMEOUT_S - 30:
+                            break
+                        await asyncio.sleep(_TEARDOWN_POLL_S)
     finally:
         rest_server.should_exit = True
+        rest_edge_server.should_exit = True
         with contextlib.suppress(Exception):
             await asyncio.wait_for(rest_task, timeout=10.0)
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(rest_edge_task, timeout=10.0)
         await grpc_server.stop(grace=5.0)
-        for key in ("grpc", "rest", "token", "region", "ready", "teardown"):
+        for key in (
+            "grpc",
+            "rest",
+            "rest_plain_tcp_url",
+            "rest_https_edge_url",
+            "token",
+            "region",
+            "ready",
+            "teardown",
+        ):
             with contextlib.suppress(Exception):
                 await d.pop.aio(key)
 

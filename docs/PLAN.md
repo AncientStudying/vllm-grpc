@@ -1,6 +1,6 @@
 # Project Plan: Protobuf/gRPC Frontend for vLLM
 
-**Status:** Draft v5 — updated 2026-05-11: marked M5.1 delivered with headline findings; inserted M5.2 (REST Transport Path × gRPC Tuning Surface) ahead of M6, motivated by M5.1's plain-TCP-only REST and noise-bounded tuned-vs-default deltas
+**Status:** Draft v6 — updated 2026-05-14: marked M5.2 delivered; redirected milestone findings to top-level [`ANALYSIS.md`](../ANALYSIS.md) per FR-019 of the M5.2 spec (M3 § 4 fold-in to `ANALYSIS.md § M3` preserved byte-for-byte per FR-018; `docs/benchmarks/summary.md` is now a redirect)
 **Repo:** Private GitHub repo (already provisioned), MIT license
 
 ---
@@ -19,7 +19,7 @@ This section mirrors the milestone framing in [`README.md`](../README.md). M1–
 
 ### M1 — Foundation (delivered)
 
-Three access paths (REST via proxy, gRPC via proxy, gRPC-direct) implemented and benchmarked end-to-end on Modal A10G. Headline numbers: chat-completion response bytes drop from 611 B (REST JSON) to 65 B (gRPC proto, an 89% reduction); embed request payloads drop ~25% because gRPC transmits raw tensor bytes while REST base64-encodes them. Full numbers and methodology in [`benchmarks/summary.md`](benchmarks/summary.md).
+Three access paths (REST via proxy, gRPC via proxy, gRPC-direct) implemented and benchmarked end-to-end on Modal A10G. **Findings**: see [`ANALYSIS.md`](../ANALYSIS.md) § M1.
 
 ### M2 — Cross-Repo Ground-Truth Research (delivered)
 
@@ -55,7 +55,7 @@ Approach reuses the existing M4 harness (`vllm_grpc_bench --m4`) unchanged: depl
 
 Outputs land at `docs/benchmarks/m5-cross-host-validation.{md,json}` plus a "Supersedes M4" table for axes whose verdicts shift under real-wire conditions. M4's published report stays in place as the loopback baseline for traceability.
 
-**Status (delivered 2026-05-11):** Full operator-driven sweep landed on branch `017-m5-cross-host-validation`. Published report at [`benchmarks/m5-cross-host-validation.{md,json}`](benchmarks/m5-cross-host-validation.md). Run summary: 641 s wall-clock, 46 non-discarded cohorts, real-wire RTT median 52.2 ms (eu-west-1 from a US client), p95 53.3 ms. Verdict counts: **5 recommend** (all on `embed/h2048`, deltas −23% to −25% vs M5 cross-host baseline: `max-msg-16mib`, `max-msg-unlimited`, `keepalive-aggressive`, `keepalive-relaxed`, `http2-bdp-probe`), 30 `no_winner`, 0 `client_bound`, 5 `server_bound` (all `embed/h8192` plus `compression-gzip` at large h — server-side serialization dominates wall-clock at 512 KB+ payloads). Supersedes-M4 table emits 20 entries (18 verdict-changed, 2 confirmed); the original-spec 4-value `expected_class` classifier flagged 8 of those rows `unexpected_supersession` (all structurally either `client_bound → no_winner` or `no_winner → server_bound` — methodology-driven transitions where M5's boundedness classifier moved against M4's, not real disagreements). A 5th `bound_classifier_transition` class was added in the same PR to label those rows precisely; the published report has been reprocessed in place (no re-measurement) and now shows 10 `loopback_resolution` + 8 `bound_classifier_transition` + 2 `verdict_confirmed`, with zero genuinely-unexpected rows. Headline finding: keepalive and http2_framing's effects, loopback-caveated under M4, materialize as 23–25% wall-clock wins on real wire at `embed/h2048`. Harness implementation in `tools/benchmark/src/vllm_grpc_bench/{rtt_probe,modal_endpoint,m5_sweep,m5_supersede}.py` + reporter extensions; Modal app at `scripts/python/modal_bench_grpc_server.py`. 274 harness tests green.
+**Status (delivered 2026-05-11):** Full operator-driven sweep landed on branch `017-m5-cross-host-validation`. Published report at [`benchmarks/m5-cross-host-validation.{md,json}`](benchmarks/m5-cross-host-validation.md). **Findings**: see [`ANALYSIS.md`](../ANALYSIS.md) § M5. Harness implementation in `tools/benchmark/src/vllm_grpc_bench/{rtt_probe,modal_endpoint,m5_sweep,m5_supersede}.py` + reporter extensions; Modal app at `scripts/python/modal_bench_grpc_server.py`.
 
 Out of scope: real model (deferred to M7), corpus diversity (deferred to M6), Modal-side observability beyond what's needed to record per-RPC wall-clock and TTFT, any non-`mock-engine` workload, **and a direct REST-vs-gRPC head-to-head under cross-host conditions (deferred to M5.1)**.
 
@@ -63,25 +63,11 @@ Out of scope: real model (deferred to M7), corpus diversity (deferred to M6), Mo
 
 Drove REST and gRPC head-to-head against the same Modal eu-west-1 MockEngine over real wire. 18-cell matrix (2 paths × 3 widths × 3 concurrencies); 48 verdicts across four gRPC sub-cohorts (`tuned_grpc` at c=1, `tuned_grpc_multiplexed` and `tuned_grpc_channels` at c≥2, `default_grpc` everywhere) plus one REST cohort. Published report at [`benchmarks/m5_1-rest-vs-grpc.{md,json}`](benchmarks/m5_1-rest-vs-grpc.md). Drive with `python -m vllm_grpc_bench --m5_1 --m5_1-modal-region=eu-west-1`.
 
-**Status (delivered 2026-05-11):** Full operator-driven sweep landed on branch `018-m5-1-rest-vs-grpc`. Iteration count n=100 per cohort, ~640 s wall-clock per full sweep on Modal CPU-only. Verdict tally: 17 `rest_recommend`, 12 `default_grpc_recommend`, 6 `tuned_grpc_recommend` (c=1), 5 `tuned_grpc_multiplexed_recommend`, 5 `tuned_grpc_channels_recommend`, 3 `no_winner`.
+**Status (delivered 2026-05-11):** Full operator-driven sweep landed on branch `018-m5-1-rest-vs-grpc`. **Findings**: see [`ANALYSIS.md`](../ANALYSIS.md) § M5.1. Harness implementation in `tools/benchmark/src/vllm_grpc_bench/{rest_shim,rest_cohort,m5_1_grpc_cohort,m5_1_sweep,m5_1_supersede}.py` + reporter extensions; Modal app at `scripts/python/modal_bench_rest_grpc_server.py`.
 
-**Headline findings:**
+### M5.2 — REST Transport Path × gRPC Tuning Surface (delivered)
 
-- **Embed is gRPC's domain.** 16 of 17 embed verdicts are gRPC-recommend or `no_winner`; c=1 deltas are uniformly −32% to −35%. Protobuf packed-float embeds + HTTP/2 multiplexing beat REST's JSON-numeric arrays on every embed cell except `embed/h2048/c8` (REST wins on the multiplexed/channels sub-cohorts by +30% to +49%; default-gRPC is `no_winner`).
-- **chat_stream above c=1 is REST's domain.** 12 of 18 c≥4 chat_stream verdicts are `rest_recommend` with deltas +11% to +29%. REST's HTTP/1.1 keep-alive + simpler framing beats gRPC's HTTP/2 streaming overhead under MockEngine's neutral inference cost. chat_stream c=1 flips to gRPC across all widths (−4% to −9%).
-- **M5's tuned channel config provides no measurable benefit over M1-default on this path.** In 5 of 6 c≥2 embed cells where every gRPC sub-cohort wins, `default_grpc` matches or beats `tuned_grpc_multiplexed` and `tuned_grpc_channels` outright. Either the tuned axes (`max_message_size`, keepalive, HTTP/2 framing) are not load-bearing at these scales, or the cross-host RTT dominates what loopback-era tuning was harvesting. **This finding motivates M5.2.**
-- **M1 supersession is substantial.** 4 of 6 M1 time-axis verdicts flip: chat_completion c=1's "REST faster" flips to `tuned_grpc_recommend` across all widths; chat_completion c=4's `no_winner` flips to `rest_recommend` across all widths; chat_completion c=8 flips at h2048/h8192 to `rest_recommend`; embed_completion c=1's `no_winner` flips to `tuned_grpc_recommend` across all widths.
-- REST shim overhead median 0.55 ms / p95 3.04 ms across the run — below the 5 ms materiality threshold, so REST-side shim cost is not a confound.
-
-**Caveats — kept prominent in the report:**
-
-- **MockEngine, not real vLLM.** Engine cost is held constant across cohorts so the verdict reflects transport + framing only. Real-engine re-validation deferred to M7.
-- **Both protocols travel Modal's plain-TCP tunnel** (`modal.forward(..., unencrypted=True)`). The FR-019 "REST uses Modal-managed TLS" assumption was voided after a smoke run measured a ~2× RTT gap between Modal's HTTPS edge (TLS-terminated, anycast-routed near the client) and plain-TCP that would have dominated every verdict. M5.1 therefore does **not** measure REST against the production-realistic HTTPS edge — **M5.2 closes that gap.**
-- Bytes-axis findings from M1 (89% chat response reduction, 25% embed request reduction) remain in force unchanged (FR-021) — M5.1 measures time only.
-
-Harness implementation in `tools/benchmark/src/vllm_grpc_bench/{rest_shim,rest_cohort,m5_1_grpc_cohort,m5_1_sweep,m5_1_supersede}.py` + reporter extensions; Modal app at `scripts/python/modal_bench_rest_grpc_server.py`.
-
-### M5.2 — REST Transport Path × gRPC Tuning Surface (upcoming)
+**Status (delivered 2026-05-14):** Full operator-driven sweep landed on branch `019-m5-2-transport-tuning`. Published report at [`benchmarks/m5_2-transport-vs-tuning.{md,json}`](benchmarks/m5_2-transport-vs-tuning.md). **Findings**: see [`ANALYSIS.md`](../ANALYSIS.md) § M5.2. Harness implementation in `tools/benchmark/src/vllm_grpc_bench/{m5_2_sweep,m5_2_events,m5_2_symmetry,m5_2_supersede,m5_2_regen,rest_cohort,modal_endpoint}.py` + reporter extensions; Modal app at `scripts/python/modal_bench_rest_grpc_server.py`.
 
 M5.1 surfaced two questions it could not answer with n=100 and a single (plain-TCP) REST transport:
 

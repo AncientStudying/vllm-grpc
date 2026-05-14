@@ -41,7 +41,14 @@ from dataclasses import dataclass
 import httpx
 import numpy as np
 
-from vllm_grpc_bench.m3_types import RESTCohortRecord, RTTRecord
+from vllm_grpc_bench.corpus import RequestSample
+from vllm_grpc_bench.m3_sweep import DEFAULT_CHAT_MAX_TOKENS, build_chat_prompt
+from vllm_grpc_bench.m3_types import (
+    NetworkPath,
+    RESTCohortRecord,
+    RestHttpsEdgeCohortRecord,
+    RTTRecord,
+)
 
 
 @dataclass(frozen=True)
@@ -56,11 +63,27 @@ class RESTCohortSample:
 
 @dataclass(frozen=True)
 class RESTCohortResult:
-    """Aggregate output of one REST cohort run."""
+    """Aggregate output of one REST cohort run.
+
+    M5.2 (T021): the optional ``network_path`` tag labels which Modal tunnel
+    the cohort traversed (``"https_edge"`` or ``"plain_tcp"``). M5.1 callers
+    that don't pass ``network_path`` get ``None`` here so existing tests
+    continue to pass. The ``https_edge_record`` is populated only when
+    ``network_path="https_edge"``; the M5.2 reporter uses it to surface
+    HTTPS-edge-specific provenance per FR-008 / FR-014.
+
+    ``warmup_samples`` (M5.2, FR-012a (g)): the per-request samples from the
+    cohort's warmup pool. Aggregation helpers ignore these; the M5.2 sidecar
+    writer persists them with ``phase="warmup"`` for audit. Pre-M5.2 callers
+    leave the field empty so M5.1's record aggregation is unchanged.
+    """
 
     samples: tuple[RESTCohortSample, ...]
     record: RESTCohortRecord
     rtt_record: RTTRecord | None
+    network_path: NetworkPath | None = None
+    https_edge_record: RestHttpsEdgeCohortRecord | None = None
+    warmup_samples: tuple[RESTCohortSample, ...] = ()
 
 
 async def probe_rest_rtt(
@@ -69,10 +92,17 @@ async def probe_rest_rtt(
     client: httpx.AsyncClient,
     n: int = 32,
     timeout_s: float = 5.0,
+    network_path: NetworkPath | None = None,
 ) -> RTTRecord:
     """``n``-shot ``GET /healthz`` probe over the supplied client's keep-alive
     pool. Returns median/p95 + raw samples per FR-004 / research R-3.
+
+    M5.2 (T021): the optional ``network_path`` kwarg is accepted for API
+    parity with ``run_rest_cohort`` but has no effect on the probe path —
+    the probe travels whichever path the supplied ``client`` is configured
+    to use. The tag is recorded for the caller's audit logging.
     """
+    del network_path  # currently unused — present for cohort-runner parity
     if n < 1:
         raise ValueError(f"probe_rest_rtt: n must be >= 1 (got {n})")
     samples_ms: list[float] = []
@@ -127,16 +157,21 @@ async def _single_chat_stream_request(
     base_url: str,
     token: str,
     *,
-    prompt: str,
-    max_tokens: int,
+    sample: RequestSample,
     timeout_s: float,
 ) -> RESTCohortSample:
+    # M5.2 (FR-005c chat-corpus): the wire body is built from a
+    # ``RequestSample`` so REST and gRPC cohorts can share corpus-driven
+    # prompts. ``sample.model`` is M7-aspirational (e.g.,
+    # "Qwen/Qwen3-0.6B"); the harness substitutes "mock" since the
+    # FastAPI shim's MockEngine doesn't dispatch by model name. seed is
+    # NOT sent — the shim's pydantic request model doesn't accept it.
     body = {
         "model": "mock",
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": sample.messages,
         "stream": True,
-        "max_tokens": max_tokens,
-        "temperature": 1.0,
+        "max_tokens": sample.max_tokens,
+        "temperature": sample.temperature,
     }
     body_bytes = json.dumps(body).encode()
     headers = {"authorization": f"Bearer {token}", "content-type": "application/json"}
@@ -151,21 +186,27 @@ async def _single_chat_stream_request(
         if resp.status_code != 200:
             raise RuntimeError(f"REST chat_stream: expected 200, got {resp.status_code}")
         shim_overhead_ms = float(resp.headers.get("x-shim-overhead-ms", "0.0"))
-        first_line_bytes = 0
+        total_response_bytes = 0
         ttft_seconds = 0.0
         captured_first = False
-        # First-non-empty-data: TTFT anchor; then drain the rest so the
-        # connection is returned to the keep-alive pool cleanly.
+        # Record TTFT on the first non-empty ``data:`` SSE line. Then keep
+        # draining and summing every line's byte size (plus one byte for the
+        # trailing newline ``aiter_lines`` strips) so ``response_bytes`` is
+        # the total SSE body bytes — comparable to gRPC's
+        # ``sum(len(chunk.SerializeToString()) for chunk in stream)``. The
+        # earlier first-line-only behavior left REST chat_stream response
+        # byte sizes incommensurable with gRPC's, which made the bytes
+        # columns of the report misleading even though TTFT was correct.
         async for line in resp.aiter_lines():
+            total_response_bytes += len(line.encode()) + 1
             if not captured_first and line and line.startswith("data:") and "[DONE]" not in line:
                 ttft_seconds = time.perf_counter() - start
-                first_line_bytes = len(line.encode())
                 captured_first = True
     return RESTCohortSample(
         wall_clock_seconds=ttft_seconds,
         shim_overhead_ms=shim_overhead_ms,
         request_bytes=len(body_bytes),
-        response_bytes=first_line_bytes,
+        response_bytes=total_response_bytes,
     )
 
 
@@ -230,10 +271,16 @@ async def run_rest_cohort(
     n: int,
     hidden_size: int,
     timeout_s: float = 30.0,
-    max_tokens: int = 64,
+    max_tokens: int = DEFAULT_CHAT_MAX_TOKENS,
     rtt_probe_n: int = 32,
     warmup_n: int = 0,
     client: httpx.AsyncClient | None = None,
+    network_path: NetworkPath | None = None,
+    https_edge_endpoint: str | None = None,
+    client_external_geolocation_country: str | None = None,
+    client_external_geolocation_region: str | None = None,
+    cell_id: str = "",
+    corpus: list[RequestSample] | None = None,
 ) -> RESTCohortResult:
     """Drive ``n`` requests on the configured ``path`` with concurrency ``concurrency``.
 
@@ -258,13 +305,32 @@ async def run_rest_cohort(
 
         async def _one_request(i: int) -> RESTCohortSample:
             if path == "chat_stream":
-                prompt = f"Hello world request-{i} please complete this sentence"
+                # M5.2 (FR-005c chat-corpus): when a corpus is provided,
+                # cycle through it deterministically by iteration index
+                # so REST and gRPC see the same sample for the same i.
+                # Fallback path (corpus=None) preserves the M5.1-era
+                # synthetic-prompt behavior for tests + back-compat.
+                if corpus is not None:
+                    sample = corpus[i % len(corpus)]
+                else:
+                    sample = RequestSample(
+                        id=f"synth-{i}",
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": build_chat_prompt(iteration=i, cell_id=cell_id),
+                            }
+                        ],
+                        model="mock",
+                        max_tokens=max_tokens,
+                        temperature=1.0,
+                        seed=42,
+                    )
                 return await _single_chat_stream_request(
                     client,
                     base_url,
                     token,
-                    prompt=prompt,
-                    max_tokens=max_tokens,
+                    sample=sample,
                     timeout_s=timeout_s,
                 )
             return await _single_embed_request(
@@ -298,11 +364,14 @@ async def run_rest_cohort(
             await asyncio.gather(*workers)
             return collected
 
-        # Warmup phase — discarded. Fills the keep-alive pool and pays any
-        # per-connection HTTP/1.1 handshake cost so the measurement window
-        # starts on warm connections.
+        # Warmup phase. Fills the keep-alive pool and pays any per-connection
+        # HTTP/1.1 handshake cost so the measurement window starts on warm
+        # connections. M5.2 (FR-012a (g)): these samples are persisted to the
+        # events sidecar with phase="warmup" for audit, but never reach the
+        # cohort record's aggregates.
+        warmup_results: list[RESTCohortSample] = []
         if warmup_n > 0:
-            await _drive_pool(warmup_n)
+            warmup_results = await _drive_pool(warmup_n)
         # RTT probe goes AFTER warmup so the probe channel is also warm
         # (matches the cohort's measurement state).
         rtt = await probe_rest_rtt(base_url, client=client, n=rtt_probe_n, timeout_s=timeout_s)
@@ -313,7 +382,32 @@ async def run_rest_cohort(
             await client.aclose()
 
     record = _aggregate(results, concurrency=concurrency, n=n)
-    return RESTCohortResult(samples=tuple(results), record=record, rtt_record=rtt)
+    https_edge_record: RestHttpsEdgeCohortRecord | None = None
+    if network_path == "https_edge":
+        https_edge_record = RestHttpsEdgeCohortRecord(
+            shim_overhead_ms_median=record.shim_overhead_ms_median,
+            shim_overhead_ms_p95=record.shim_overhead_ms_p95,
+            connections_opened=record.connections_opened,
+            connections_keepalive_reused=record.connections_keepalive_reused,
+            request_bytes_median=record.request_bytes_median,
+            request_bytes_p95=record.request_bytes_p95,
+            response_bytes_median=record.response_bytes_median,
+            response_bytes_p95=record.response_bytes_p95,
+            https_edge_endpoint=https_edge_endpoint or base_url,
+            tls_handshake_ms_first_request=None,
+            measured_rtt_ms_median=rtt.median_ms,
+            measured_rtt_ms_p95=rtt.p95_ms,
+            client_external_geolocation_country=client_external_geolocation_country,
+            client_external_geolocation_region=client_external_geolocation_region,
+        )
+    return RESTCohortResult(
+        samples=tuple(results),
+        record=record,
+        rtt_record=rtt,
+        network_path=network_path,
+        https_edge_record=https_edge_record,
+        warmup_samples=tuple(warmup_results),
+    )
 
 
 def _aggregate(samples: list[RESTCohortSample], *, concurrency: int, n: int) -> RESTCohortRecord:

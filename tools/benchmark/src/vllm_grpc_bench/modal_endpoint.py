@@ -52,11 +52,27 @@ class RESTGRPCEndpoints:
     Carries both tunnel URLs plus the env-var name the bearer token was
     read from (the token value itself is *never* stored — it remains in the
     operator's environment and is read at use-site).
+
+    M5.2 (T019) adds two optional fields populated when the caller passes
+    ``with_rest_plain_tcp=True``:
+
+    * ``rest_plain_tcp_url`` — the FastAPI shim's plain-TCP URL (the M5.2
+      ``rest_plain_tcp`` cohort consumes this; effectively an alias for
+      ``rest_url`` since M5.1 also forwards REST over plain-TCP).
+    * ``rest_https_edge_url`` — the FastAPI shim's HTTPS-edge URL (the
+      M5.2 ``rest_https_edge`` cohort consumes this; a SECOND uvicorn
+      instance binds the shim on a separate in-container port so Modal
+      can forward it as HTTPS-edge without conflicting with port 8000's
+      plain-TCP forward).
+
+    Defaults of ``None`` preserve M5.1's call signature.
     """
 
     grpc_url: str
     rest_url: str
     auth_token_env_var: str
+    rest_plain_tcp_url: str | None = None
+    rest_https_edge_url: str | None = None
 
 
 class ModalDeployError(RuntimeError):
@@ -169,6 +185,7 @@ async def provide_rest_grpc_endpoint(
     *,
     region: str = "eu-west-1",
     token_env: str = "MODAL_BENCH_TOKEN",
+    with_rest_plain_tcp: bool = False,
 ) -> AsyncIterator[RESTGRPCEndpoints]:
     """M5.1 dual-protocol deploy: deploys the FastAPI shim + gRPC server,
     captures both tunnel URLs, yields a :class:`RESTGRPCEndpoints` bundle.
@@ -201,17 +218,36 @@ async def provide_rest_grpc_endpoint(
         async with app.run.aio():
             serve_call = await serve_bench.spawn.aio(token=token, region=region)
             d = modal.Dict.from_name(_M5_1_DICT_NAME, create_if_missing=True)
-            for key in ("grpc", "rest", "token", "region", "ready", "teardown"):
+            for key in (
+                "grpc",
+                "rest",
+                "rest_plain_tcp_url",
+                "rest_https_edge_url",
+                "token",
+                "region",
+                "ready",
+                "teardown",
+            ):
                 with contextlib.suppress(Exception):
                     await d.pop.aio(key)
-            grpc_url, rest_url = await _wait_for_rest_grpc_handshake(
-                d, _M5_1_HANDSHAKE_TIMEOUT_S, expected_token=token
+            (
+                grpc_url,
+                rest_url,
+                rest_plain_tcp_url,
+                rest_https_edge_url,
+            ) = await _wait_for_rest_grpc_handshake(
+                d,
+                _M5_1_HANDSHAKE_TIMEOUT_S,
+                expected_token=token,
+                with_rest_plain_tcp=with_rest_plain_tcp,
             )
             try:
                 yield RESTGRPCEndpoints(
                     grpc_url=_strip_scheme(grpc_url),
                     rest_url=rest_url,
                     auth_token_env_var=token_env,
+                    rest_plain_tcp_url=rest_plain_tcp_url,
+                    rest_https_edge_url=rest_https_edge_url,
                 )
             finally:
                 with contextlib.suppress(Exception):
@@ -222,10 +258,96 @@ async def provide_rest_grpc_endpoint(
         output_ctx.__exit__(None, None, None)
 
 
+async def refresh_rest_grpc_urls(
+    cached: RESTGRPCEndpoints,
+    *,
+    poll_timeout_s: float = 90.0,
+    poll_interval_s: float = 2.0,
+) -> RESTGRPCEndpoints | None:
+    """Re-read the Modal handshake Dict for fresh URLs after a suspected
+    preemption event.
+
+    When Modal preempts a running Function and restarts it on a new worker,
+    the new ``serve_bench`` invocation writes new tunnel URLs to the same
+    shared ``modal.Dict`` (per the Modal docs at
+    https://modal.com/docs/guide/preemption — "Your Function will be
+    restarted with the same input"). This helper polls that Dict for up to
+    ``poll_timeout_s`` seconds, returning a new ``RESTGRPCEndpoints`` once
+    the Dict's URLs differ from ``cached``'s URLs.
+
+    Returns ``None`` if:
+    * No fresh URLs appear within the timeout (probably not preemption —
+      either Modal worker is still healthy or the new worker failed to
+      start). The caller should treat the original ConnectError as a real
+      failure.
+    * The Dict isn't readable (e.g., shared Modal session went away).
+
+    The cached endpoints' bearer-token env var name is preserved on the
+    returned bundle; only the URLs are updated.
+    """
+    try:
+        import modal
+
+        d = modal.Dict.from_name(_M5_1_DICT_NAME, create_if_missing=False)
+    except Exception:  # noqa: BLE001 — modal import or dict lookup
+        return None
+
+    deadline = time.monotonic() + poll_timeout_s
+    while time.monotonic() < deadline:
+        try:
+            grpc_raw = await d.get.aio("grpc", default="")
+            rest_raw = await d.get.aio("rest", default="")
+            tcp_raw = await d.get.aio("rest_plain_tcp_url", default="")
+            edge_raw = await d.get.aio("rest_https_edge_url", default="")
+        except Exception:  # noqa: BLE001 — Dict access can fail in transit
+            await asyncio.sleep(poll_interval_s)
+            continue
+        if not (
+            isinstance(grpc_raw, str)
+            and isinstance(rest_raw, str)
+            and isinstance(tcp_raw, str)
+            and isinstance(edge_raw, str)
+            and grpc_raw
+            and rest_raw
+        ):
+            await asyncio.sleep(poll_interval_s)
+            continue
+        # Fresh URLs are detected when the gRPC URL differs from the
+        # cached one. The gRPC URL is the most stable handshake key (REST
+        # URLs may match transiently if anycast routes to the same edge POP).
+        cached_grpc_target = _strip_scheme(cached.grpc_url)
+        new_grpc_target = _strip_scheme(grpc_raw)
+        if new_grpc_target == cached_grpc_target:
+            await asyncio.sleep(poll_interval_s)
+            continue
+        return RESTGRPCEndpoints(
+            grpc_url=new_grpc_target,
+            rest_url=rest_raw,
+            auth_token_env_var=cached.auth_token_env_var,
+            rest_plain_tcp_url=tcp_raw or None,
+            rest_https_edge_url=edge_raw or None,
+        )
+    return None
+
+
 async def _wait_for_rest_grpc_handshake(
-    d: object, timeout_s: float, *, expected_token: str
-) -> tuple[str, str]:
-    """Poll the M5.1 handshake dict for ``ready==True``; return (grpc_url, rest_url)."""
+    d: object,
+    timeout_s: float,
+    *,
+    expected_token: str,
+    with_rest_plain_tcp: bool = False,
+) -> tuple[str, str, str | None, str | None]:
+    """Poll the M5.1 handshake dict for ``ready==True``; return
+    ``(grpc_url, rest_url, rest_plain_tcp_url, rest_https_edge_url)``.
+
+    When ``with_rest_plain_tcp=True`` the function additionally waits for
+    the ``rest_plain_tcp_url`` AND ``rest_https_edge_url`` keys (M5.2's
+    third and fourth tunnels) and raises if either is missing once
+    ``ready=True``.
+
+    M5.1 callers leave ``with_rest_plain_tcp=False`` and read only the
+    first two URLs; the trailing two elements are ``None``.
+    """
     deadline = time.monotonic() + timeout_s
     last_seen: dict[str, object] = {}
     while time.monotonic() < deadline:
@@ -243,7 +365,24 @@ async def _wait_for_rest_grpc_handshake(
                     "M5.1 Modal handshake completed but bearer-token echo does not match; "
                     "another Modal app may be using the shared M5.1 handshake dict"
                 )
-            return grpc_url, rest_url
+            rest_plain_tcp: str | None = None
+            rest_https_edge: str | None = None
+            if with_rest_plain_tcp:
+                raw_tcp = await d.get.aio("rest_plain_tcp_url", default="")  # type: ignore[attr-defined]
+                if not isinstance(raw_tcp, str) or not raw_tcp:
+                    raise ModalDeployError(
+                        "M5.2 Modal handshake completed but rest_plain_tcp_url is empty; "
+                        "is scripts/python/modal_bench_rest_grpc_server.py up to date?"
+                    )
+                rest_plain_tcp = raw_tcp
+                raw_edge = await d.get.aio("rest_https_edge_url", default="")  # type: ignore[attr-defined]
+                if not isinstance(raw_edge, str) or not raw_edge:
+                    raise ModalDeployError(
+                        "M5.2 Modal handshake completed but rest_https_edge_url is empty; "
+                        "is scripts/python/modal_bench_rest_grpc_server.py up to date?"
+                    )
+                rest_https_edge = raw_edge
+            return grpc_url, rest_url, rest_plain_tcp, rest_https_edge
         last_seen = {"ready": ready}
         await asyncio.sleep(_HANDSHAKE_POLL_S)
     raise ModalDeployError(
