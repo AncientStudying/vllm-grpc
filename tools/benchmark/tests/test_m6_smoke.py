@@ -183,7 +183,7 @@ def test_smoke_dispatch_does_not_invoke_full_sweep(
         return 0
 
     with patch(
-        "vllm_grpc_bench.__main__._run_m6_full_sweep",
+        "vllm_grpc_bench.__main__._run_m6_full_sweep_async",
         side_effect=_fake_full_sweep,
     ):
         rc = _run_m6(ns)
@@ -191,5 +191,6 @@ def test_smoke_dispatch_does_not_invoke_full_sweep(
     # The full sweep MUST NOT have been invoked.
     assert len(sweep_calls) == 0
     # The smoke dispatch returns exit code 2 because the production Modal
-    # driver is not yet wired — that's the seam, NOT a full-sweep call.
+    # deploy fails in unit-test context (no MODAL_BENCH_TOKEN-authenticated
+    # Modal session). That's a deploy error, NOT a full-sweep call.
     assert rc == 2

@@ -258,6 +258,98 @@ async def provide_rest_grpc_endpoint(
         output_ctx.__exit__(None, None, None)
 
 
+# M6 real-engine deploy timeout — extended to accommodate Qwen3-7B model load
+# (cold-start is dominated by HuggingFace download + AsyncLLM init time).
+_M6_HANDSHAKE_TIMEOUT_S = 600.0
+
+
+@asynccontextmanager
+async def provide_m6_endpoint(
+    *,
+    region: str = "eu-west-1",
+    token_env: str = "MODAL_BENCH_TOKEN",
+    model_id: str = "Qwen/Qwen3-7B",
+) -> AsyncIterator[RESTGRPCEndpoints]:
+    """M6 real-engine deploy — same dual-protocol surface as M5.1's
+    :func:`provide_rest_grpc_endpoint` but spawns the ``m6_app``'s
+    ``serve_bench_real_engine`` function (Qwen3-7B fp16 on A10G, with the
+    M6 engine-cost instrumentation surface enabled).
+
+    Yields the resolved endpoints + handshake metadata. On exit, sets
+    ``teardown=True`` on the shared Modal Dict so the function shuts
+    cleanly. The bearer-token VALUE is never returned — only the env-var
+    name.
+    """
+    token = os.environ.get(token_env, "")
+    if not token:
+        raise ModalDeployError(
+            f"environment variable {token_env!r} is not set; "
+            "M6 requires a bearer token to be exported before the sweep "
+            "(see specs/020-m6-real-engine-mini-validation/quickstart.md)"
+        )
+    try:
+        import modal
+
+        from scripts.python.modal_bench_rest_grpc_server import (
+            m6_app,
+            serve_bench_real_engine,
+        )
+    except ImportError as exc:
+        raise ModalDeployError(
+            f"failed to import M6 Modal app module: {exc}; "
+            "ensure modal is installed (`uv sync`) and the M6 deploy script "
+            "is on PYTHONPATH"
+        ) from exc
+
+    output_ctx = modal.enable_output()
+    output_ctx.__enter__()
+    try:
+        async with m6_app.run.aio():
+            serve_call = await serve_bench_real_engine.spawn.aio(
+                token=token, region=region, model_id=model_id
+            )
+            d = modal.Dict.from_name(_M5_1_DICT_NAME, create_if_missing=True)
+            for key in (
+                "grpc",
+                "rest",
+                "rest_plain_tcp_url",
+                "rest_https_edge_url",
+                "token",
+                "region",
+                "model",
+                "ready",
+                "teardown",
+            ):
+                with contextlib.suppress(Exception):
+                    await d.pop.aio(key)
+            (
+                grpc_url,
+                rest_url,
+                rest_plain_tcp_url,
+                rest_https_edge_url,
+            ) = await _wait_for_rest_grpc_handshake(
+                d,
+                _M6_HANDSHAKE_TIMEOUT_S,
+                expected_token=token,
+                with_rest_plain_tcp=True,
+            )
+            try:
+                yield RESTGRPCEndpoints(
+                    grpc_url=_strip_scheme(grpc_url),
+                    rest_url=rest_url,
+                    auth_token_env_var=token_env,
+                    rest_plain_tcp_url=rest_plain_tcp_url,
+                    rest_https_edge_url=rest_https_edge_url,
+                )
+            finally:
+                with contextlib.suppress(Exception):
+                    await d.put.aio("teardown", True)
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(serve_call.get.aio(), timeout=60.0)
+    finally:
+        output_ctx.__exit__(None, None, None)
+
+
 async def refresh_rest_grpc_urls(
     cached: RESTGRPCEndpoints,
     *,

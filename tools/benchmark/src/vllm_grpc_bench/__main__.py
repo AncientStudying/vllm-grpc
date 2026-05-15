@@ -1716,49 +1716,53 @@ def _run_m6(args: argparse.Namespace) -> int:
         return 1 if getattr(args, "m6", False) else 2
 
     if getattr(args, "m6_smoke", False):
-        return _run_m6_smoke(args, baseline)
+        return asyncio.run(_run_m6_smoke_async(args, baseline))
 
-    return _run_m6_full_sweep(args, baseline)
+    return asyncio.run(_run_m6_full_sweep_async(args, baseline))
 
 
-def _run_m6_smoke(args: argparse.Namespace, baseline: dict[str, Any]) -> int:
-    """Execute the M6 smoke gate (T056).
+async def _run_m6_smoke_async(args: argparse.Namespace, baseline: dict[str, Any]) -> int:
+    """Execute the M6 smoke gate (T056) end-to-end against live Modal.
 
-    Composes Modal deploy + RPC driver (production seam) → smoke runner →
-    stderr summary → exit code mapping. Per FR-012, this function NEVER
-    invokes the full sweep regardless of smoke outcome.
+    Composes Modal deploy → RPC driver → smoke runner → stderr summary →
+    exit code mapping. Per FR-012, this function NEVER invokes the full
+    sweep regardless of smoke outcome.
 
     Exit codes per contracts/cli.md §"Exit codes" (smoke):
     - 0 — all 6 (cell × cohort) pairs ok
     - 1 — one or more pairs failed
-    - 2 — baseline precondition failed at launch (handled upstream)
+    - 2 — baseline precondition failed at launch OR Modal deploy failure
     """
-    import asyncio as _asyncio
-
+    from vllm_grpc_bench.m6_rpc_driver import provide_m6_rpc_driver
     from vllm_grpc_bench.m6_smoke import emit_smoke_summary, run_smoke, smoke_exit_code
+    from vllm_grpc_bench.modal_endpoint import ModalDeployError, provide_m6_endpoint
 
-    _ = baseline  # baseline already validated by the caller (precondition check)
+    _ = baseline  # baseline already validated by caller (precondition check)
 
     try:
-        driver, _rtt_distribution, _modal_function_id = _build_m6_modal_driver(args)
-    except NotImplementedError as exc:
-        print(f"Error: M6 production Modal driver not yet wired: {exc}", file=sys.stderr)
-        # Smoke uses exit code 2 for launch failures per contracts/cli.md.
+        async with (
+            provide_m6_endpoint(
+                region=str(args.m6_modal_region),
+                token_env=str(args.m6_modal_token_env),
+                model_id=str(args.m6_model),
+            ) as endpoints,
+            provide_m6_rpc_driver(endpoints) as (driver, _rtt),
+        ):
+            result = await run_smoke(driver)
+    except ModalDeployError as exc:
+        print(f"Error: M6 smoke Modal deploy failed: {exc}", file=sys.stderr)
         return 2
 
-    result = _asyncio.run(run_smoke(driver))
     emit_smoke_summary(result)
     return smoke_exit_code(result)
 
 
-def _run_m6_full_sweep(args: argparse.Namespace, baseline: dict[str, Any]) -> int:
-    """Execute the M6 full sweep end-to-end (T044).
+async def _run_m6_full_sweep_async(args: argparse.Namespace, baseline: dict[str, Any]) -> int:
+    """Execute the M6 full sweep end-to-end (T044) against live Modal.
 
-    Composes RTT probe (T036) → run_sweep (T026-T028) → reporter (T039-T043).
-    Modal deploy + production RPC driver construction is delegated to
-    :func:`_build_m6_modal_driver` which raises a clear error when not
-    yet wired to a live Modal endpoint — kept as a clearly-named seam so
-    the rest of the dispatch is fully testable against mock drivers.
+    Composes Modal deploy → RPC driver + RTT probe → run_sweep
+    (T026-T028) → classifier → reporter (T039-T043). Exits with code 2
+    on Modal deploy / sweep mid-run failure; 0 on success.
     """
     import datetime as _datetime
     import socket
@@ -1766,6 +1770,7 @@ def _run_m6_full_sweep(args: argparse.Namespace, baseline: dict[str, Any]) -> in
     from pathlib import Path as _Path
 
     from vllm_grpc_bench.m6_reporter import build_m6_run, write_json, write_markdown
+    from vllm_grpc_bench.m6_rpc_driver import provide_m6_rpc_driver
     from vllm_grpc_bench.m6_supersede import snapshot_m5_2_winner_deltas
     from vllm_grpc_bench.m6_sweep import (
         ProgressReporter,
@@ -1773,35 +1778,40 @@ def _run_m6_full_sweep(args: argparse.Namespace, baseline: dict[str, Any]) -> in
         summarize_verdict_tally,
     )
     from vllm_grpc_bench.m6_types import M6RunMeta
+    from vllm_grpc_bench.modal_endpoint import ModalDeployError, provide_m6_endpoint
 
     progress = ProgressReporter()
     progress.emit_startup(model=args.m6_model, region=args.m6_modal_region)
 
     started_at = _datetime.datetime.now(_datetime.UTC)
     cold_start_started = time.monotonic()
+    cold_start_s: float = 0.0
+    cells: list[Any] = []
+    rtt_distribution: dict[Any, Any] = {}
 
     try:
-        driver, rtt_distribution, modal_function_id = _build_m6_modal_driver(args)
-    except NotImplementedError as exc:
-        print(f"Error: M6 production Modal driver not yet wired: {exc}", file=sys.stderr)
+        async with provide_m6_endpoint(
+            region=str(args.m6_modal_region),
+            token_env=str(args.m6_modal_token_env),
+            model_id=str(args.m6_model),
+        ) as endpoints:
+            cold_start_s = time.monotonic() - cold_start_started
+            async with provide_m6_rpc_driver(endpoints) as (driver, rtt):
+                rtt_distribution = dict(rtt)
+                cells, _measurements = await run_sweep(
+                    driver,
+                    baseline,
+                    base_seed=int(args.m6_base_seed),
+                    progress=progress,
+                )
+    except ModalDeployError as exc:
+        print(f"Error: M6 Modal deploy failed: {exc}", file=sys.stderr)
         return 2
-
-    cold_start_s = time.monotonic() - cold_start_started
-
-    try:
-        cells, _measurements = asyncio.run(
-            run_sweep(
-                driver,
-                baseline,
-                base_seed=int(args.m6_base_seed),
-                progress=progress,
-            )
-        )
     except Exception as exc:  # noqa: BLE001
         print(f"Error: M6 sweep aborted mid-run: {exc}", file=sys.stderr)
         return 2
 
-    # T037/T038: build RunMeta (cold_start, git_sha, hostname, etc.).
+    # T038: build RunMeta (cold_start, git_sha, hostname, vllm version).
     try:
         git_sha = (
             subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
@@ -1822,7 +1832,11 @@ def _run_m6_full_sweep(args: argparse.Namespace, baseline: dict[str, Any]) -> in
     meta = M6RunMeta(
         git_sha=git_sha,
         hostname=socket.gethostname(),
-        modal_function_id=modal_function_id,
+        # ``provide_m6_endpoint`` doesn't surface a discrete Modal function
+        # id (the spawn call is consumed inside the context manager); we
+        # use the Modal app + function name for audit traceability — the
+        # operator can correlate via the Modal web UI.
+        modal_function_id="vllm-grpc-bench-rest-grpc-m6/serve_bench_real_engine",
         gpu_type="A10G",
         modal_region=str(args.m6_modal_region),
         model_identifier=str(args.m6_model),
@@ -1852,27 +1866,6 @@ def _run_m6_full_sweep(args: argparse.Namespace, baseline: dict[str, Any]) -> in
     progress.emit_completion(str(report_md), tally)
     print(str(report_md))  # stdout — composes with shell pipes per contracts/cli.md.
     return 0
-
-
-def _build_m6_modal_driver(args: argparse.Namespace) -> tuple[Any, Any, str]:
-    """Construct the production gRPC + REST driver against a live Modal deploy.
-
-    Returns ``(rpc_driver, rtt_distribution, modal_function_id)``.
-
-    NOT yet implemented — this is the seam where the harness deploys the
-    M6 Modal app, opens gRPC channels + an httpx client against the
-    deployed endpoints, and wires the M6 instrumentation surface (Phase 2)
-    into an ``RPCDriver`` callable. Implementing this is the final step
-    that lets ``--m6`` actually consume paid Modal compute; tests inject a
-    mock driver via :func:`run_m6_dispatch_for_test` instead.
-    """
-    raise NotImplementedError(
-        "_build_m6_modal_driver: production Modal deploy + RPC driver "
-        "construction is implemented as the final step before T064 (the "
-        "paid Modal sweep). The sweep orchestrator + classifier + reporter "
-        "are fully wired and unit-tested; injecting a mock driver via "
-        "run_m6_dispatch_for_test exercises the full pipeline end-to-end."
-    )
 
 
 def main() -> None:

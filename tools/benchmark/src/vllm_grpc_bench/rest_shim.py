@@ -42,6 +42,11 @@ class _ChatRequest(BaseModel):
     stream: bool = True
     max_tokens: int = 512
     temperature: float = 1.0
+    # M6 (FR-025): per-RPC sampling seed forwarded to the engine so the
+    # REST cohort's engine output is reproducible across runs at fixed
+    # M6_BASE_SEED. Pre-M6 callers leave seed=None and the engine's
+    # default seeding applies.
+    seed: int | None = None
 
 
 class _EmbedRequest(BaseModel):
@@ -54,6 +59,8 @@ class _EmbedRequest(BaseModel):
     # prompt-embedding-shaped input, not ``engine.encode``. ``max_tokens``
     # matches M3's default so the engine work is held constant.
     max_tokens: int = 10
+    # M6 (FR-025): per-RPC sampling seed forwarded to the engine.
+    seed: int | None = None
 
 
 def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
@@ -83,10 +90,11 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
         prompt = "".join(m.content for m in req.messages)
 
         class _SamplingParams:
-            def __init__(self, max_tokens: int) -> None:
+            def __init__(self, max_tokens: int, seed: int | None) -> None:
                 self.max_tokens = max_tokens
+                self.seed = seed
 
-        sampling = _SamplingParams(req.max_tokens)
+        sampling = _SamplingParams(req.max_tokens, req.seed)
         request_id = f"rest-chat-{uuid.uuid4().hex}"
 
         if req.stream:
@@ -227,10 +235,11 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
             prompt = req.input
 
         class _SamplingParams:
-            def __init__(self, max_tokens: int) -> None:
+            def __init__(self, max_tokens: int, seed: int | None) -> None:
                 self.max_tokens = max_tokens
+                self.seed = seed
 
-        sampling = _SamplingParams(req.max_tokens)
+        sampling = _SamplingParams(req.max_tokens, req.seed)
         request_id = f"rest-embed-{uuid.uuid4().hex}"
         # M6 (FR-008 / R-4): time the engine.generate() call so the unary
         # response carries engine_cost.engine_forward_ms (top-level field).
