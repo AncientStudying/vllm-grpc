@@ -131,10 +131,14 @@ async def _drive_grpc_embed(
     stub = completions_pb2_grpc.CompletionsServiceStub(channel)
     req = _build_embed_grpc_request(cell.hidden_size, seed)
     t0 = time.perf_counter()
+    # grpc.aio unary calls don't expose ``.with_call(...)`` (that's the
+    # synchronous gRPC API). The aio pattern: invoke the stub directly to
+    # get a ``UnaryUnaryCall``, await it for the response, then read
+    # ``trailing_metadata()`` on the same call object.
+    call = stub.Complete(req, timeout=timeout_s, metadata=metadata)
     try:
-        unary = stub.Complete.with_call(req, timeout=timeout_s, metadata=metadata)
-        _resp, call = await unary
-    except grpc.RpcError as exc:  # noqa: PERF203
+        _resp = await call
+    except grpc.RpcError as exc:
         return RPCResult(
             success=False,
             wall_clock_ms=None,

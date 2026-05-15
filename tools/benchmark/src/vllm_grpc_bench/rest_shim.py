@@ -31,6 +31,41 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
 
+# M6 fix: vLLM v1's ``input_processor._validate_params`` enforces
+# ``isinstance(params, SamplingParams)`` and rejects any duck-typed shim
+# class. Import the real type if vLLM is available; fall back to an
+# ad-hoc class for unit-test paths where vLLM is not installed (macOS
+# dev machine; MockEngine just reads ``.max_tokens`` and ``.seed``).
+try:
+    from vllm import SamplingParams as _VLLMSamplingParams
+
+    _HAS_VLLM_SAMPLING_PARAMS = True
+except ImportError:
+    _VLLMSamplingParams = None
+    _HAS_VLLM_SAMPLING_PARAMS = False
+
+
+def _build_sampling_params(max_tokens: int, seed: int | None) -> Any:
+    """Return a SamplingParams instance the engine will accept.
+
+    Uses real ``vllm.SamplingParams`` when available; otherwise falls
+    back to a duck-typed object with the same attribute surface
+    (``MockEngine`` in the unit-test paths only reads attributes).
+    """
+    if _HAS_VLLM_SAMPLING_PARAMS and _VLLMSamplingParams is not None:
+        kwargs: dict[str, Any] = {"max_tokens": max_tokens}
+        if seed is not None:
+            kwargs["seed"] = seed
+        return _VLLMSamplingParams(**kwargs)
+
+    class _MockSamplingParams:
+        def __init__(self, mt: int, sd: int | None) -> None:
+            self.max_tokens = mt
+            self.seed = sd
+
+    return _MockSamplingParams(max_tokens, seed)
+
+
 class _ChatMessage(BaseModel):
     role: str
     content: str
@@ -88,13 +123,7 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
     async def chat_completions(req: _ChatRequest) -> Any:
         handler_entry = time.perf_counter()
         prompt = "".join(m.content for m in req.messages)
-
-        class _SamplingParams:
-            def __init__(self, max_tokens: int, seed: int | None) -> None:
-                self.max_tokens = max_tokens
-                self.seed = seed
-
-        sampling = _SamplingParams(req.max_tokens, req.seed)
+        sampling = _build_sampling_params(req.max_tokens, req.seed)
         request_id = f"rest-chat-{uuid.uuid4().hex}"
 
         if req.stream:
@@ -234,12 +263,7 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
         else:
             prompt = req.input
 
-        class _SamplingParams:
-            def __init__(self, max_tokens: int, seed: int | None) -> None:
-                self.max_tokens = max_tokens
-                self.seed = seed
-
-        sampling = _SamplingParams(req.max_tokens, req.seed)
+        sampling = _build_sampling_params(req.max_tokens, req.seed)
         request_id = f"rest-embed-{uuid.uuid4().hex}"
         # M6 (FR-008 / R-4): time the engine.generate() call so the unary
         # response carries engine_cost.engine_forward_ms (top-level field).

@@ -204,11 +204,15 @@ async def _send_embed_rpc(
     response_bytes = 0
     engine_cost_payload: dict[str, float] | None = None
     try:
-        # M6 (T014): use ``with_call`` so we can read trailing metadata for
-        # ``engine-forward-ms`` (contracts/instrumentation.md §1) without
-        # changing the response shape M5.x consumers expect.
-        unary_callable = stub.Complete.with_call(req, timeout=timeout_s, metadata=metadata)
-        resp, call = await unary_callable
+        # M6 (T014): read trailing metadata for ``engine-forward-ms``
+        # (contracts/instrumentation.md §1) without changing the response
+        # shape M5.x consumers expect. grpc.aio unary calls don't expose
+        # ``.with_call(...)`` (that's the sync gRPC API); the aio pattern
+        # is to invoke the stub directly to get a ``UnaryUnaryCall``,
+        # await it for the response, then read ``trailing_metadata()``
+        # on the same call object.
+        call = stub.Complete(req, timeout=timeout_s, metadata=metadata)
+        resp = await call
         response_bytes = len(resp.SerializeToString())
         engine_cost_payload = await _read_engine_cost_trailing_metadata(call, path="embed")
     except Exception as exc:  # noqa: BLE001
