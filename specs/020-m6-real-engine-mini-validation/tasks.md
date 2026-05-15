@@ -49,25 +49,25 @@ description: "Task list for M6 — Real-Engine Mini-Validation"
 
 ### Data-model types (shared across all stories)
 
-- [ ] T004 [P] Define `M6Cell`, `M6CohortKind`, `VerdictClassification`, `M6RPCMeasurement`, `EngineCostSpan`, `M6PerCohortAggregate`, `EngineCostAggregate`, `M6CellRecord`, `M6RunMeta`, `M6SmokeOutcome`, `M6SmokeResult`, `M6Run`, `SupersedesM5_2Row`, `M6PerRequestEvent` as `@dataclass(frozen=True)` in `tools/benchmark/src/vllm_grpc_bench/m6_types.py` per data-model.md shapes and validation rules.
+- [X] T004 [P] Define `M6Cell`, `M6CohortKind`, `VerdictClassification`, `M6RPCMeasurement`, `EngineCostSpan`, `M6PerCohortAggregate`, `EngineCostAggregate`, `M6CellRecord`, `M6RunMeta`, `M6SmokeOutcome`, `M6SmokeResult`, `M6Run`, `SupersedesM5_2Row`, `M6PerRequestEvent` as `@dataclass(frozen=True)` in `tools/benchmark/src/vllm_grpc_bench/m6_types.py` per data-model.md shapes and validation rules.
 
 ### Server-side engine instrumentation (FR-008, R-1, R-2)
 
-- [ ] T005 [P] Add per-RPC engine-cost timing wrapper around `AsyncLLM.generate()` for embed path in `packages/frontend/src/vllm_grpc_frontend/completions.py`: time `perf_counter()` start before generate call and end after drain; emit `engine-forward-ms` via `context.set_trailing_metadata((("engine-forward-ms", f"{ms:.3f}"),))` per contracts/instrumentation.md §1. Preserve existing response shape and proto (no `.proto` edits — Constitution Principle I).
-- [ ] T006 [P] Add per-RPC engine-cost timing wrapper around `AsyncLLM.generate()` for chat_stream path in `packages/frontend/src/vllm_grpc_frontend/chat.py`: capture `first_token_at` on first non-empty output chunk, `last_token_at` and `token_count` continuously; on stream completion compute `engine_ttft_ms` and `engine_tpot_ms` and emit both keys via `context.set_trailing_metadata(...)` per contracts/instrumentation.md §1.
+- [X] T005 [P] Add per-RPC engine-cost timing wrapper around `AsyncLLM.generate()` for embed path in `packages/frontend/src/vllm_grpc_frontend/completions.py`: time `perf_counter()` start before generate call and end after drain; emit `engine-forward-ms` via `context.set_trailing_metadata((("engine-forward-ms", f"{ms:.3f}"),))` per contracts/instrumentation.md §1. Preserve existing response shape and proto (no `.proto` edits — Constitution Principle I).
+- [X] T006 [P] Add per-RPC engine-cost timing wrapper around `AsyncLLM.generate()` for chat_stream path in `packages/frontend/src/vllm_grpc_frontend/chat.py`: capture `first_token_at` on first non-empty output chunk, `last_token_at` and `token_count` continuously; on stream completion compute `engine_ttft_ms` and `engine_tpot_ms` and emit both keys via `context.set_trailing_metadata(...)` per contracts/instrumentation.md §1.
 - [ ] T007 [US1] [US2] Add pytest unit test for embed timing wrapper trailing-metadata emission in `packages/frontend/tests/test_chat_servicer.py` (extend existing file) / new `packages/frontend/tests/test_engine_cost_metadata.py` — invoke servicer against a fake engine, assert `engine-forward-ms` is present in trailing metadata and parses as float; for chat_stream assert both `engine-ttft-ms` and `engine-tpot-ms` are present on stream completion.
 
 ### REST shim engine_cost (FR-008, R-4)
 
-- [ ] T008 Emit `engine_cost: {engine_forward_ms: ...}` at top level of `/v1/embeddings` JSON response payload in `tools/benchmark/src/vllm_grpc_bench/rest_shim.py` (unary path) per contracts/instrumentation.md §2. Read the float value from the gRPC trailing-metadata `engine-forward-ms` returned by the upstream gRPC frontend.
-- [ ] T009 Emit `engine_cost: {engine_ttft_ms: ..., engine_tpot_ms: ...}` on the terminal SSE event of `/v1/chat/completions?stream=true` in `tools/benchmark/src/vllm_grpc_bench/rest_shim.py` (streaming path) per contracts/instrumentation.md §2. The engine_cost field is added to the event with `finish_reason` set, immediately before `data: [DONE]`. Read floats from upstream gRPC trailing metadata.
+- [X] T008 Emit `engine_cost: {engine_forward_ms: ...}` at top level of `/v1/embeddings` JSON response payload in `tools/benchmark/src/vllm_grpc_bench/rest_shim.py` (unary path) per contracts/instrumentation.md §2. Read the float value from the gRPC trailing-metadata `engine-forward-ms` returned by the upstream gRPC frontend.
+- [X] T009 Emit `engine_cost: {engine_ttft_ms: ..., engine_tpot_ms: ...}` on the terminal SSE event of `/v1/chat/completions?stream=true` in `tools/benchmark/src/vllm_grpc_bench/rest_shim.py` (streaming path) per contracts/instrumentation.md §2. The engine_cost field is added to the event with `finish_reason` set, immediately before `data: [DONE]`. Read floats from upstream gRPC trailing metadata.
 - [ ] T010 [P] Add pytest test for REST shim engine_cost emission in `tools/benchmark/tests/test_m6_rest_shim_engine_cost.py` (NEW): assert `/v1/embeddings` response has top-level `engine_cost.engine_forward_ms`; assert final SSE event from `/v1/chat/completions?stream=true` carries `engine_cost.engine_ttft_ms` and `engine_cost.engine_tpot_ms`.
 
 ### Engine-cost harness-side parser (R-2, R-4)
 
-- [ ] T011 [P] Implement `parse_grpc_trailing_metadata(metadata, path) -> Optional[EngineCostSpan]` and `parse_rest_response(response_json, path) -> Optional[EngineCostSpan]` in `tools/benchmark/src/vllm_grpc_bench/m6_engine_cost.py` (NEW) per contracts/instrumentation.md §3. Return None on missing keys or unparseable values (callers treat as instrumentation gap).
-- [ ] T012 [P] Implement `compute_drift_warning(per_cohort_engine_cost_mean_ms) -> bool` (pairwise >10% disagreement test) in `tools/benchmark/src/vllm_grpc_bench/m6_engine_cost.py` per contracts/instrumentation.md §4. Skip pairs where `min(a, b) <= 0`.
-- [ ] T013 [P] Add pytest unit tests for both parsers and the drift function in `tools/benchmark/tests/test_m6_engine_cost.py` (NEW): cover happy paths for embed + chat_stream on both transports, missing-key handling, and drift-warning thresholds (10.0% exact, 10.1% triggers, degenerate zero values skipped).
+- [X] T011 [P] Implement `parse_grpc_trailing_metadata(metadata, path) -> Optional[EngineCostSpan]` and `parse_rest_response(response_json, path) -> Optional[EngineCostSpan]` in `tools/benchmark/src/vllm_grpc_bench/m6_engine_cost.py` (NEW) per contracts/instrumentation.md §3. Return None on missing keys or unparseable values (callers treat as instrumentation gap).
+- [X] T012 [P] Implement `compute_drift_warning(per_cohort_engine_cost_mean_ms) -> bool` (pairwise >10% disagreement test) in `tools/benchmark/src/vllm_grpc_bench/m6_engine_cost.py` per contracts/instrumentation.md §4. Skip pairs where `min(a, b) <= 0`.
+- [X] T013 [P] Add pytest unit tests for both parsers and the drift function in `tools/benchmark/tests/test_m6_engine_cost.py` (NEW): cover happy paths for embed + chat_stream on both transports, missing-key handling, and drift-warning thresholds (10.0% exact, 10.1% triggers, degenerate zero values skipped).
 
 ### Cohort readers (consume engine_cost; FR-008, R-2, R-4)
 
@@ -81,8 +81,8 @@ description: "Task list for M6 — Real-Engine Mini-Validation"
 
 ### Per-RPC sampling-seed mapping (FR-025, R-7 step input)
 
-- [ ] T018 [P] Implement `compute_rpc_seed(rpc_index, m6_base_seed=42) -> int` and `build_global_rpc_index_iterator()` in `tools/benchmark/src/vllm_grpc_bench/m6_seed.py` (NEW). The seed function MUST return `m6_base_seed + rpc_index`. The iterator MUST count measurement RPCs across the whole sweep (warmup excluded) and MUST produce the same `rpc_index → seed` for the i-th RPC across all 3 cohorts within a cell (FR-025).
-- [ ] T019 [P] Add pytest test for the seed mapping in `tools/benchmark/tests/test_m6_seed.py` (NEW): assert `compute_rpc_seed(0, 42) == 42`; assert warmup RPCs do not advance the rpc_index counter; assert seed is cohort-independent (same i-th measurement RPC produces same seed across all 3 cohorts within a cell).
+- [X] T018 [P] Implement `compute_rpc_seed(rpc_index, m6_base_seed=42) -> int` and `build_global_rpc_index_iterator()` in `tools/benchmark/src/vllm_grpc_bench/m6_seed.py` (NEW). The seed function MUST return `m6_base_seed + rpc_index`. The iterator MUST count measurement RPCs across the whole sweep (warmup excluded) and MUST produce the same `rpc_index → seed` for the i-th RPC across all 3 cohorts within a cell (FR-025).
+- [X] T019 [P] Add pytest test for the seed mapping in `tools/benchmark/tests/test_m6_seed.py` (NEW): assert `compute_rpc_seed(0, 42) == 42`; assert warmup RPCs do not advance the rpc_index counter; assert seed is cohort-independent (same i-th measurement RPC produces same seed across all 3 cohorts within a cell).
 
 ### Modal app real-engine launch (FR-003, FR-024, R-10)
 
@@ -91,8 +91,8 @@ description: "Task list for M6 — Real-Engine Mini-Validation"
 
 ### M5.2 baseline file precondition (FR-014, R-5)
 
-- [ ] T022 [P] Implement `load_and_validate_m5_2_baseline(path)` in `tools/benchmark/src/vllm_grpc_bench/m6_supersede.py` (NEW; signature only — full classifier comes in US1) that: (a) opens the file, (b) parses JSON, (c) asserts `protocol_comparison_verdicts[]` contains rows for all 6 M6 cells via the R-6 cohort-name mapping, (d) raises a typed exception `M5_2BaselineMissingCellError(cell)` naming the failing cell. Used by both smoke and full sweep launches (FR-014 sub-clause "M5.2 baseline file precondition").
-- [ ] T023 [P] Add pytest test for the baseline precondition in `tools/benchmark/tests/test_m6_supersede.py` (NEW): construct synthetic M5.2 JSON missing one cell row, assert `M5_2BaselineMissingCellError` is raised naming that cell; assert valid 6-cell JSON loads cleanly.
+- [X] T022 [P] Implement `load_and_validate_m5_2_baseline(path)` in `tools/benchmark/src/vllm_grpc_bench/m6_supersede.py` (NEW; signature only — full classifier comes in US1) that: (a) opens the file, (b) parses JSON, (c) asserts `protocol_comparison_verdicts[]` contains rows for all 6 M6 cells via the R-6 cohort-name mapping, (d) raises a typed exception `M5_2BaselineMissingCellError(cell)` naming the failing cell. Used by both smoke and full sweep launches (FR-014 sub-clause "M5.2 baseline file precondition").
+- [X] T023 [P] Add pytest test for the baseline precondition in `tools/benchmark/tests/test_m6_supersede.py` (NEW): construct synthetic M5.2 JSON missing one cell row, assert `M5_2BaselineMissingCellError` is raised naming that cell; assert valid 6-cell JSON loads cleanly.
 
 ### CLI flag wiring (FR-011, FR-017; contracts/cli.md)
 
