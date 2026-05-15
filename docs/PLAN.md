@@ -13,7 +13,7 @@ When working with Claude Code on this project, point it at this file plus the ac
 
 ---
 
-## Milestone Roadmap (canonical, M1–M8)
+## Milestone Roadmap (canonical, M1–M8, with M6.1 follow-up)
 
 This section mirrors the milestone framing in [`README.md`](../README.md). M1 through M5.2 are delivered; M6 through M8 are upcoming research directions. As of Draft v7, the focused real-engine mini-validation (formerly a single line in M5.1/M5.2 caveats as "deferred to M7") is promoted to a canonical M6 milestone; what was previously M6 (Corpus Expansion) becomes M7 and what was previously M7 (Model Expansion) becomes M8. The Phase 1–7 plan below this section is preserved as completed-work history (see the boundary heading further down) — it captures decisions and trade-offs that still inform future work, but the milestones above are the canonical forward view.
 
@@ -127,6 +127,27 @@ Three cohorts (down from M5.2's five): `rest_https_edge`, `default_grpc`, `tuned
 **Bytes axis preserved.** M6 measures latency only. M1's topology-immune wire-size findings (89% chat / 25% embed reductions) remain in force — encoding is structural, not engine-dependent.
 
 Out of scope: corpus diversity (deferred to M7), additional models (deferred to M8), real-engine validation at h≠4096 (deferred to M8 which uses multiple models spanning canonical widths), real-engine validation of the M3/M4 channel-tuning sweep (out of scope; M3/M4 verdicts were already validated cross-host by M5).
+
+### M6.1 — Real-Prompt-Embeddings Engine Path (planned, post-M6)
+
+Re-run M6's narrow 6-cell × 3-cohort slice with the embed cohort wired to vLLM's **real `enable_prompt_embeds=True`** engine path on both transports, instead of M5.x's "hash binary payload → short text prompt" symmetry. Tests the protocol-comparison question for the workload where the caller sends actual prompt embedding tensors to vLLM (a path M3–M6 don't exercise because they hash the binary payload to a text digest server-side for apples-to-apples engine work).
+
+**Why a separate slice rather than a wider M6.** M6 deliberately preserves M5.2's apples-to-apples engine work (both cohorts hash to a text digest server-side) so the protocol comparison stays clean and the "does M5.2 verdict survive?" question is answerable. Under M6 the gRPC and REST embed cohorts measure identical engine work — pure protocol/transport cost on identical engine code paths. M6.1 changes that one variable (engine code path) on the same 6 cells, so the diff against M6's published JSON quantifies the engine-path cost differential. Mixing both axes inside M6 would confound the verdict.
+
+**Approach.** Same 6 cells × 3 cohorts × n=100 matrix as M6. The harness:
+
+- **gRPC embed driver** sends `torch.save(tensor)`-pickled bytes in the `prompt_embeds` proto field. The frontend's `CompletionsServicer._resolve_prompt_embeds_input` already tries `decode_embeds` first → returns a real `torch.Tensor` → vLLM's `enable_prompt_embeds=True` path consumes it.
+- **REST shim** gains a new `input_kind="prompt_embedding_torch_b64"` that b64-decodes torch-pickled tensors and passes `{"prompt_embeds": tensor}` to `engine.generate(...)` directly. REST embed cohort is updated to send this format. (Existing M5.x `input_kind="prompt_embedding_b64"` remains for back-compat with M5.x / M6 reproductions.)
+- Operator's client machine needs `torch` installed locally (for the driver's `torch.save` call). Listed as a prerequisite in the quickstart.
+- All other M6 wiring reused unchanged: same Modal app + `max_model_len=2048` + `gpu_memory_utilization=0.92` + classifier + reporter + smoke gate.
+
+**Verdict table format.** Same 5-classification per-cell verdict (`verdict_survives` / `verdict_changed` / `verdict_buried_by_engine` / `no_winner_at_n100` / `cell_incomplete`) plus a separate **"Engine path differential"** section that subtracts M6's published baseline from M6.1's measurements per cell. Quantifies "engine cost of `enable_prompt_embeds=True` vs text-prompt completion" as a methodology disclosure for production callers picking between the two paths.
+
+**Outputs.** `docs/benchmarks/m6_1-real-prompt-embeds.{md,json}` plus a "Supersedes M6 under enable_prompt_embeds" verdict table. Drive with `python -m vllm_grpc_bench --m6_1 --m6_1-modal-region=eu-west-1`. Runtime budget: ~75–90 min on Modal A10G (same hardware as M6; engine code path is the only operative change).
+
+**Speckit cycle.** Run `/speckit-specify` → `/speckit-clarify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement` against this section after M6 publishes its verdict table. M6's published JSON is M6.1's baseline reference (FR-014-equivalent hard precondition).
+
+Out of scope: prompt-length variation in the embeddings (deferred to M7), additional models (deferred to M8), real-engine re-validation of M3/M4 channel-tuning under the embeddings path (defer until M6.1 produces a verdict — if M6.1 says `verdict_buried_by_engine` everywhere, channel-tuning re-validation is moot).
 
 ### M7 — Corpus Expansion (upcoming)
 
