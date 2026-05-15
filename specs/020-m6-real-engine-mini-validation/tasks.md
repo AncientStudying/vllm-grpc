@@ -55,13 +55,13 @@ description: "Task list for M6 — Real-Engine Mini-Validation"
 
 - [X] T005 [P] Add per-RPC engine-cost timing wrapper around `AsyncLLM.generate()` for embed path in `packages/frontend/src/vllm_grpc_frontend/completions.py`: time `perf_counter()` start before generate call and end after drain; emit `engine-forward-ms` via `context.set_trailing_metadata((("engine-forward-ms", f"{ms:.3f}"),))` per contracts/instrumentation.md §1. Preserve existing response shape and proto (no `.proto` edits — Constitution Principle I).
 - [X] T006 [P] Add per-RPC engine-cost timing wrapper around `AsyncLLM.generate()` for chat_stream path in `packages/frontend/src/vllm_grpc_frontend/chat.py`: capture `first_token_at` on first non-empty output chunk, `last_token_at` and `token_count` continuously; on stream completion compute `engine_ttft_ms` and `engine_tpot_ms` and emit both keys via `context.set_trailing_metadata(...)` per contracts/instrumentation.md §1.
-- [ ] T007 [US1] [US2] Add pytest unit test for embed timing wrapper trailing-metadata emission in `packages/frontend/tests/test_chat_servicer.py` (extend existing file) / new `packages/frontend/tests/test_engine_cost_metadata.py` — invoke servicer against a fake engine, assert `engine-forward-ms` is present in trailing metadata and parses as float; for chat_stream assert both `engine-ttft-ms` and `engine-tpot-ms` are present on stream completion.
+- [X] T007 [US1] [US2] Add pytest unit test for embed timing wrapper trailing-metadata emission in `packages/frontend/tests/test_chat_servicer.py` (extend existing file) / new `packages/frontend/tests/test_engine_cost_metadata.py` — invoke servicer against a fake engine, assert `engine-forward-ms` is present in trailing metadata and parses as float; for chat_stream assert both `engine-ttft-ms` and `engine-tpot-ms` are present on stream completion.
 
 ### REST shim engine_cost (FR-008, R-4)
 
 - [X] T008 Emit `engine_cost: {engine_forward_ms: ...}` at top level of `/v1/embeddings` JSON response payload in `tools/benchmark/src/vllm_grpc_bench/rest_shim.py` (unary path) per contracts/instrumentation.md §2. Read the float value from the gRPC trailing-metadata `engine-forward-ms` returned by the upstream gRPC frontend.
 - [X] T009 Emit `engine_cost: {engine_ttft_ms: ..., engine_tpot_ms: ...}` on the terminal SSE event of `/v1/chat/completions?stream=true` in `tools/benchmark/src/vllm_grpc_bench/rest_shim.py` (streaming path) per contracts/instrumentation.md §2. The engine_cost field is added to the event with `finish_reason` set, immediately before `data: [DONE]`. Read floats from upstream gRPC trailing metadata.
-- [ ] T010 [P] Add pytest test for REST shim engine_cost emission in `tools/benchmark/tests/test_m6_rest_shim_engine_cost.py` (NEW): assert `/v1/embeddings` response has top-level `engine_cost.engine_forward_ms`; assert final SSE event from `/v1/chat/completions?stream=true` carries `engine_cost.engine_ttft_ms` and `engine_cost.engine_tpot_ms`.
+- [X] T010 [P] Add pytest test for REST shim engine_cost emission in `tools/benchmark/tests/test_m6_rest_shim_engine_cost.py` (NEW): assert `/v1/embeddings` response has top-level `engine_cost.engine_forward_ms`; assert final SSE event from `/v1/chat/completions?stream=true` carries `engine_cost.engine_ttft_ms` and `engine_cost.engine_tpot_ms`.
 
 ### Engine-cost harness-side parser (R-2, R-4)
 
@@ -71,13 +71,13 @@ description: "Task list for M6 — Real-Engine Mini-Validation"
 
 ### Cohort readers (consume engine_cost; FR-008, R-2, R-4)
 
-- [ ] T014 Modify `tools/benchmark/src/vllm_grpc_bench/m5_1_grpc_cohort.py` to read `call.trailing_metadata()` after `await response_with_call()` and pass the metadata to `m6_engine_cost.parse_grpc_trailing_metadata()`. Surface the resulting `EngineCostSpan` on each per-RPC measurement record. Preserve existing M5.x semantics when `engine_cost` is absent (M5.x callers still work).
-- [ ] T015 Modify `tools/benchmark/src/vllm_grpc_bench/rest_cohort.py` to parse the top-level `engine_cost` JSON field on unary responses and the terminal SSE event's payload on streaming responses, via `m6_engine_cost.parse_rest_response()`. Surface the resulting `EngineCostSpan` on each per-RPC measurement record; preserve M5.x semantics when absent.
+- [X] T014 Modify `tools/benchmark/src/vllm_grpc_bench/m5_1_grpc_cohort.py` to read `call.trailing_metadata()` after `await response_with_call()` and pass the metadata to `m6_engine_cost.parse_grpc_trailing_metadata()`. Surface the resulting `EngineCostSpan` on each per-RPC measurement record. Preserve existing M5.x semantics when `engine_cost` is absent (M5.x callers still work).
+- [X] T015 Modify `tools/benchmark/src/vllm_grpc_bench/rest_cohort.py` to parse the top-level `engine_cost` JSON field on unary responses and the terminal SSE event's payload on streaming responses, via `m6_engine_cost.parse_rest_response()`. Surface the resulting `EngineCostSpan` on each per-RPC measurement record; preserve M5.x semantics when absent.
 
 ### Events sidecar extension (data-model.md `M6PerRequestEvent`)
 
-- [ ] T016 Modify `tools/benchmark/src/vllm_grpc_bench/m5_2_events.py` to add the M6-specific event fields (`rpc_phase`, `rpc_index`, `seed`, `engine_forward_ms`, `engine_ttft_ms`, `engine_tpot_ms`, `success`, `failure_reason`, `retry_count`) to the per-request event record. Existing M5.2-shape readers MUST keep working (additive only; FR-016 strict superset).
-- [ ] T017 [P] Add pytest test for the extended event record in `tools/benchmark/tests/test_m6_events_sidecar.py` (NEW): assert warmup records have `rpc_index is None` and `seed is None` (FR-021/FR-025 validation rule); assert measurement records have both set; assert engine_cost trio is path-discriminated (embed sets `engine_forward_ms` only; chat_stream sets `engine_ttft_ms` + `engine_tpot_ms`).
+- [X] T016 Modify `tools/benchmark/src/vllm_grpc_bench/m5_2_events.py` to add the M6-specific event fields (`rpc_phase`, `rpc_index`, `seed`, `engine_forward_ms`, `engine_ttft_ms`, `engine_tpot_ms`, `success`, `failure_reason`, `retry_count`) to the per-request event record. Existing M5.2-shape readers MUST keep working (additive only; FR-016 strict superset).
+- [X] T017 [P] Add pytest test for the extended event record in `tools/benchmark/tests/test_m6_events_sidecar.py` (NEW): assert warmup records have `rpc_index is None` and `seed is None` (FR-021/FR-025 validation rule); assert measurement records have both set; assert engine_cost trio is path-discriminated (embed sets `engine_forward_ms` only; chat_stream sets `engine_ttft_ms` + `engine_tpot_ms`).
 
 ### Per-RPC sampling-seed mapping (FR-025, R-7 step input)
 
@@ -86,8 +86,8 @@ description: "Task list for M6 — Real-Engine Mini-Validation"
 
 ### Modal app real-engine launch (FR-003, FR-024, R-10)
 
-- [ ] T020 Modify `scripts/python/modal_bench_rest_grpc_server.py` to honour `M6_USE_REAL_ENGINE` and `M6_MODEL` env vars: when `M6_USE_REAL_ENGINE=true`, instantiate `AsyncLLM.from_engine_args(AsyncEngineArgs(model=M6_MODEL, dtype="float16", enable_prompt_embeds=True))`; otherwise keep the existing MockEngine path. Engine loads ONCE at startup, before gRPC and REST servers begin accepting traffic (FR-024).
-- [ ] T021 Add a `_smoke_check_engine(engine)` step in `scripts/python/modal_bench_rest_grpc_server.py` that runs a single throwaway forward pass after `AsyncLLM` instantiation; on failure surface a clear OOM/load error (NOT a silent worker-pod kill) per Edge case "GPU memory exceeds A10G's 24 GB" and R-3 / R-10.
+- [X] T020 Modify `scripts/python/modal_bench_rest_grpc_server.py` to honour `M6_USE_REAL_ENGINE` and `M6_MODEL` env vars: when `M6_USE_REAL_ENGINE=true`, instantiate `AsyncLLM.from_engine_args(AsyncEngineArgs(model=M6_MODEL, dtype="float16", enable_prompt_embeds=True))`; otherwise keep the existing MockEngine path. Engine loads ONCE at startup, before gRPC and REST servers begin accepting traffic (FR-024).
+- [X] T021 Add a `_smoke_check_engine(engine)` step in `scripts/python/modal_bench_rest_grpc_server.py` that runs a single throwaway forward pass after `AsyncLLM` instantiation; on failure surface a clear OOM/load error (NOT a silent worker-pod kill) per Edge case "GPU memory exceeds A10G's 24 GB" and R-3 / R-10.
 
 ### M5.2 baseline file precondition (FR-014, R-5)
 
@@ -96,8 +96,8 @@ description: "Task list for M6 — Real-Engine Mini-Validation"
 
 ### CLI flag wiring (FR-011, FR-017; contracts/cli.md)
 
-- [ ] T024 Add `--m6` / `--m6-smoke` (mutually exclusive top-level flags) and the namespaced flags listed in `contracts/cli.md` (`--m6-modal-region`, `--m6-modal-token-env`, `--m6-modal-endpoint`, `--m6-skip-deploy`, `--m6-base-seed`, `--m6-model`, `--m6-events-sidecar-out`, `--m6-report-out`, `--m6-report-json-out`, `--m6-rtt-validity-ms`, `--m6-rtt-exercise-ms`, `--m6-shim-overhead-warn-pct`, `--m6-run-id`, `--m6-m5-2-baseline`) to `tools/benchmark/src/vllm_grpc_bench/__main__.py`, mirroring the existing `--m5_2` flag namespace. Wire both `--m6` and `--m6-smoke` to argparse mutual-exclusion against all M5.x mode flags.
-- [ ] T025 [P] Add pytest test for the M6 CLI surface in `tools/benchmark/tests/test_m6_cli.py` (NEW) (parallel to `test_m5_2_cli.py`): assert all M6 flags parse with documented defaults; assert `--m6` + `--m6-smoke` rejection; assert `--m6` + `--m5_2` rejection; assert exit code mapping matches `contracts/cli.md` §"Exit codes".
+- [X] T024 Add `--m6` / `--m6-smoke` (mutually exclusive top-level flags) and the namespaced flags listed in `contracts/cli.md` (`--m6-modal-region`, `--m6-modal-token-env`, `--m6-modal-endpoint`, `--m6-skip-deploy`, `--m6-base-seed`, `--m6-model`, `--m6-events-sidecar-out`, `--m6-report-out`, `--m6-report-json-out`, `--m6-rtt-validity-ms`, `--m6-rtt-exercise-ms`, `--m6-shim-overhead-warn-pct`, `--m6-run-id`, `--m6-m5-2-baseline`) to `tools/benchmark/src/vllm_grpc_bench/__main__.py`, mirroring the existing `--m5_2` flag namespace. Wire both `--m6` and `--m6-smoke` to argparse mutual-exclusion against all M5.x mode flags.
+- [X] T025 [P] Add pytest test for the M6 CLI surface in `tools/benchmark/tests/test_m6_cli.py` (NEW) (parallel to `test_m5_2_cli.py`): assert all M6 flags parse with documented defaults; assert `--m6` + `--m6-smoke` rejection; assert `--m6` + `--m5_2` rejection; assert exit code mapping matches `contracts/cli.md` §"Exit codes".
 
 **Checkpoint**: Foundation ready — engine-cost wire format published on both transports, parser consumes both, cohort readers integrated, Modal app launches real engine, CLI flags plumbed, seed mapping deterministic, M5.2 baseline precondition enforced. User story implementation can now begin.
 

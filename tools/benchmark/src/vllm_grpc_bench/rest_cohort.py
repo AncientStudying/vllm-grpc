@@ -45,10 +45,42 @@ from vllm_grpc_bench.corpus import RequestSample
 from vllm_grpc_bench.m3_sweep import DEFAULT_CHAT_MAX_TOKENS, build_chat_prompt
 from vllm_grpc_bench.m3_types import (
     NetworkPath,
+    Path_,
     RESTCohortRecord,
     RestHttpsEdgeCohortRecord,
     RTTRecord,
 )
+
+
+def _extract_engine_cost_from_sse_payload(
+    payload: str | None,
+    path: Path_,
+) -> dict[str, float] | None:
+    """Parse engine_cost from a JSON SSE event payload (M6 terminal event).
+
+    Returns ``None`` if ``payload`` is None / not JSON / lacks the
+    ``engine_cost`` field / has unparseable values (pre-M6 REST shim).
+    """
+    if not payload:
+        return None
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    ec = data.get("engine_cost")
+    if not isinstance(ec, dict):
+        return None
+    try:
+        if path == "embed":
+            return {"engine_forward_ms": float(ec["engine_forward_ms"])}
+        return {
+            "engine_ttft_ms": float(ec["engine_ttft_ms"]),
+            "engine_tpot_ms": float(ec["engine_tpot_ms"]),
+        }
+    except (KeyError, ValueError, TypeError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -59,6 +91,13 @@ class RESTCohortSample:
     shim_overhead_ms: float  # parsed from X-Shim-Overhead-Ms header
     request_bytes: int  # JSON body length
     response_bytes: int  # JSON or first-line SSE byte count
+    # M6 (T015): per-RPC engine cost parsed from the response payload —
+    # ``engine_cost.engine_forward_ms`` on the unary embed response (top
+    # level of JSON) and ``engine_cost.{engine_ttft_ms,engine_tpot_ms}`` on
+    # the terminal SSE event of chat_stream (contracts/instrumentation.md
+    # §2). None on pre-M6 REST shims; M5.x callers that ignore the field
+    # are unaffected.
+    engine_cost_payload: dict[str, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -189,24 +228,26 @@ async def _single_chat_stream_request(
         total_response_bytes = 0
         ttft_seconds = 0.0
         captured_first = False
-        # Record TTFT on the first non-empty ``data:`` SSE line. Then keep
-        # draining and summing every line's byte size (plus one byte for the
-        # trailing newline ``aiter_lines`` strips) so ``response_bytes`` is
-        # the total SSE body bytes — comparable to gRPC's
-        # ``sum(len(chunk.SerializeToString()) for chunk in stream)``. The
-        # earlier first-line-only behavior left REST chat_stream response
-        # byte sizes incommensurable with gRPC's, which made the bytes
-        # columns of the report misleading even though TTFT was correct.
+        # M6 (T015): the SSE event immediately before ``data: [DONE]``
+        # carries the engine_cost payload per contracts/instrumentation.md
+        # §2. We track the most recent JSON data: line and parse its
+        # engine_cost on stream completion. ``last_data_payload`` is None
+        # for pre-M6 REST shims; ``_extract_engine_cost`` then returns None.
+        last_data_payload: str | None = None
         async for line in resp.aiter_lines():
             total_response_bytes += len(line.encode()) + 1
             if not captured_first and line and line.startswith("data:") and "[DONE]" not in line:
                 ttft_seconds = time.perf_counter() - start
                 captured_first = True
+            if line and line.startswith("data:") and "[DONE]" not in line:
+                last_data_payload = line[len("data:") :].strip()
+    engine_cost_payload = _extract_engine_cost_from_sse_payload(last_data_payload, "chat_stream")
     return RESTCohortSample(
         wall_clock_seconds=ttft_seconds,
         shim_overhead_ms=shim_overhead_ms,
         request_bytes=len(body_bytes),
         response_bytes=total_response_bytes,
+        engine_cost_payload=engine_cost_payload,
     )
 
 
@@ -246,11 +287,26 @@ async def _single_embed_request(
     if resp.status_code != 200:
         raise RuntimeError(f"REST embed: expected 200, got {resp.status_code}")
     shim_overhead_ms = float(resp.headers.get("x-shim-overhead-ms", "0.0"))
+    # M6 (T015): parse top-level ``engine_cost.engine_forward_ms`` from the
+    # JSON response (contracts/instrumentation.md §2). None on pre-M6 shims.
+    engine_cost_payload: dict[str, float] | None = None
+    try:
+        body_json = json.loads(resp.content)
+    except (ValueError, TypeError):
+        body_json = None
+    if isinstance(body_json, dict):
+        ec = body_json.get("engine_cost")
+        if isinstance(ec, dict) and "engine_forward_ms" in ec:
+            try:
+                engine_cost_payload = {"engine_forward_ms": float(ec["engine_forward_ms"])}
+            except (TypeError, ValueError):
+                engine_cost_payload = None
     return RESTCohortSample(
         wall_clock_seconds=elapsed,
         shim_overhead_ms=shim_overhead_ms,
         request_bytes=len(body_bytes),
         response_bytes=len(resp.content),
+        engine_cost_payload=engine_cost_payload,
     )
 
 

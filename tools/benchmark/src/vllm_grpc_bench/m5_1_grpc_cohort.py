@@ -52,6 +52,35 @@ from vllm_grpc_bench.m3_types import GRPCSubCohortKind, Path_, RTTRecord, Sample
 from vllm_grpc_bench.rtt_probe import measure_rtt
 
 
+async def _read_engine_cost_trailing_metadata(
+    call: Any,
+    path: Path_,
+) -> dict[str, float] | None:
+    """Extract M6 engine-cost values from a gRPC call's trailing metadata.
+
+    Returns ``None`` if the call has no trailing metadata, if the keys are
+    absent (pre-M6 server), or if any value fails to parse as a float.
+    Stored on ``Sample.engine_cost_payload`` for downstream M6 consumers.
+    The path-keyed shape matches contracts/instrumentation.md §1.
+    """
+    try:
+        md_raw = await call.trailing_metadata()
+    except Exception:  # noqa: BLE001
+        return None
+    if md_raw is None:
+        return None
+    md: dict[str, str] = {k: v for k, v in md_raw}
+    try:
+        if path == "embed":
+            return {"engine_forward_ms": float(md["engine-forward-ms"])}
+        return {
+            "engine_ttft_ms": float(md["engine-ttft-ms"]),
+            "engine_tpot_ms": float(md["engine-tpot-ms"]),
+        }
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
 @dataclass(frozen=True)
 class GRPCCohortResult:
     """Aggregate output of one M5.1 gRPC cohort run.
@@ -125,6 +154,7 @@ async def _send_chat_rpc(
     tokens_emitted = 0
     error: str | None = None
     error_kind = None
+    engine_cost_payload: dict[str, float] | None = None
     try:
         call = stub.CompleteStream(req, timeout=timeout_s, metadata=metadata)
         async for chunk in call:
@@ -132,6 +162,10 @@ async def _send_chat_rpc(
             response_bytes += len(chunk.SerializeToString())
             if chunk.delta_content:
                 tokens_emitted += 1
+        # M6 (T014): chat_stream trailing metadata carries engine-ttft-ms /
+        # engine-tpot-ms (contracts/instrumentation.md §1). M5.x callers
+        # see None when the metadata is absent (pre-M6 servers).
+        engine_cost_payload = await _read_engine_cost_trailing_metadata(call, path="chat_stream")
     except Exception as exc:  # noqa: BLE001
         error = str(exc)
         error_kind = _classify_error(exc)
@@ -147,6 +181,7 @@ async def _send_chat_rpc(
         time_to_first_token_seconds=ttft,
         error=error,
         error_kind=error_kind,
+        engine_cost_payload=engine_cost_payload,
     )
 
 
@@ -167,9 +202,15 @@ async def _send_embed_rpc(
     error: str | None = None
     error_kind = None
     response_bytes = 0
+    engine_cost_payload: dict[str, float] | None = None
     try:
-        resp = await stub.Complete(req, timeout=timeout_s, metadata=metadata)
+        # M6 (T014): use ``with_call`` so we can read trailing metadata for
+        # ``engine-forward-ms`` (contracts/instrumentation.md §1) without
+        # changing the response shape M5.x consumers expect.
+        unary_callable = stub.Complete.with_call(req, timeout=timeout_s, metadata=metadata)
+        resp, call = await unary_callable
         response_bytes = len(resp.SerializeToString())
+        engine_cost_payload = await _read_engine_cost_trailing_metadata(call, path="embed")
     except Exception as exc:  # noqa: BLE001
         error = str(exc)
         error_kind = _classify_error(exc)
@@ -182,6 +223,7 @@ async def _send_embed_rpc(
         wall_clock_seconds=wall,
         error=error,
         error_kind=error_kind,
+        engine_cost_payload=engine_cost_payload,
     )
 
 

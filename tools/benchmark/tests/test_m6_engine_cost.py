@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from vllm_grpc_bench.m6_engine_cost import (
     aggregate_engine_cost_per_cell,
     compute_drift_warning,
@@ -85,7 +87,7 @@ def test_parse_rest_response_partial_chat_stream_returns_none() -> None:
 
 def test_drift_warning_exact_10pct_does_not_trigger() -> None:
     # 100 vs 110 — exactly 10% disagreement; FR-014 says ">10%"
-    means = {
+    means: dict[Any, float] = {
         "rest_https_edge": 100.0,
         "default_grpc": 110.0,
         "tuned_grpc_multiplexed": 100.0,
@@ -94,7 +96,7 @@ def test_drift_warning_exact_10pct_does_not_trigger() -> None:
 
 
 def test_drift_warning_10_1_pct_triggers() -> None:
-    means = {
+    means: dict[Any, float] = {
         "rest_https_edge": 100.0,
         "default_grpc": 110.11,
         "tuned_grpc_multiplexed": 100.0,
@@ -104,7 +106,7 @@ def test_drift_warning_10_1_pct_triggers() -> None:
 
 def test_drift_warning_zero_value_skipped() -> None:
     # Degenerate case: division by zero would crash; FR-014 sub-clause skips.
-    means = {
+    means: dict[Any, float] = {
         "rest_https_edge": 0.0,
         "default_grpc": 100.0,
         "tuned_grpc_multiplexed": 100.0,
@@ -114,7 +116,8 @@ def test_drift_warning_zero_value_skipped() -> None:
 
 
 def test_drift_warning_single_cohort_returns_false() -> None:
-    assert compute_drift_warning({"rest_https_edge": 100.0}) is False
+    single: dict[Any, float] = {"rest_https_edge": 100.0}
+    assert compute_drift_warning(single) is False
 
 
 # --- aggregate_engine_cost_per_cell -----------------------------------------
