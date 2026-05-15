@@ -80,11 +80,13 @@ The M6 work integrates into the existing project layout; no new top-level packag
 
 ```text
 tools/benchmark/src/vllm_grpc_bench/
+├── m6_types.py                 # NEW — M6 dataclasses + cell-iteration constants (M6Cell, M6CohortKind, EngineCostSpan, M6CellRecord, M6RunMeta, M6Run, etc. — see data-model.md)
 ├── m6_sweep.py                 # NEW — M6 sweep orchestrator (parallel to m5_2_sweep.py)
 ├── m6_supersede.py             # NEW — verdict classifier (parallel to m5_2_supersede.py)
 ├── m6_engine_cost.py           # NEW — engine_cost extraction (gRPC trailing meta parser + REST JSON field reader)
 ├── m6_smoke.py                 # NEW — smoke gate (2-cell × 3-cohort × n=10) (parallel pattern to existing smoke flows)
 ├── m6_seed.py                  # NEW — per-RPC deterministic seed mapping (FR-025)
+├── m6_reporter.py              # NEW — M6 markdown + JSON companion writers (verdict table, Engine Cost Per RPC table, M5.2 strict-superset JSON shape)
 ├── __main__.py                 # MODIFY — add --m6 + --m6-smoke + --m6-modal-region + --m6-base-seed flags following m5_2 pattern
 ├── m5_2_sweep.py               # UNCHANGED (M6 reuses cell-iteration helpers from m5_1_sweep, exported by m5_2)
 ├── rest_cohort.py              # MODIFY — read engine_cost JSON fields from REST response payload
@@ -110,7 +112,7 @@ docs/benchmarks/
 CLAUDE.md                       # MODIFY — update SPECKIT plan reference between markers (Phase 1 step 3)
 ```
 
-**Structure Decision**: M6 is an additive extension of the M5.2 harness, not a refactor. The M5.2 modules remain unchanged in their existing semantics; M6 adds 5 parallel modules (`m6_sweep`, `m6_supersede`, `m6_engine_cost`, `m6_smoke`, `m6_seed`) and modifies 7 shared modules (`__main__`, `rest_cohort`, `m5_1_grpc_cohort`, `m5_2_events`, `rest_shim`, gRPC frontend `chat.py` + `completions.py`, Modal app `modal_bench_rest_grpc_server.py`). This preserves M5.2's published verdict pipeline as the inheritance baseline and isolates M6's real-engine concerns in clearly named modules.
+**Structure Decision**: M6 is an additive extension of the M5.2 harness, not a refactor. The M5.2 modules remain unchanged in their existing semantics; M6 adds 7 parallel modules (`m6_types`, `m6_sweep`, `m6_supersede`, `m6_engine_cost`, `m6_smoke`, `m6_seed`, `m6_reporter`) and modifies 7 shared modules (`__main__`, `rest_cohort`, `m5_1_grpc_cohort`, `m5_2_events`, `rest_shim`, gRPC frontend `chat.py` + `completions.py`, Modal app `modal_bench_rest_grpc_server.py`). `m6_types` holds the shared dataclasses + constants depended on by every other M6 module; `m6_reporter` separates path-discriminated markdown + JSON rendering from sweep orchestration. This preserves M5.2's published verdict pipeline as the inheritance baseline and isolates M6's real-engine concerns in clearly named modules.
 
 ## Complexity Tracking
 
