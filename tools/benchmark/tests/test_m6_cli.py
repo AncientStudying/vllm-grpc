@@ -165,16 +165,17 @@ def test_m6_dispatch_invokes_sweep_when_baseline_ok(
     assert rc == 2
 
 
-def test_m6_smoke_dispatch_raises_not_implemented_until_us3(
+def test_m6_smoke_dispatch_routes_to_smoke_runner(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """--m6-smoke is implemented in Phase 5 (US3 — T054-T056); Phase 3
-    MVP raises NotImplementedError with a clear message.
+    """Phase 5 (US3): --m6-smoke dispatches to ``_run_m6_smoke``. The
+    smoke runner exits with code 2 because the production Modal driver
+    is not yet wired (the same seam the full sweep uses).
     """
     monkeypatch.setenv("MODAL_BENCH_TOKEN", "tok-xyz")
     real_baseline = Path("docs/benchmarks/m5_2-transport-vs-tuning.json")
     if not real_baseline.exists():
         pytest.skip(f"baseline JSON not at {real_baseline}; skipping")
     ns = _parse("--m6-smoke", f"--m6-m5-2-baseline={real_baseline}")
-    with pytest.raises(NotImplementedError):
-        _run_m6(ns)
+    rc = _run_m6(ns)
+    assert rc == 2

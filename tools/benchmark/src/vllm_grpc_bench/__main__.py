@@ -1716,14 +1716,39 @@ def _run_m6(args: argparse.Namespace) -> int:
         return 1 if getattr(args, "m6", False) else 2
 
     if getattr(args, "m6_smoke", False):
-        # T054-T056 (smoke runner) — implemented as part of US3 (Phase 5).
-        # Not in MVP scope; Phase 2 dispatch surface kept intact.
-        raise NotImplementedError(
-            "M6 smoke gate lands in Phase 5 (US3 — T054-T056). The MVP "
-            "(--m6) full sweep is implemented; smoke is a follow-up."
-        )
+        return _run_m6_smoke(args, baseline)
 
     return _run_m6_full_sweep(args, baseline)
+
+
+def _run_m6_smoke(args: argparse.Namespace, baseline: dict[str, Any]) -> int:
+    """Execute the M6 smoke gate (T056).
+
+    Composes Modal deploy + RPC driver (production seam) → smoke runner →
+    stderr summary → exit code mapping. Per FR-012, this function NEVER
+    invokes the full sweep regardless of smoke outcome.
+
+    Exit codes per contracts/cli.md §"Exit codes" (smoke):
+    - 0 — all 6 (cell × cohort) pairs ok
+    - 1 — one or more pairs failed
+    - 2 — baseline precondition failed at launch (handled upstream)
+    """
+    import asyncio as _asyncio
+
+    from vllm_grpc_bench.m6_smoke import emit_smoke_summary, run_smoke, smoke_exit_code
+
+    _ = baseline  # baseline already validated by the caller (precondition check)
+
+    try:
+        driver, _rtt_distribution, _modal_function_id = _build_m6_modal_driver(args)
+    except NotImplementedError as exc:
+        print(f"Error: M6 production Modal driver not yet wired: {exc}", file=sys.stderr)
+        # Smoke uses exit code 2 for launch failures per contracts/cli.md.
+        return 2
+
+    result = _asyncio.run(run_smoke(driver))
+    emit_smoke_summary(result)
+    return smoke_exit_code(result)
 
 
 def _run_m6_full_sweep(args: argparse.Namespace, baseline: dict[str, Any]) -> int:
