@@ -393,10 +393,23 @@ async def serve_bench_real_engine(
         from vllm import AsyncEngineArgs
         from vllm.v1.engine.async_llm import AsyncLLM
 
+        # M6 workload sequence lengths (FR-005 / m6_rpc_driver):
+        #   embed:       16 prompt-embed tokens + max_tokens=10  → ≤30 tokens
+        #   chat_stream: ~80-char prompt + max_tokens=50         → ≤100 tokens
+        # The model's default ``max_model_len`` (40 960 for Qwen3-8B)
+        # demands ~5.6 GiB of KV cache, which exceeds the A10G's
+        # post-weights budget (24 GB − ~16 GB weights ≈ 8 GB, with vLLM
+        # default gpu_memory_utilization=0.90 leaving ~4.3 GiB free for
+        # KV cache + activations). Cap ``max_model_len`` at 2048 — 20×
+        # larger than the worst-case M6 RPC length — to keep KV cache
+        # under ~300 MiB and leave plenty of headroom for cold-start +
+        # activation memory spikes.
         engine_args = AsyncEngineArgs(
             model=effective_model,
             dtype="float16",
             enable_prompt_embeds=True,  # Phase 6.1 carry-over
+            max_model_len=2048,
+            gpu_memory_utilization=0.92,
         )
         engine = AsyncLLM.from_engine_args(engine_args)
         # R-10: surface OOM/load-failure explicitly before accepting traffic.
