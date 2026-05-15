@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from vllm_grpc_bench.__main__ import _build_parser, _run_m6, _validate_m6_args
@@ -152,16 +151,30 @@ def test_m6_dispatch_baseline_missing_cell_full_sweep(
 def test_m6_dispatch_invokes_sweep_when_baseline_ok(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """When the baseline JSON loads cleanly the Phase 2 stub raises
-    NotImplementedError (Phase 3 will replace this with the actual sweep).
+    """When the baseline JSON loads cleanly the dispatch enters
+    ``_run_m6_full_sweep`` and exits cleanly with code 2 because the
+    production Modal driver is not yet wired (T044 leaves a clear seam).
     """
     monkeypatch.setenv("MODAL_BENCH_TOKEN", "tok-xyz")
-    # Real baseline file — has the 6 required cells under R-6 cohort mapping.
     real_baseline = Path("docs/benchmarks/m5_2-transport-vs-tuning.json")
     if not real_baseline.exists():
         pytest.skip(f"baseline JSON not at {real_baseline}; skipping")
     ns = _parse("--m6", f"--m6-m5-2-baseline={real_baseline}")
-    with patch("vllm_grpc_bench.m6_supersede.load_and_validate_m5_2_baseline") as load_mock:
-        load_mock.return_value = {"protocol_comparison_verdicts": []}
-        with pytest.raises(NotImplementedError):
-            _run_m6(ns)
+    rc = _run_m6(ns)
+    # Modal driver not yet wired → exit code 2 (sweep abort mid-launch).
+    assert rc == 2
+
+
+def test_m6_smoke_dispatch_raises_not_implemented_until_us3(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """--m6-smoke is implemented in Phase 5 (US3 — T054-T056); Phase 3
+    MVP raises NotImplementedError with a clear message.
+    """
+    monkeypatch.setenv("MODAL_BENCH_TOKEN", "tok-xyz")
+    real_baseline = Path("docs/benchmarks/m5_2-transport-vs-tuning.json")
+    if not real_baseline.exists():
+        pytest.skip(f"baseline JSON not at {real_baseline}; skipping")
+    ns = _parse("--m6-smoke", f"--m6-m5-2-baseline={real_baseline}")
+    with pytest.raises(NotImplementedError):
+        _run_m6(ns)

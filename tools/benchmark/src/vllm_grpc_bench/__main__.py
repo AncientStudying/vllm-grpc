@@ -6,8 +6,9 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from vllm_grpc_bench.compare import compare, compare_cross, compare_three_way
 from vllm_grpc_bench.corpus import load_corpus
@@ -1682,7 +1683,7 @@ def _validate_m6_args(args: argparse.Namespace) -> int:
 
 
 def _run_m6(args: argparse.Namespace) -> int:
-    """Dispatch to the M6 full sweep or smoke gate.
+    """Dispatch to the M6 full sweep or smoke gate (T044).
 
     Exit codes per contracts/cli.md:
     * 0 — success (full sweep: all 6 cells classified; smoke: all 6 pairs ok)
@@ -1706,7 +1707,7 @@ def _run_m6(args: argparse.Namespace) -> int:
     # consumed. Full-sweep maps the failure to exit code 1; smoke maps to
     # exit code 2 (contracts/cli.md §"Exit codes").
     try:
-        load_and_validate_m5_2_baseline(args.m6_m5_2_baseline)
+        baseline = load_and_validate_m5_2_baseline(args.m6_m5_2_baseline)
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1 if getattr(args, "m6", False) else 2
@@ -1714,14 +1715,138 @@ def _run_m6(args: argparse.Namespace) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1 if getattr(args, "m6", False) else 2
 
-    # Phase 3 lands the full sweep + classifier + reporter (T026-T044) and
-    # the smoke runner (T054-T056). Phase 2 ships the wiring — the actual
-    # dispatch raises a clear NotImplementedError so partial commits don't
-    # silently no-op against paid Modal compute.
+    if getattr(args, "m6_smoke", False):
+        # T054-T056 (smoke runner) — implemented as part of US3 (Phase 5).
+        # Not in MVP scope; Phase 2 dispatch surface kept intact.
+        raise NotImplementedError(
+            "M6 smoke gate lands in Phase 5 (US3 — T054-T056). The MVP "
+            "(--m6) full sweep is implemented; smoke is a follow-up."
+        )
+
+    return _run_m6_full_sweep(args, baseline)
+
+
+def _run_m6_full_sweep(args: argparse.Namespace, baseline: dict[str, Any]) -> int:
+    """Execute the M6 full sweep end-to-end (T044).
+
+    Composes RTT probe (T036) → run_sweep (T026-T028) → reporter (T039-T043).
+    Modal deploy + production RPC driver construction is delegated to
+    :func:`_build_m6_modal_driver` which raises a clear error when not
+    yet wired to a live Modal endpoint — kept as a clearly-named seam so
+    the rest of the dispatch is fully testable against mock drivers.
+    """
+    import datetime as _datetime
+    import socket
+    import subprocess
+    from pathlib import Path as _Path
+
+    from vllm_grpc_bench.m6_reporter import build_m6_run, write_json, write_markdown
+    from vllm_grpc_bench.m6_supersede import snapshot_m5_2_winner_deltas
+    from vllm_grpc_bench.m6_sweep import (
+        ProgressReporter,
+        run_sweep,
+        summarize_verdict_tally,
+    )
+    from vllm_grpc_bench.m6_types import M6RunMeta
+
+    progress = ProgressReporter()
+    progress.emit_startup(model=args.m6_model, region=args.m6_modal_region)
+
+    started_at = _datetime.datetime.now(_datetime.UTC)
+    cold_start_started = time.monotonic()
+
+    try:
+        driver, rtt_distribution, modal_function_id = _build_m6_modal_driver(args)
+    except NotImplementedError as exc:
+        print(f"Error: M6 production Modal driver not yet wired: {exc}", file=sys.stderr)
+        return 2
+
+    cold_start_s = time.monotonic() - cold_start_started
+
+    try:
+        cells, _measurements = asyncio.run(
+            run_sweep(
+                driver,
+                baseline,
+                base_seed=int(args.m6_base_seed),
+                progress=progress,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error: M6 sweep aborted mid-run: {exc}", file=sys.stderr)
+        return 2
+
+    # T037/T038: build RunMeta (cold_start, git_sha, hostname, etc.).
+    try:
+        git_sha = (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
+            .decode()
+            .strip()
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        git_sha = "unknown"
+
+    try:
+        import vllm
+
+        engine_version = getattr(vllm, "__version__", "unknown")
+    except ImportError:
+        engine_version = "unknown"
+
+    run_id = args.m6_run_id or f"{started_at.strftime('%Y-%m-%dT%H:%M:%SZ')}-{git_sha[:7]}"
+    meta = M6RunMeta(
+        git_sha=git_sha,
+        hostname=socket.gethostname(),
+        modal_function_id=modal_function_id,
+        gpu_type="A10G",
+        modal_region=str(args.m6_modal_region),
+        model_identifier=str(args.m6_model),
+        engine_version=engine_version,
+        cold_start_s=cold_start_s,
+        m5_2_winner_deltas=snapshot_m5_2_winner_deltas(baseline),
+        m6_base_seed=int(args.m6_base_seed),
+    )
+
+    completed_at = _datetime.datetime.now(_datetime.UTC)
+    run = build_m6_run(
+        run_id=run_id,
+        run_started_at=started_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        run_completed_at=completed_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        meta=meta,
+        cells=cells,
+        rtt_distribution=rtt_distribution,
+    )
+
+    # T039 / T042 — write the two artifacts.
+    report_md = _Path(args.m6_report_out)
+    report_json = _Path(args.m6_report_json_out)
+    write_markdown(run, report_md)
+    write_json(run, report_json)
+
+    tally = summarize_verdict_tally(cells)
+    progress.emit_completion(str(report_md), tally)
+    print(str(report_md))  # stdout — composes with shell pipes per contracts/cli.md.
+    return 0
+
+
+def _build_m6_modal_driver(args: argparse.Namespace) -> tuple[Any, Any, str]:
+    """Construct the production gRPC + REST driver against a live Modal deploy.
+
+    Returns ``(rpc_driver, rtt_distribution, modal_function_id)``.
+
+    NOT yet implemented — this is the seam where the harness deploys the
+    M6 Modal app, opens gRPC channels + an httpx client against the
+    deployed endpoints, and wires the M6 instrumentation surface (Phase 2)
+    into an ``RPCDriver`` callable. Implementing this is the final step
+    that lets ``--m6`` actually consume paid Modal compute; tests inject a
+    mock driver via :func:`run_m6_dispatch_for_test` instead.
+    """
     raise NotImplementedError(
-        "M6 sweep dispatch lands in Phase 3 (T026-T044 / T054-T056). The "
-        "M6 baseline precondition + CLI flags + engine instrumentation are "
-        "in place. See specs/020-m6-real-engine-mini-validation/tasks.md."
+        "_build_m6_modal_driver: production Modal deploy + RPC driver "
+        "construction is implemented as the final step before T064 (the "
+        "paid Modal sweep). The sweep orchestrator + classifier + reporter "
+        "are fully wired and unit-tested; injecting a mock driver via "
+        "run_m6_dispatch_for_test exercises the full pipeline end-to-end."
     )
 
 
