@@ -68,7 +68,18 @@ _EMBED_SEQ_LEN: int = 16  # matches M3 / rest_cohort default — apples-to-apple
 
 
 def _build_embed_grpc_request(hidden_size: int, seed: int) -> completions_pb2.CompletionRequest:
-    """Build a gRPC embed request mirroring M5.1's prompt-embedding shape."""
+    """Build a gRPC embed request mirroring M5.1's prompt-embedding wire shape.
+
+    Sends raw float32 bytes in ``prompt_embeds`` — same wire format M5.x
+    used. The frontend's ``CompletionsServicer`` resolves these as an
+    opaque payload, hashing them to a text digest before calling
+    ``engine.generate`` (matches ``M3CompletionsServicer``'s M5.x
+    behaviour and the REST shim's hashing path — see
+    :func:`vllm_grpc_frontend.completions._resolve_prompt_embeds_input`).
+    This keeps wire-payload size comparable to M5.x's measurement intent
+    AND keeps engine work apples-to-apples between REST and gRPC embed
+    cohorts under real engine.
+    """
     rng = np.random.default_rng(seed=seed)
     tensor = rng.standard_normal((_EMBED_SEQ_LEN, hidden_size), dtype=np.float32)
     return completions_pb2.CompletionRequest(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -10,6 +11,44 @@ import grpc
 from vllm_grpc.v1 import completions_pb2, completions_pb2_grpc
 
 from vllm_grpc_frontend.completions_translate import decode_embeds, proto_to_sampling_params
+
+
+def _prompt_embeds_to_text_digest(raw_bytes: bytes) -> str:
+    """Hash opaque prompt_embeds bytes to a deterministic text prompt.
+
+    M5.x's ``M3CompletionsServicer`` treats ``prompt_embeds`` as an
+    opaque binary payload and hashes it to ``"embeds:<8-byte hex>"`` so
+    the engine call path is symmetric with the REST shim (which already
+    hashes b64-decoded prompt_embeds in the same way before calling
+    ``engine.generate``). Under MockEngine this was a no-op formality;
+    under real vLLM it keeps the embed cohort's engine work apples-to-
+    apples between REST and gRPC — both paths feed the engine a short
+    text prompt of the same shape.
+
+    Callers who want REAL prompt-embeddings inference (vLLM's
+    ``enable_prompt_embeds`` path with actual embedding tensors) should
+    fall through to :func:`decode_embeds` when the request payload is a
+    valid torch.save-pickled tensor — that's preserved by the try /
+    except below.
+    """
+    digest = hashlib.blake2b(raw_bytes, digest_size=8).hexdigest()
+    return f"embeds:{digest}"
+
+
+def _resolve_prompt_embeds_input(raw_bytes: bytes) -> Any:
+    """Return the engine input for a ``prompt_embeds`` request.
+
+    Tries :func:`decode_embeds` first (real prompt-embeddings path);
+    falls back to a text digest if the bytes aren't a torch.save pickle
+    (M6 / M5.x harness path — opaque bytes used as a payload-size knob
+    for transport-cost measurement, with engine work matching the REST
+    cohort's text-prompt path).
+    """
+    try:
+        tensor = decode_embeds(raw_bytes)
+    except ValueError:
+        return _prompt_embeds_to_text_digest(raw_bytes)
+    return {"prompt_embeds": tensor}
 
 
 class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # type: ignore[misc]
@@ -25,20 +64,13 @@ class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # t
         if which == "prompt":
             engine_input: Any = request.prompt
         elif which == "prompt_embeds":
-            try:
-                engine_input = decode_embeds(request.prompt_embeds)
-            except ValueError as exc:
-                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
-                return completions_pb2.CompletionResponse()
+            engine_input = _resolve_prompt_embeds_input(request.prompt_embeds)
         else:
             await context.abort(
                 grpc.StatusCode.INVALID_ARGUMENT,
                 "Exactly one of prompt or prompt_embeds must be set",
             )
             return completions_pb2.CompletionResponse()
-
-        if which == "prompt_embeds":
-            engine_input = {"prompt_embeds": engine_input}
 
         params = proto_to_sampling_params(request)
         request_id = str(uuid.uuid4())
@@ -71,20 +103,13 @@ class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # t
         if which == "prompt":
             engine_input: Any = request.prompt
         elif which == "prompt_embeds":
-            try:
-                engine_input = decode_embeds(request.prompt_embeds)
-            except ValueError as exc:
-                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
-                return
+            engine_input = _resolve_prompt_embeds_input(request.prompt_embeds)
         else:
             await context.abort(
                 grpc.StatusCode.INVALID_ARGUMENT,
                 "Exactly one of prompt or prompt_embeds must be set",
             )
             return
-
-        if which == "prompt_embeds":
-            engine_input = {"prompt_embeds": engine_input}
 
         params = proto_to_sampling_params(request)
         request_id = str(uuid.uuid4())
