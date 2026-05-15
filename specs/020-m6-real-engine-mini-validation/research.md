@@ -314,6 +314,39 @@ The harness's `--m6` CLI flag sets the `M6_USE_REAL_ENGINE=true` env var on the 
 
 ---
 
+## R-11: `max_model_len=2048` runtime cap on Qwen3-8B
+
+**Decision**: The Modal app instantiates `AsyncLLM.from_engine_args(AsyncEngineArgs(model=Qwen/Qwen3-8B, dtype="float16", enable_prompt_embeds=True, max_model_len=2048, gpu_memory_utilization=0.92))`. The `max_model_len=2048` value caps the maximum sequence length (prompt + generation) the engine will accept per RPC; `gpu_memory_utilization=0.92` bumps the KV-cache target up from vLLM's default 0.90.
+
+**Rationale**:
+
+- Qwen3-8B's pre-trained context window is 40 960 tokens. At that limit vLLM's KV-cache pre-allocation demands ~5.6 GiB on top of the ~16 GB fp16 weights (Qwen3-8B has 36 layers × hidden_size 4096 × 2 (K + V) × 2 bytes/value × max_model_len = ~22 GB at full length, but vLLM uses paged attention so the realised footprint is the per-slot block budget). On the A10G's 24 GB VRAM, that overruns the post-weights budget (24 − 16 = 8 GiB) once activation overhead is accounted for. Engine init aborts with `ValueError: ... 5.62 GiB KV cache is needed, which is larger than the available KV cache memory (4.28 GiB)`.
+
+- M6's actual per-RPC workload is bounded short:
+    - **embed**: 16 prompt-embed tokens + `max_tokens=10` → ≤30 tokens
+    - **chat_stream**: ~80-char prompt + `max_tokens=50` (FR-005) → ≤100 tokens
+
+  So 2048 is **20× the worst-case M6 RPC length** — there is no measurement scenario in which an M6 RPC requests sequence length anywhere near the cap. The cap bounds KV-cache allocation, not measured engine cost.
+
+- This is **distinct from `hidden_size=4096`** (FR-001), which is Qwen3-8B's per-token feature dimension and is fixed by the model's architecture (8 B params, 36 layers, 32 heads × head_dim=128). `hidden_size` and `max_model_len` show up multiplicatively in the KV-cache formula but vary along orthogonal axes — `hidden_size` is "how wide is each token's vector" (model property), `max_model_len` is "how many tokens can one RPC carry" (runtime config).
+
+- Resulting KV-cache budget at `max_model_len=2048`:
+    - 36 layers × 2048 × 4096 × 2 (K + V) × 2 bytes (fp16) ≈ **~1.1 GB**
+  Well within the A10G's post-weights budget; leaves ~6 GiB for activations + CUDA overhead + cold-start memory spikes.
+
+- The harness's RPC driver (`m6_rpc_driver.py`) fixes both the prompt length (build-time, deterministic per seed) and the completion length (`max_tokens` enum); we are not exposing the engine to unbounded user prompts. So the cap is operationally safe for M6 and does not need to scale with the workload.
+
+**Alternatives considered**:
+
+- Leave `max_model_len` at the model default (40 960) and reduce `gpu_memory_utilization` further — would force vLLM to operate in a memory-starved regime, increasing fragmentation and potentially inducing OOM mid-sweep. The cap is the cleaner control.
+- Cap at a smaller value (e.g., 512) — would be tighter on the budget but provides no benefit to M6 given the per-RPC token counts are well under 100; 2048 leaves room for any future expansion of M6 prompt-length scaling without re-tuning the cap.
+- Cap at a larger value (e.g., 8192) — works but consumes more KV cache (~4.5 GB) and leaves less headroom for activations during cold-start. Wasteful when M6's actual sequence demand is so much smaller.
+- Use the `vllm_memory_budget` config helper from a future M-milestone — does not exist yet; capping `max_model_len` directly is the simplest reproducible knob today.
+
+The cap is reflected in the published markdown report's Methodology Notes section so an operator reading the artifact sees the engine-config decision without needing to consult the source.
+
+---
+
 ## Coverage Summary
 
 All NEEDS CLARIFICATION items in the Technical Context were resolved during the 5-round spec clarification process; this Phase 0 file documented codebase-state findings + design decisions only. No items remain unresolved.

@@ -241,9 +241,19 @@ def render_methodology_notes(run: M6Run) -> str:
         "`engine_cost_drift_warning` flag (verdict still computed; per-cohort values "
         "surfaced).\n"
         f"- Engine instance: ONE AsyncLLM({run.meta.model_identifier}, dtype=fp16, "
-        f"enable_prompt_embeds=True) loaded once at sweep start; serves all 6 cells "
-        f"(FR-024). Cold-start excluded from per-RPC latency, recorded as scalar "
-        f"`cold_start_s={run.meta.cold_start_s:.2f}` in RunMeta (FR-019).\n\n"
+        f"enable_prompt_embeds=True, max_model_len=2048, gpu_memory_utilization=0.92) "
+        f"loaded once at sweep start; serves all 6 cells (FR-024). Cold-start "
+        f"excluded from per-RPC latency, recorded as scalar "
+        f"`cold_start_s={run.meta.cold_start_s:.2f}` in RunMeta (FR-019).\n"
+        "- `max_model_len=2048` is a runtime cap (the model's natural context "
+        "window is 40 960 tokens) chosen to fit Qwen3-8B's KV cache within the "
+        "A10G's 24 GB VRAM after the ~16 GB fp16 weights. The M6 workload's "
+        "worst-case RPC length is ≤100 tokens (chat_stream prompt + "
+        "max_tokens=50), so the cap is 20× the actual sequence demand and does "
+        "NOT affect measured engine cost — it only bounds KV-cache allocation. "
+        "Distinct from `hidden_size=4096` (FR-001), which is the model's "
+        "per-token feature dimension and is fixed by Qwen3-8B's architecture. "
+        "See `research.md` R-11.\n\n"
     )
 
 

@@ -51,6 +51,7 @@ cell=chat_stream×c=1 cohort=tuned_grpc_multiplexed status=ok reason=10/10 succ
 **Common smoke failures**:
 - `M5.2 baseline missing cell entry: chat_stream c=4` — the M5.2 JSON file under `docs/benchmarks/` is missing or stale. Pull from `main` and re-run.
 - `Engine load failed: CUDA out of memory` — Qwen3-8B fp16 didn't fit in A10G VRAM. Check the model identifier hasn't drifted (default: `Qwen/Qwen3-8B`).
+- `ValueError: ... KV cache is needed, which is larger than the available KV cache memory` — vLLM's KV-cache budget overrun. The Modal app caps `max_model_len=2048` for this reason; if you see this error, either the cap was removed or the model identifier was changed to one with a hidden size larger than Qwen3-8B's 4096. See `research.md` R-11.
 - `Modal deploy timed out` — transient Modal infrastructure issue; re-run after 1–2 min.
 
 If smoke fails, **do not run the full sweep** until the failure is resolved (FR-012). The full sweep is metered Modal A10G compute (~80 min); a wiring bug that surfaces 80 min into the run is a ~$10 mistake.
@@ -188,6 +189,7 @@ The verdict table should match bit-exactly given the same M5.2 baseline JSON (sn
 |---|---|---|
 | Smoke exits with `M5.2 baseline missing cell entry: ...` | M5.2 JSON file out of date | `git pull` on main; re-run smoke |
 | Sweep aborts at launch with `cold_start_s: 240` | Model load slow on first cold container | Re-run; second invocation hits warm container |
+| Engine init aborts with `... KV cache is needed, which is larger than the available KV cache memory` | `max_model_len` cap removed or model with larger hidden_size than Qwen3-8B (h=4096) | Verify the Modal app's `AsyncEngineArgs` carries `max_model_len=2048` and `gpu_memory_utilization=0.92`; see `research.md` R-11 |
 | `engine_cost_drift_warning` on every cell | Likely REST shim instrumentation regression | File issue; check `tools/benchmark/src/vllm_grpc_bench/rest_shim.py` for engine_cost field placement |
 | Verdict table all `no_winner_at_n100` | Maybe legitimate; or maybe seed/sampling produced unusually high variance | Re-run with `--m6-base-seed=99`; if pattern repeats, the M5.2 effect is genuinely lost under real engine |
 | Sweep wall-clock > 90 min | Per-cell budget breached | Check per-(cell × cohort) stderr lines for slow cohorts; investigate Modal region performance |
