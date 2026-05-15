@@ -28,6 +28,10 @@ M6 deliberately picks a focused 6-cell × 3-cohort slice of M5.2's matrix at a s
 - Q: Which metric does the verdict classifier compare on for chat_stream cells? → A: TTFT (client-observed) is the chat_stream classifier metric. The classifier's CI-overlap test and the 5× engine-cost ratio for `verdict_buried_by_engine` both apply on the TTFT axis. Matches M5.2's chat_stream comparison axis (apples-to-apples for the survival comparison) and surfaces the residual transport signal at `max_tokens=50` where total wall-clock is engine-dominated. Total wall-clock and `engine_ttft_ms` / `engine_tpot_ms` are still published per cell for transparency but are NOT classifier inputs. (Embed cells classify on total per-RPC wall-clock — the only client-observed latency metric for unary embed.)
 - Q: How is the engine instance lifecycle managed across the 6 cells? → A: One engine instance, shared across all 6 cells. The engine loads once at sweep start and serves every (cell × cohort) measurement until the sweep completes. No reload between cells, between paths, or between cohorts. Per-cohort warmup (FR-021) absorbs inter-cell state carryover; round-robin per c-batch (FR-022) controls inter-cohort drift within a cell. `cold_start_s` (FR-019) is therefore a single scalar per sweep, not a per-cell or per-path array. Matches PLAN.md's 75–90 min runtime budget (per-cell reloads would breach SC-001).
 
+### Session 2026-05-14 (round 3 — REST cohort instrumentation)
+
+- Q: How does the REST cohort emit `engine_cost` to the harness, given that the gRPC trailing-metadata channel doesn't apply to JSON-over-HTTP? → A: The REST shim adds `engine_cost` fields to the JSON response payload (mirroring the gRPC trailing-metadata contract). Both cohort kinds publish per-RPC engine_cost. The classifier (FR-014) consumes the cell's per-cohort mean averaged across cohorts as the cell's authoritative `engine_cost_mean` for the 5× rule. Sanity check: if any two cohorts' per-cell `engine_cost_mean` values disagree by more than 10%, the cell is annotated with an `engine_cost_drift_warning` flag in the report (verdict still computed) and per-cohort engine_cost values are surfaced for operator review.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Resolve the "real engine" caveat with a per-cell survival verdict (Priority: P1)
@@ -86,6 +90,7 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 - **A run is interrupted mid-cell** (e.g. operator Ctrl+C, Modal container OOM). Partial results are surfaced so the operator can decide whether to resume or restart; partial results MUST NOT be published as the canonical M6 verdict.
 - **The chosen real model's GPU memory exceeds A10G's 24 GB** (e.g. quantisation pinning is missed and fp16 pushes past the headroom budget). The harness MUST surface this as a model-loading failure during the smoke gate, not silently OOM the worker pod.
 - **A reader compares an M6 cell directly to an M1 GPU cell.** The report's executive section names the inference engine, model, and region so a reader cannot accidentally compare the M6 cell (Qwen3-7B at h=4096) to an M1 GPU cell (Qwen3-0.6B at a different hidden_size) without the framing being obvious.
+- **Per-cohort `engine_cost_mean` values disagree across cohorts within a cell** (e.g. one cohort triggers engine code-path differences via REST-shim quirks). Cell is annotated with `engine_cost_drift_warning` (FR-014); the verdict is still computed using the cohort-averaged mean; per-cohort engine costs are surfaced so the operator can investigate. Threshold for the warning: any pairwise cohort engine_cost disagreement >10%.
 
 ## Requirements *(mandatory)*
 
@@ -103,7 +108,10 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 **Metrics**
 
 - **FR-007**: The system MUST publish **TTFT** as a first-class metric for every chat_stream cell, alongside total wall-clock per RPC.
-- **FR-008**: The system MUST publish an **engine-cost-per-RPC** metric per cell as a named, separate metric distinct from the cohort comparisons. Engine cost MUST be measured by **server-side instrumentation**: the gRPC frontend wraps the engine call and emits per-RPC engine-cost spans, returned to the harness via gRPC response or trailing metadata. The harness MUST NOT derive engine cost by subtraction from a transport baseline, and MUST NOT introduce a separate "engine-only" cohort to estimate it.
+- **FR-008**: The system MUST publish an **engine-cost-per-RPC** metric per cell as a named, separate metric distinct from the cohort comparisons. Engine cost MUST be measured by **server-side instrumentation**: the gRPC frontend wraps the engine call and emits per-RPC engine-cost spans returned to the harness:
+  - For the gRPC cohorts (`default_grpc`, `tuned_grpc_multiplexed`): via gRPC response or trailing metadata.
+  - For the REST cohort (`rest_https_edge`): via dedicated fields added to the JSON response payload by the REST shim (mirroring the gRPC contract on a different transport).
+  Both cohort kinds MUST publish per-RPC engine_cost so the classifier can compute a per-cell `engine_cost_mean` averaged across cohorts. The harness MUST NOT derive engine cost by subtraction from a transport baseline, and MUST NOT introduce a separate "engine-only" cohort to estimate it.
   - For embed cells: `engine_forward_ms` (forward-pass wall-clock attributable to the engine alone).
   - For chat_stream cells: `engine_ttft_ms` and `engine_tpot_ms` (separately).
 - **FR-009**: The system MUST publish 95% CI half-widths for every numeric metric in the verdict table and engine-cost row, so the operator can adjudicate trust.
@@ -126,6 +134,8 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
   **Comparison metric per path.** The CI-overlap test and the `engine_cost_mean ≥ 5 × |M5.2_winner_delta|` ratio for `verdict_buried_by_engine` MUST be applied on:
   - For **chat_stream** cells: client-observed **TTFT** (matches M5.2's chat_stream comparison axis; surfaces residual transport signal at `max_tokens=50` where total wall-clock is engine-dominated). Total wall-clock and `engine_ttft_ms` / `engine_tpot_ms` are published per cell but are NOT classifier inputs.
   - For **embed** cells: client-observed **total per-RPC wall-clock** (the only client-observed latency metric for unary embed; matches M5.2's embed comparison axis). `engine_forward_ms` is published per cell but is NOT a classifier input.
+
+  **Engine-cost source for the 5× rule.** `engine_cost_mean` for a cell MUST be the per-cohort mean engine_cost averaged across all 3 cohorts (each cohort publishes per-RPC engine_cost per FR-008). If any two cohorts' per-cell `engine_cost_mean` values disagree by more than **10%**, the cell MUST be annotated with an `engine_cost_drift_warning` flag in the report, and per-cohort `engine_cost_mean` values MUST be surfaced for operator review. The verdict MUST still be computed (the warning does not promote the cell to `cell_incomplete`).
 - **FR-015**: The markdown report's executive section MUST name the inference engine, model identifier, hidden_size, Modal region, and GPU type, so a reader cannot mistake the M6 cell for an unrelated baseline.
 - **FR-016**: The JSON companion MUST be a strict superset of M5.2's JSON schema. M5.2-aware downstream consumers MUST continue to work unmodified.
 - **FR-017**: The system MUST be drivable from a single CLI invocation using the project's existing benchmark harness entry point, with `--m6` and `--m6-modal-region=<region>` flags (or equivalent) so the operator does not orchestrate cohorts or cells by hand.
