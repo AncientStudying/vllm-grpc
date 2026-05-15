@@ -85,13 +85,13 @@ def test_full_sweep_startup_banner_matches_quickstart() -> None:
     original_stderr = sys.stderr
     try:
         sys.stderr = stream
-        progress.emit_startup(model="Qwen/Qwen3-7B", region="eu-west-1")
+        progress.emit_startup(model="Qwen/Qwen3-8B", region="eu-west-1")
     finally:
         sys.stderr = original_stderr
     line = stream.getvalue().strip()
     expected = (
         "M6 sweep: 6 cells × 3 cohorts × n=100, runtime ETA ≤90 min, "
-        "model=Qwen/Qwen3-7B, region=eu-west-1"
+        "model=Qwen/Qwen3-8B, region=eu-west-1"
     )
     assert line == expected
 
@@ -101,7 +101,7 @@ def test_full_sweep_progress_line_matches_quickstart() -> None:
     ``[1/18] embed × c=1 / rest_https_edge — 100/100 succ — 8230 ms — ETA 87m``.
     """
     progress = ProgressReporter()
-    progress.emit_startup(model="Qwen/Qwen3-7B", region="eu-west-1")
+    progress.emit_startup(model="Qwen/Qwen3-8B", region="eu-west-1")
     stream = io.StringIO()
     import sys
 
@@ -130,7 +130,7 @@ def test_full_sweep_completion_banner_matches_quickstart() -> None:
     at <path> (4 verdict_survives / 1 verdict_changed / 1 cell_incomplete)``.
     """
     progress = ProgressReporter()
-    progress.emit_startup(model="Qwen/Qwen3-7B", region="eu-west-1")
+    progress.emit_startup(model="Qwen/Qwen3-8B", region="eu-west-1")
     stream = io.StringIO()
     import sys
 

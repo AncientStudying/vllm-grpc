@@ -258,7 +258,7 @@ async def provide_rest_grpc_endpoint(
         output_ctx.__exit__(None, None, None)
 
 
-# M6 real-engine deploy timeout — extended to accommodate Qwen3-7B model load
+# M6 real-engine deploy timeout — extended to accommodate Qwen3-8B model load
 # (cold-start is dominated by HuggingFace download + AsyncLLM init time).
 _M6_HANDSHAKE_TIMEOUT_S = 600.0
 
@@ -268,11 +268,11 @@ async def provide_m6_endpoint(
     *,
     region: str = "eu-west-1",
     token_env: str = "MODAL_BENCH_TOKEN",
-    model_id: str = "Qwen/Qwen3-7B",
+    model_id: str = "Qwen/Qwen3-8B",
 ) -> AsyncIterator[RESTGRPCEndpoints]:
     """M6 real-engine deploy — same dual-protocol surface as M5.1's
     :func:`provide_rest_grpc_endpoint` but spawns the ``m6_app``'s
-    ``serve_bench_real_engine`` function (Qwen3-7B fp16 on A10G, with the
+    ``serve_bench_real_engine`` function (Qwen3-8B fp16 on A10G, with the
     M6 engine-cost instrumentation surface enabled).
 
     Yields the resolved endpoints + handshake metadata. On exit, sets

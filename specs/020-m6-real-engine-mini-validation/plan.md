@@ -5,14 +5,14 @@
 
 ## Summary
 
-Replace MockEngine with real Qwen3-7B inference on Modal A10G for a focused 6-cell × 3-cohort slice of M5.2's matrix at h=4096, in order to close the "real-engine validation" caveat that M5.1 and M5.2 both deferred. Output: a per-cell "Supersedes M5.2 under real engine" verdict table classifying each cell as `verdict_survives` / `verdict_buried_by_engine` / `verdict_changed` / `no_winner_at_n100` / `cell_incomplete`, plus a published engine-cost-per-RPC baseline that M7's prompt-length-scaling work inherits as a real cost floor.
+Replace MockEngine with real Qwen3-8B inference on Modal A10G for a focused 6-cell × 3-cohort slice of M5.2's matrix at h=4096, in order to close the "real-engine validation" caveat that M5.1 and M5.2 both deferred. Output: a per-cell "Supersedes M5.2 under real engine" verdict table classifying each cell as `verdict_survives` / `verdict_buried_by_engine` / `verdict_changed` / `no_winner_at_n100` / `cell_incomplete`, plus a published engine-cost-per-RPC baseline that M7's prompt-length-scaling work inherits as a real cost floor.
 
-**Technical approach.** Reuse the existing M5.2 harness (`tools/benchmark/src/vllm_grpc_bench/`) wholesale — cell × cohort × concurrency orchestration, RTT probe, events sidecar, symmetry audit, JSON+markdown reporter. Add a `--m6` CLI branch that narrows the matrix (6 cells × 3 cohorts × n=100), wires the round-robin per c-batch sequencing convention (FR-022), pins per-RPC sampling seeds (FR-025), and feeds verdicts into a new M6 classifier that reads M5.2 winner deltas from the published JSON (FR-014). Add greenfield server-side timing wrapping in the gRPC frontend so the engine's per-RPC forward-pass / TTFT / TPOT cost is published via gRPC trailing metadata (FR-008); mirror that contract in the REST shim via JSON-payload fields. Swap MockEngine for `AsyncLLM` loaded with Qwen3-7B in the existing Modal app (`scripts/python/modal_bench_rest_grpc_server.py`) behind a flag, with model loading once at sweep start (FR-024) and `enable_prompt_embeds=True` inherited from Phase 6.1.
+**Technical approach.** Reuse the existing M5.2 harness (`tools/benchmark/src/vllm_grpc_bench/`) wholesale — cell × cohort × concurrency orchestration, RTT probe, events sidecar, symmetry audit, JSON+markdown reporter. Add a `--m6` CLI branch that narrows the matrix (6 cells × 3 cohorts × n=100), wires the round-robin per c-batch sequencing convention (FR-022), pins per-RPC sampling seeds (FR-025), and feeds verdicts into a new M6 classifier that reads M5.2 winner deltas from the published JSON (FR-014). Add greenfield server-side timing wrapping in the gRPC frontend so the engine's per-RPC forward-pass / TTFT / TPOT cost is published via gRPC trailing metadata (FR-008); mirror that contract in the REST shim via JSON-payload fields. Swap MockEngine for `AsyncLLM` loaded with Qwen3-8B in the existing Modal app (`scripts/python/modal_bench_rest_grpc_server.py`) behind a flag, with model loading once at sweep start (FR-024) and `enable_prompt_embeds=True` inherited from Phase 6.1.
 
 ## Technical Context
 
 **Language/Version**: Python 3.12 (project standard; matches M5.x harness, frontend, proxy, and Modal app)
-**Primary Dependencies**: `vllm` (real engine — Qwen3-7B fp16, ~14 GB GPU; AsyncLLM as in Phase 6.1), `grpcio` + `grpcio-tools` (HTTP/2 transport for gRPC cohorts), `FastAPI` + `uvicorn` (REST shim for `rest_https_edge` cohort), `modal` (deployment + HTTPS edge + plain-TCP tunnel), the existing `vllm_grpc_bench` harness package (M5.2 codebase under `tools/benchmark/`), and `vllm_grpc_frontend` / `vllm_grpc_proxy` packages (under `packages/`).
+**Primary Dependencies**: `vllm` (real engine — Qwen3-8B fp16, ~16 GB GPU; AsyncLLM as in Phase 6.1), `grpcio` + `grpcio-tools` (HTTP/2 transport for gRPC cohorts), `FastAPI` + `uvicorn` (REST shim for `rest_https_edge` cohort), `modal` (deployment + HTTPS edge + plain-TCP tunnel), the existing `vllm_grpc_bench` harness package (M5.2 codebase under `tools/benchmark/`), and `vllm_grpc_frontend` / `vllm_grpc_proxy` packages (under `packages/`).
 **Storage**: Outputs written to `docs/benchmarks/m6-real-engine-mini-validation.{md,json}`; per-RPC events JSONL sidecar at a path the operator passes via flag (mirroring M5.2's `--m5_2-events-sidecar-out`). Inputs read from `docs/benchmarks/m5_2-transport-vs-tuning.json` (classifier baseline — FR-014 hard precondition).
 **Testing**: `pytest` + `pytest-asyncio` (project convention). Unit tests for the M6 verdict classifier on synthetic inputs (deterministic — FR-014); integration tests for the engine-cost instrumentation contract (gRPC trailing metadata + REST JSON parity); harness-level test for the round-robin per c-batch sequencer (FR-022) and the per-RPC seed mapping (FR-025).
 **Target Platform**: Modal A10G GPU instance in `eu-west-1` (default per FR-006 and Assumption "Region"). Driven from operator workstation (M2 Pro MBP per Phase 1 / Assumption "Driver"); operator pre-configures `modal token new`.
@@ -23,7 +23,7 @@ Replace MockEngine with real Qwen3-7B inference on Modal A10G for a focused 6-ce
 - Per-cohort 95% CI half-widths must be narrow enough that the classifier's CI-overlap test resolves the majority of cells into a non-`no_winner_at_n100` bucket on a representative run (no separate SC; implicit from sweep structure).
 
 **Constraints**:
-- A10G GPU memory: Qwen3-7B fp16 ≈ 14 GB + KV-cache headroom for c=8 chat_stream within 24 GB total. Quantisation pinning to fp16 is mandatory (Edge case "GPU memory exceeds A10G's 24 GB").
+- A10G GPU memory: Qwen3-8B fp16 ≈ 16 GB + KV-cache headroom for c=8 chat_stream within 24 GB total. Quantisation pinning to fp16 is mandatory (Edge case "GPU memory exceeds A10G's 24 GB").
 - FR-016: JSON companion is a strict superset of M5.2's schema; existing M5.2-aware consumers (the `m5_2_supersede` classifier itself, downstream M5.1 supersession code paths) MUST continue to work unmodified against M6's JSON.
 - FR-024: One engine instance for the entire sweep; no reload per cell or per path. Engine loads in the Modal app's startup hook before the gRPC + REST servers begin accepting traffic.
 - FR-014: Verdict classifier is deterministic given M6 numeric inputs and the M5.2 published winner deltas — no operator post-hoc re-classification permitted.
@@ -102,7 +102,7 @@ packages/frontend/src/vllm_grpc_frontend/
 └── main.py                     # UNCHANGED (Phase 6.1 already added enable_prompt_embeds=True)
 
 scripts/python/
-└── modal_bench_rest_grpc_server.py  # MODIFY — add --use-real-engine flag (or env var); when set, instantiate AsyncLLM(Qwen3-7B) instead of MockEngine; load engine once at startup (FR-024)
+└── modal_bench_rest_grpc_server.py  # MODIFY — add --use-real-engine flag (or env var); when set, instantiate AsyncLLM(Qwen3-8B) instead of MockEngine; load engine once at startup (FR-024)
 
 docs/benchmarks/
 ├── m5_2-transport-vs-tuning.json      # READ-ONLY input (classifier baseline — FR-014 hard precondition)

@@ -20,7 +20,7 @@ The function blocks until the harness sets ``teardown=True`` on the shared
 
 M6 (T020/T021): the existing ``serve_bench`` MockEngine path is preserved
 for M5.x callers. A NEW ``serve_bench_real_engine`` function adds an
-``AsyncLLM(Qwen3-7B fp16, enable_prompt_embeds=True)`` real-engine path
+``AsyncLLM(Qwen3-8B fp16, enable_prompt_embeds=True)`` real-engine path
 gated by ``M6_USE_REAL_ENGINE=true``, with ``gpu="A10G"`` at the
 ``@app.function`` decoration and a startup ``_smoke_check_engine``
 throwaway forward-pass to surface OOM / model-load failures as explicit
@@ -256,7 +256,7 @@ def main(token: str = "", region: str = "eu-west-1") -> None:
 #
 # A second Modal app exposing the SAME dual-protocol gRPC + REST surface,
 # but with the engine instance swapped from MockEngine to an AsyncLLM
-# loaded with Qwen3-7B fp16. Lives in a separate app namespace
+# loaded with Qwen3-8B fp16. Lives in a separate app namespace
 # (``_M6_APP_NAME``) so the existing M5.x deploys keep their identifier
 # and no GPU compute is consumed by M5.x callers.
 #
@@ -329,9 +329,9 @@ def _smoke_check_engine(engine: Any) -> None:
 async def serve_bench_real_engine(
     token: str,
     region: str,
-    model_id: str = "Qwen/Qwen3-7B",
+    model_id: str = "Qwen/Qwen3-8B",
 ) -> dict[str, object]:
-    """Serve the M6 real-engine bench app (Qwen3-7B fp16 on A10G).
+    """Serve the M6 real-engine bench app (Qwen3-8B fp16 on A10G).
 
     Identical to :func:`serve_bench` except that the engine instance is
     an ``AsyncLLM`` loaded with ``model_id`` at fp16 with
@@ -499,7 +499,7 @@ async def serve_bench_real_engine(
 def m6_main(
     token: str = "",
     region: str = "eu-west-1",
-    model_id: str = "Qwen/Qwen3-7B",
+    model_id: str = "Qwen/Qwen3-8B",
 ) -> None:
     if not token:
         print(

@@ -28,7 +28,7 @@ Two artifacts are written per successful sweep — a markdown report (operator-f
 <2–3 paragraphs naming the topology — see FR-015 requirements below>
 
 **Inference engine**: vLLM <version>
-**Model**: <Qwen/Qwen3-7B>
+**Model**: <Qwen/Qwen3-8B>
 **Hidden size**: 4096 (fixed by model architecture)
 **GPU**: A10G (24 GB VRAM)
 **Modal region**: <eu-west-1>
@@ -83,7 +83,7 @@ Two artifacts are written per successful sweep — a markdown report (operator-f
 - Per-RPC sampling seeds: SamplingParams.seed = M6_BASE_SEED + rpc_index, where rpc_index is the global measurement RPC counter (warmup excluded). M6_BASE_SEED=42; recorded in RunMeta (FR-025).
 - Per-RPC failures retried up to 3 attempts; cells with any cohort < 80 successes are classified `cell_incomplete` (FR-023).
 - Verdict classifier: deterministic; comparison metric is client-observed TTFT for chat_stream, total wall-clock for embed (FR-014). Engine cost (cohort-averaged) ≥ 5× |M5.2 winner delta| classifies a no-overlap cell as `verdict_buried_by_engine`. Per-cohort engine_cost disagreement > 10% sets the `engine_cost_drift_warning` flag (verdict still computed; per-cohort values surfaced).
-- Engine instance: ONE AsyncLLM(Qwen/Qwen3-7B, dtype=fp16, enable_prompt_embeds=True) loaded once at sweep start; serves all 6 cells (FR-024). Cold-start excluded from per-RPC latency, recorded as scalar `cold_start_s` in RunMeta (FR-019).
+- Engine instance: ONE AsyncLLM(Qwen/Qwen3-8B, dtype=fp16, enable_prompt_embeds=True) loaded once at sweep start; serves all 6 cells (FR-024). Cold-start excluded from per-RPC latency, recorded as scalar `cold_start_s` in RunMeta (FR-019).
 
 ## Operator Reproducibility
 
@@ -184,7 +184,7 @@ The JSON companion is a strict superset of M5.2's published JSON schema (FR-016)
     // ... 5 more entries
   ],
   "m6_meta": {
-    "model_identifier": "Qwen/Qwen3-7B",
+    "model_identifier": "Qwen/Qwen3-8B",
     "engine_version": "vllm 0.20.0",
     "cold_start_s": 28.4,
     "m5_2_winner_deltas": {

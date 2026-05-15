@@ -82,7 +82,7 @@ def test_full_sweep_classifies_all_six_cells_and_writes_artifacts(tmp_path: Path
         modal_function_id="fn-test",
         gpu_type="A10G",
         modal_region="eu-west-1",
-        model_identifier="Qwen/Qwen3-7B",
+        model_identifier="Qwen/Qwen3-8B",
         engine_version="0.20.1",
         cold_start_s=28.4,
         m5_2_winner_deltas=snapshot_m5_2_winner_deltas(baseline),
@@ -116,7 +116,7 @@ def test_full_sweep_classifies_all_six_cells_and_writes_artifacts(tmp_path: Path
     md_text = md_path.read_text()
     first_screen = md_text[:2000]
     assert "vLLM" in first_screen
-    assert "Qwen/Qwen3-7B" in first_screen
+    assert "Qwen/Qwen3-8B" in first_screen
     assert "A10G" in first_screen
     assert "eu-west-1" in first_screen
 

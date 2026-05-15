@@ -99,7 +99,7 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 - **Real-engine generation hits its `max_tokens` cap before EOS** for every chat_stream RPC at this corpus. This is intentional; `max_tokens=50` is the chosen production-realistic cap and is documented in the report so the reader is not surprised.
 - **A run is interrupted mid-cell** (e.g. operator Ctrl+C, Modal container OOM). Partial results are surfaced so the operator can decide whether to resume or restart; partial results MUST NOT be published as the canonical M6 verdict.
 - **The chosen real model's GPU memory exceeds A10G's 24 GB** (e.g. quantisation pinning is missed and fp16 pushes past the headroom budget). The harness MUST surface this as a model-loading failure during the smoke gate, not silently OOM the worker pod.
-- **A reader compares an M6 cell directly to an M1 GPU cell.** The report's executive section names the inference engine, model, and region so a reader cannot accidentally compare the M6 cell (Qwen3-7B at h=4096) to an M1 GPU cell (Qwen3-0.6B at a different hidden_size) without the framing being obvious.
+- **A reader compares an M6 cell directly to an M1 GPU cell.** The report's executive section names the inference engine, model, and region so a reader cannot accidentally compare the M6 cell (Qwen3-8B at h=4096) to an M1 GPU cell (Qwen3-0.6B at a different hidden_size) without the framing being obvious.
 - **Per-cohort `engine_cost_mean` values disagree across cohorts within a cell** (e.g. one cohort triggers engine code-path differences via REST-shim quirks). Cell is annotated with `engine_cost_drift_warning` (FR-014); the verdict is still computed using the cohort-averaged mean; per-cohort engine costs are surfaced so the operator can investigate. Threshold for the warning: any pairwise cohort engine_cost disagreement >10%.
 
 ## Requirements *(mandatory)*
@@ -108,7 +108,7 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 
 **Sweep matrix and cohorts**
 
-- **FR-001**: The system MUST run a 6-cell narrow slice of the M5.2 matrix at a single hidden_size fixed by the chosen real model's architecture (h=4096 for the chosen Qwen3-7B model). The 6 cells are: `embed × c={1,4,8}` and `chat_stream × c={1,4,8}`.
+- **FR-001**: The system MUST run a 6-cell narrow slice of the M5.2 matrix at a single hidden_size fixed by the chosen real model's architecture (h=4096 for the chosen Qwen3-8B model). The 6 cells are: `embed × c={1,4,8}` and `chat_stream × c={1,4,8}`.
 - **FR-002**: The system MUST exercise three cohorts per cell: `rest_https_edge`, `default_grpc`, `tuned_grpc_multiplexed`. The system MUST NOT exercise `rest_plain_tcp` or `tuned_grpc_channels` (transport-only and multiplexing-vs-channels deltas already characterised by M5.2 — see Out of Scope).
 - **FR-003**: The system MUST drive the gRPC frontend with a real inference engine loaded with the chosen real model on Modal A10G. MockEngine paths MUST NOT be exercised under the M6 sweep.
 - **FR-004**: The system MUST run **n=100 iterations per cohort per cell** (vs M5.2's n=250). M6 is asking the larger "does the verdict structure survive?" question, not resolving sub-noise tuned-vs-default deltas.
@@ -206,7 +206,7 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 
 ## Assumptions
 
-- **Compute target.** Modal A10G (24 GB VRAM) is the compute target. The chosen real model (Qwen3-7B fp16, ~14 GB) fits with KV-cache headroom — no A100 needed. PLAN.md commits to A10G; M6 inherits.
+- **Compute target.** Modal A10G (24 GB VRAM) is the compute target. The chosen real model (Qwen3-8B fp16, ~16 GB) fits with KV-cache headroom — no A100 needed. PLAN.md commits to A10G; M6 inherits.
 - **Region.** Modal `eu-west-1` is the default region; this matches M5.2 so RTT-vs-RTT comparisons against M5.2 remain apples-to-apples.
 - **Harness reuse.** The existing `vllm_grpc_bench` harness (M5.2 codebase) is the foundation; M6 is a focused extension with cohort/cell narrowing, an engine-mode flag, and the verdict-classification reporter described in FR-014. M6 does not require a harness redesign.
 - **Real-engine path already exists.** The project's gRPC frontend is already capable of launching real `AsyncLLM` (Phase 6.1 added `enable_prompt_embeds=True` to `AsyncEngineArgs`); M6 inherits that capability and configures it for the chosen real model.
@@ -220,7 +220,7 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 ## Out of Scope *(explicit, mirrors PLAN.md M6 § "Out of scope")*
 
 - **Corpus diversity** — deferred to M7. M6 reuses M5.2's workload corpus.
-- **Additional models** — deferred to M8. M6 measures one model (Qwen3-7B); M8 spans multiple models across canonical hidden_size widths (h=2048 / 4096 / 8192).
+- **Additional models** — deferred to M8. M6 measures one model (Qwen3-8B); M8 spans multiple models across canonical hidden_size widths (h=2048 / 4096 / 8192).
 - **Real-engine validation at hidden_size != 4096** — deferred to M8 which uses multiple models spanning canonical widths.
 - **Real-engine validation of the M3/M4 channel-tuning sweep** — out of scope for M6. M3/M4 channel-tuning verdicts were already validated cross-host by M5.
 - **Wire-bytes axis** — M1's findings remain authoritative; encoding is structural, not engine-dependent.

@@ -44,13 +44,13 @@ Each item: **Decision** → **Rationale** → **Alternatives considered**.
 
 ---
 
-## R-3: Modal A10G + Qwen3-7B fp16 memory budget
+## R-3: Modal A10G + Qwen3-8B fp16 memory budget
 
-**Decision**: Qwen3-7B is loaded at fp16 precision on the Modal A10G instance. The Modal app pins the model size to ensure the loaded weights + KV cache for c=8 chat_stream fit within the A10G's 24 GB VRAM.
+**Decision**: Qwen3-8B is loaded at fp16 precision on the Modal A10G instance. The Modal app pins the model size to ensure the loaded weights + KV cache for c=8 chat_stream fit within the A10G's 24 GB VRAM.
 
 **Rationale**:
-- PLAN.md M6 § states: "Qwen3-7B fp16 ≈ 14 GB, fits with KV-cache headroom — no A100 needed."
-- Headroom budget: 24 GB total − 14 GB weights ≈ 10 GB for KV cache, activations, and CUDA overhead. At c=8 with chat_stream max_tokens=50 and h=4096, KV cache per request ≈ a few hundred MB; 8 concurrent requests easily fits within the 10 GB headroom.
+- PLAN.md M6 § states: "Qwen3-8B fp16 ≈ 16 GB, fits with KV-cache headroom — no A100 needed."
+- Headroom budget: 24 GB total − 16 GB weights ≈ 8 GB for KV cache, activations, and CUDA overhead. At c=8 with chat_stream max_tokens=50 and h=4096, KV cache per request ≈ a few hundred MB; 8 concurrent requests easily fits within the 8 GB headroom.
 - An OOM during smoke (Edge case "GPU memory exceeds A10G's 24 GB") MUST surface as a model-loading failure rather than a silent worker-pod kill. Achieved by adding a startup smoke step in the Modal app that loads the model and runs a single throwaway forward pass before exposing the gRPC + REST endpoints.
 
 **Alternatives considered**:
@@ -271,13 +271,13 @@ For warmup at c=8 (10 RPCs/cohort): rounds 1 fires 8 RPCs/cohort, round 2 fires 
 
 ## R-10: Modal app real-engine launch convention
 
-**Decision**: The existing `scripts/python/modal_bench_rest_grpc_server.py` Modal app gains a flag (or env var) to swap the MockEngine for a real `AsyncLLM` instance loaded with Qwen3-7B fp16. Implementation pattern:
+**Decision**: The existing `scripts/python/modal_bench_rest_grpc_server.py` Modal app gains a flag (or env var) to swap the MockEngine for a real `AsyncLLM` instance loaded with Qwen3-8B fp16. Implementation pattern:
 
 ```python
 # In scripts/python/modal_bench_rest_grpc_server.py:
 
 USE_REAL_ENGINE = os.environ.get("M6_USE_REAL_ENGINE", "false").lower() == "true"
-M6_MODEL = os.environ.get("M6_MODEL", "Qwen/Qwen3-7B")
+M6_MODEL = os.environ.get("M6_MODEL", "Qwen/Qwen3-8B")
 
 @app.function(gpu="A10G", ...)
 def serve_bench():

@@ -102,7 +102,7 @@ async def serve_chat_stream(request, context):
   "data": [
     { "object": "embedding", "index": 0, "embedding": [...] }
   ],
-  "model": "Qwen/Qwen3-7B",
+  "model": "Qwen/Qwen3-8B",
   "usage": { "prompt_tokens": 8, "total_tokens": 8 },
   "engine_cost": {
     "engine_forward_ms": 12.345

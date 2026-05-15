@@ -340,7 +340,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--m6",
         action="store_true",
         help="Run the M6 real-engine mini-validation sweep "
-        "(6 cells × 3 cohorts × n=100, Qwen3-7B on Modal A10G).",
+        "(6 cells × 3 cohorts × n=100, Qwen3-8B on Modal A10G).",
     )
     parser.add_argument(
         "--m6-smoke",
@@ -376,7 +376,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--m6-model",
-        default="Qwen/Qwen3-7B",
+        default="Qwen/Qwen3-8B",
         help="M6: model identifier passed to the Modal app via M6_MODEL env var (R-10).",
     )
     parser.add_argument(

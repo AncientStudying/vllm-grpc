@@ -139,7 +139,7 @@ def _make_run(cells: list[M6CellRecord]) -> object:
         modal_function_id="fn-test",
         gpu_type="A10G",
         modal_region="eu-west-1",
-        model_identifier="Qwen/Qwen3-7B",
+        model_identifier="Qwen/Qwen3-8B",
         engine_version="0.20.1",
         cold_start_s=28.4,
         m5_2_winner_deltas={
@@ -189,7 +189,7 @@ def test_executive_section_contains_fr_015_strings() -> None:
     # of the report (SC-005 first-screenful test).
     first_screen = md[:2000]
     assert "vLLM" in first_screen
-    assert "Qwen/Qwen3-7B" in first_screen
+    assert "Qwen/Qwen3-8B" in first_screen
     assert "4096" in first_screen
     assert "A10G" in first_screen
     assert "eu-west-1" in first_screen

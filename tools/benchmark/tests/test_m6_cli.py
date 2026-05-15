@@ -31,7 +31,7 @@ def test_m6_flag_defaults() -> None:
     assert ns.m6_modal_endpoint is None
     assert ns.m6_skip_deploy is False
     assert ns.m6_base_seed == 42
-    assert ns.m6_model == "Qwen/Qwen3-7B"
+    assert ns.m6_model == "Qwen/Qwen3-8B"
     assert ns.m6_rtt_validity_ms == 1.0
     assert ns.m6_rtt_exercise_ms == 20.0
     assert ns.m6_shim_overhead_warn_pct == 5.0

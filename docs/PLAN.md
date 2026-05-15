@@ -98,9 +98,9 @@ Out of scope: real vLLM (narrow focused validation deferred to M6; full multi-mo
 
 ### M6 — Real-Engine Mini-Validation (upcoming)
 
-Run a focused, narrow re-measurement of the M5.2 transport × tuning matrix with the MockEngine replaced by real Qwen3-7B inference on Modal A10G. M5.1 and M5.2 both deferred real-engine validation, and that deferral is the loudest open caveat in both reports. M6 closes the caveat with the minimum compute commitment so M7 (corpus expansion) can be designed against the actual residual transport/protocol signal that real inference leaves behind, rather than against MockEngine assumptions.
+Run a focused, narrow re-measurement of the M5.2 transport × tuning matrix with the MockEngine replaced by real Qwen3-8B inference on Modal A10G. M5.1 and M5.2 both deferred real-engine validation, and that deferral is the loudest open caveat in both reports. M6 closes the caveat with the minimum compute commitment so M7 (corpus expansion) can be designed against the actual residual transport/protocol signal that real inference leaves behind, rather than against MockEngine assumptions.
 
-**Approach.** Six-cell narrow slice of the M5.2 matrix at a single hidden_size (h=4096, fixed by Qwen3-7B's architecture):
+**Approach.** Six-cell narrow slice of the M5.2 matrix at a single hidden_size (h=4096, fixed by Qwen3-8B's architecture):
 
 | # | Path | Concurrency | What it tests |
 |---|------|-------------|---------------|
@@ -115,14 +115,14 @@ Three cohorts (down from M5.2's five): `rest_https_edge`, `default_grpc`, `tuned
 
 **Methodology.**
 
-- Same harness as M5.2 with the gRPC frontend launching real `AsyncLLM` (`enable_prompt_embeds=True`) loaded with Qwen3-7B on Modal A10G. MockEngine paths are not exercised.
+- Same harness as M5.2 with the gRPC frontend launching real `AsyncLLM` (`enable_prompt_embeds=True`) loaded with Qwen3-8B on Modal A10G. MockEngine paths are not exercised.
 - **n=100 per cohort per cell** (vs M5.2's n=250). M6 is asking the larger "does the verdict structure survive?" question, not resolving sub-noise tuned-vs-default deltas.
 - **`max_tokens=50`** for chat_stream cells (vs M5.2's `max_tokens=10`). Bumps generation length into a production-realistic regime so engine cost is visible; preserves the chat_stream wall-clock vs TTFT contrast.
 - **TTFT as a first-class metric** for chat_stream cells alongside total wall-clock. At `max_tokens=50`, total wall-clock is engine-bound (~1.5–2.5 s) and only TTFT exposes residual transport-cost effects.
 - **Engine-cost-per-RPC published per cell** as a separate metric (forward-pass wall-clock for embed; TTFT + TPOT for chat_stream). This is M6's gift to M7: a real baseline against which corpus-length scaling effects can be interpreted.
-- **Smoke gate** before the full sweep: 1 cell × 3 cohorts × n=10 to validate the harness wires real Qwen3-7B correctly under the real-engine path.
+- **Smoke gate** before the full sweep: 1 cell × 3 cohorts × n=10 to validate the harness wires real Qwen3-8B correctly under the real-engine path.
 
-**Outputs.** `docs/benchmarks/m6-real-engine-mini-validation.{md,json}` plus a "Supersedes M5.2 under real engine" verdict table per cell, categorising each as `verdict_survives`, `verdict_buried_by_engine`, `verdict_changed`, or `no_winner_at_n100`. Drive with `python -m vllm_grpc_bench --m6 --m6-modal-region=eu-west-1`. Runtime budget: ~75–90 min on Modal A10G (Qwen3-7B fp16 ≈ 14 GB, fits with KV-cache headroom — no A100 needed).
+**Outputs.** `docs/benchmarks/m6-real-engine-mini-validation.{md,json}` plus a "Supersedes M5.2 under real engine" verdict table per cell, categorising each as `verdict_survives`, `verdict_buried_by_engine`, `verdict_changed`, or `no_winner_at_n100`. Drive with `python -m vllm_grpc_bench --m6 --m6-modal-region=eu-west-1`. Runtime budget: ~75–90 min on Modal A10G (Qwen3-8B fp16 ≈ 16 GB, fits with KV-cache headroom — no A100 needed).
 
 **Bytes axis preserved.** M6 measures latency only. M1's topology-immune wire-size findings (89% chat / 25% embed reductions) remain in force — encoding is structural, not engine-dependent.
 

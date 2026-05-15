@@ -107,7 +107,7 @@ description: "Task list for M6 — Real-Engine Mini-Validation"
 
 **Goal**: Produce the "Supersedes M5.2 under real engine" verdict table — one row per cell, classifying each into exactly one of `verdict_survives` / `verdict_changed` / `verdict_buried_by_engine` / `no_winner_at_n100` / `cell_incomplete`. Drivable from a single `python -m vllm_grpc_bench --m6` invocation; emits both markdown + JSON companion at `docs/benchmarks/m6-real-engine-mini-validation.{md,json}`.
 
-**Independent Test**: Drive the M6 full sweep against Modal `eu-west-1` with Qwen3-7B on A10G. Confirm: (a) run completes within 90 min (SC-001); (b) the produced markdown's executive section contains a 6-row verdict table where each cell receives exactly one of the 5 terminal classifications (SC-002); (c) the JSON companion is consumable by the existing `m5_2_supersede.py` classifier unmodified (FR-016, SC-007). Acceptance scenarios from spec.md US1 1–3.
+**Independent Test**: Drive the M6 full sweep against Modal `eu-west-1` with Qwen3-8B on A10G. Confirm: (a) run completes within 90 min (SC-001); (b) the produced markdown's executive section contains a 6-row verdict table where each cell receives exactly one of the 5 terminal classifications (SC-002); (c) the JSON companion is consumable by the existing `m5_2_supersede.py` classifier unmodified (FR-016, SC-007). Acceptance scenarios from spec.md US1 1–3.
 
 ### Sweep orchestration (FR-021, FR-022, FR-023, FR-024)
 

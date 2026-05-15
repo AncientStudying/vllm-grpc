@@ -17,7 +17,7 @@ Identifies one of the 6 cells in M6's narrow-slice matrix.
 @dataclass(frozen=True)
 class M6Cell:
     path: Literal["embed", "chat_stream"]   # FR-001
-    hidden_size: Literal[4096]              # FR-001 — fixed by Qwen3-7B
+    hidden_size: Literal[4096]              # FR-001 — fixed by Qwen3-8B
     concurrency: Literal[1, 4, 8]           # FR-001
 ```
 
@@ -191,7 +191,7 @@ class M6RunMeta:
     modal_function_id: str                          # FR-018
     gpu_type: Literal["A10G"]                       # FR-018 — A10G fixed by FR-003
     modal_region: str                               # FR-018 — "eu-west-1" default
-    model_identifier: str                           # FR-018 — "Qwen/Qwen3-7B" expected
+    model_identifier: str                           # FR-018 — "Qwen/Qwen3-8B" expected
     engine_version: str                             # FR-018 — vLLM version string
     cold_start_s: float                             # FR-018 / FR-019 — single scalar per sweep (FR-024)
     m5_2_winner_deltas: Dict[str, float]            # FR-018 / FR-014 — per-cell snapshot

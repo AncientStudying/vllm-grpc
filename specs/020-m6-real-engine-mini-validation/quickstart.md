@@ -29,7 +29,7 @@ git pull
 
 ## Step 1 — Smoke gate (~5 min)
 
-Smoke gate validates the harness wires real Qwen3-7B correctly under the real-engine path AND the M5.2 baseline file is loadable. Cheap to re-run.
+Smoke gate validates the harness wires real Qwen3-8B correctly under the real-engine path AND the M5.2 baseline file is loadable. Cheap to re-run.
 
 ```bash
 python -m vllm_grpc_bench --m6-smoke --m6-modal-region=eu-west-1
@@ -50,7 +50,7 @@ cell=chat_stream×c=1 cohort=tuned_grpc_multiplexed status=ok reason=10/10 succ
 
 **Common smoke failures**:
 - `M5.2 baseline missing cell entry: chat_stream c=4` — the M5.2 JSON file under `docs/benchmarks/` is missing or stale. Pull from `main` and re-run.
-- `Engine load failed: CUDA out of memory` — Qwen3-7B fp16 didn't fit in A10G VRAM. Check the model identifier hasn't drifted (default: `Qwen/Qwen3-7B`).
+- `Engine load failed: CUDA out of memory` — Qwen3-8B fp16 didn't fit in A10G VRAM. Check the model identifier hasn't drifted (default: `Qwen/Qwen3-8B`).
 - `Modal deploy timed out` — transient Modal infrastructure issue; re-run after 1–2 min.
 
 If smoke fails, **do not run the full sweep** until the failure is resolved (FR-012). The full sweep is metered Modal A10G compute (~80 min); a wiring bug that surfaces 80 min into the run is a ~$10 mistake.
@@ -66,7 +66,7 @@ python -m vllm_grpc_bench --m6 --m6-modal-region=eu-west-1
 **What you should see on stderr** (sample first few lines):
 
 ```
-M6 sweep: 6 cells × 3 cohorts × n=100, runtime ETA ≤90 min, model=Qwen/Qwen3-7B, region=eu-west-1
+M6 sweep: 6 cells × 3 cohorts × n=100, runtime ETA ≤90 min, model=Qwen/Qwen3-8B, region=eu-west-1
 [1/18] embed × c=1 / rest_https_edge — 100/100 succ — 8230 ms — ETA 87m
 [2/18] embed × c=1 / default_grpc — 100/100 succ — 7710 ms — ETA 84m
 [3/18] embed × c=1 / tuned_grpc_multiplexed — 100/100 succ — 7240 ms — ETA 81m

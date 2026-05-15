@@ -30,7 +30,7 @@ python -m vllm_grpc_bench --m6 [options...]
 | `--m6-modal-endpoint` | str | (autodiscovered) | Override the autodiscovered Modal endpoint (advanced; mirrors `--m5_2-modal-endpoint`). |
 | `--m6-skip-deploy` | bool | False | Skip Modal deploy and reuse a pre-deployed app (advanced; mirrors `--m5_2-skip-deploy`). |
 | `--m6-base-seed` | int | `42` | `M6_BASE_SEED` constant for FR-025. Recorded in RunMeta (FR-018). |
-| `--m6-model` | str | `Qwen/Qwen3-7B` | Model identifier passed to the Modal app via `M6_MODEL` env var. R-10. |
+| `--m6-model` | str | `Qwen/Qwen3-8B` | Model identifier passed to the Modal app via `M6_MODEL` env var. R-10. |
 | `--m6-events-sidecar-out` | path | (auto under `docs/benchmarks/`) | Per-RPC events JSONL sidecar output path. Mirrors `--m5_2-events-sidecar-out`. |
 | `--m6-report-out` | path | `docs/benchmarks/m6-real-engine-mini-validation.md` | Markdown report output (FR-013). |
 | `--m6-report-json-out` | path | `docs/benchmarks/m6-real-engine-mini-validation.json` | JSON companion output (FR-013). |
