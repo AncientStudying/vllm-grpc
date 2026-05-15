@@ -32,6 +32,16 @@ M6 deliberately picks a focused 6-cell × 3-cohort slice of M5.2's matrix at a s
 
 - Q: How does the REST cohort emit `engine_cost` to the harness, given that the gRPC trailing-metadata channel doesn't apply to JSON-over-HTTP? → A: The REST shim adds `engine_cost` fields to the JSON response payload (mirroring the gRPC trailing-metadata contract). Both cohort kinds publish per-RPC engine_cost. The classifier (FR-014) consumes the cell's per-cohort mean averaged across cohorts as the cell's authoritative `engine_cost_mean` for the 5× rule. Sanity check: if any two cohorts' per-cell `engine_cost_mean` values disagree by more than 10%, the cell is annotated with an `engine_cost_drift_warning` flag in the report (verdict still computed) and per-cohort engine_cost values are surfaced for operator review.
 
+### Session 2026-05-14 (round 4 — smoke gate cell coverage + terminology cleanup)
+
+- Q: Which cell(s) does the smoke gate exercise? → A: Both `embed × c=1` AND `chat_stream × c=1`. Two-cell coverage so a chat_stream wiring bug (streaming, generation, tokenisation, REST-shim engine_cost publication for chat_stream) surfaces during smoke rather than after 80 min of full-sweep compute. Total: 60 RPCs (2 cells × 3 cohorts × n=10), still within SC-004's 5-min budget. FR-011 updates from "1 cell × 3 cohorts × n=10" to "2 cells × 3 cohorts × n=10".
+
+### Session 2026-05-14 (round 5 — real-engine reproducibility)
+
+- Q: How are sampling seeds pinned for real-engine reproducibility? → A: Per-RPC deterministic. `SamplingParams.seed = M6_BASE_SEED + rpc_index`, where `M6_BASE_SEED` is a fixed published constant (default `42`) and `rpc_index` is the global RPC counter across the whole sweep (warmup RPCs excluded from the index sequence so they don't perturb measurement RPC seeds). `M6_BASE_SEED` is recorded in RunMeta. This gives bit-exact reproducibility across runs on the same engine version while retaining within-cohort variance (each RPC has a different seed) so per-cohort CIs are meaningful and the classifier's inputs are stable.
+- Q: What happens when `docs/benchmarks/m5_2-transport-vs-tuning.json` (the classifier's M5.2 baseline input) is missing or malformed at sweep time? → A: Abort fast with a clear error at sweep launch (before any RPC), AND validate in the smoke gate as a pre-check. The harness MUST load and validate the M5.2 JSON before launching either smoke or full sweep — if the file is missing, isn't valid JSON, or doesn't contain entries for all 6 M6 cells, exit with a non-zero status and a clear message naming the failing precondition. No fallback embedded snapshot; no "best effort run without verdict table" fallback — the M5.2 baseline is a hard prerequisite for the milestone's primary deliverable.
+- Q: What does the operator see during the 75–90 min unattended sweep? → A: Per-(cell × cohort) progress on stderr — one line per (cell × cohort) pair (18 lines over the sweep) with format `[i/18] <cell> / <cohort> — <successes>/<n> succ — <wall_ms> — ETA <minutes>m`. Plus a startup banner naming the sweep matrix and ETA, and a completion banner naming the verdict-table location. Stdout reserved for the final report path so the harness can be composed with shell pipes. Mirrors the smoke-gate stderr convention (FR-011).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Resolve the "real engine" caveat with a per-cell survival verdict (Priority: P1)
@@ -61,7 +71,7 @@ The operator (or the M7 designer) wants the per-cell engine cost as a separate, 
 **Acceptance Scenarios**:
 
 1. **Given** any embed cell in the published report, **When** the operator looks for an engine-cost row, **Then** the report names a forward-pass wall-clock metric for that cell with a 95% CI half-width.
-2. **Given** any chat_stream cell, **When** the operator looks for the engine-cost row, **Then** the report names both TTFT and TPOT for the engine alone, each with a 95% CI half-width.
+2. **Given** any chat_stream cell, **When** the operator looks for the engine-cost row, **Then** the report names both `engine_ttft_ms` and `engine_tpot_ms` (the engine-alone TTFT and TPOT, distinct from client-observed TTFT), each with a 95% CI half-width.
 
 ---
 
@@ -71,12 +81,12 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 
 **Why this priority**: P3 because the full sweep is recoverable on failure (just re-run) — but Modal A10G compute is metered, and a wiring bug that only surfaces after 80 minutes is a meaningful waste. The smoke gate keeps iteration fast during M6 bring-up.
 
-**Independent Test**: Drive the documented smoke command. Confirm it exercises 1 cell × 3 cohorts × n=10 against the real engine, completes within ~5 minutes wall-clock, and either signals success (clean exit, no errors per cohort) or surfaces actionable diagnostics for the failing cohort(s).
+**Independent Test**: Drive the documented smoke command. Confirm it exercises 2 cells (`embed × c=1` and `chat_stream × c=1`) × 3 cohorts × n=10 against the real engine, completes within ~5 minutes wall-clock, and either signals success (clean exit, all (cell × cohort) pairs pass) or surfaces actionable diagnostics for the failing pair(s).
 
 **Acceptance Scenarios**:
 
-1. **Given** the M6 smoke command and a healthy environment, **When** the operator runs it, **Then** the smoke run completes within ~5 minutes wall-clock and reports per-cohort success.
-2. **Given** the M6 smoke command and a deliberately broken cohort wiring (e.g. wrong model identifier), **When** the operator runs it, **Then** the smoke run exits with status `1` and prints a stderr summary line for the failing cohort in the form `cohort=<name> status=failed reason=<short string>` identifying which cohort failed and why.
+1. **Given** the M6 smoke command and a healthy environment, **When** the operator runs it, **Then** the smoke run completes within ~5 minutes wall-clock and reports per-(cell × cohort) success across both `embed × c=1` and `chat_stream × c=1`.
+2. **Given** the M6 smoke command and a deliberately broken cohort wiring (e.g. wrong model identifier), **When** the operator runs it, **Then** the smoke run exits with status `1` and prints a stderr summary line for the failing (cell × cohort) pair in the form `cell=<name> cohort=<name> status=failed reason=<short string>` identifying which pair failed and why.
 3. **Given** a successful smoke run, **When** the operator chooses to proceed, **Then** the full M6 sweep is the next step — the smoke run does not implicitly trigger the full sweep.
 
 ---
@@ -119,7 +129,7 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 
 **Smoke gate**
 
-- **FR-011**: The system MUST provide a smoke command that runs **1 cell × 3 cohorts × n=10** against the real engine. The smoke command MUST be invocable independently of the full sweep. The smoke command MUST exit with status `0` if all 3 cohorts pass and status `1` if any cohort fails. The smoke command MUST print one summary line per cohort to **stderr** in the form `cohort=<name> status=<ok|failed> reason=<short string>`. The smoke command MUST NOT write a persistent diagnostic file (smoke is cheap to re-run; the operator's terminal is the only consumer).
+- **FR-011**: The system MUST provide a smoke command that runs **2 cells × 3 cohorts × n=10** against the real engine. The 2 cells MUST be `embed × c=1` and `chat_stream × c=1` so that both unary and streaming code paths (and both engine_cost publication paths — gRPC trailing metadata for gRPC cohorts, JSON payload field for the REST cohort, in both unary and streaming shapes) are exercised before the full sweep is committed to. The smoke command MUST be invocable independently of the full sweep. The smoke command MUST exit with status `0` if all (cell × cohort) pairs pass and status `1` if any (cell × cohort) pair fails. The smoke command MUST print one summary line per (cell × cohort) pair to **stderr** in the form `cell=<name> cohort=<name> status=<ok|failed> reason=<short string>`. The smoke command MUST NOT write a persistent diagnostic file (smoke is cheap to re-run; the operator's terminal is the only consumer).
 - **FR-012**: The full M6 sweep MUST NOT proceed automatically when the smoke gate is failing; the operator's next action on smoke failure is to fix the failing cohort wiring and re-run smoke.
 
 **Outputs and reproducibility**
@@ -136,10 +146,12 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
   - For **embed** cells: client-observed **total per-RPC wall-clock** (the only client-observed latency metric for unary embed; matches M5.2's embed comparison axis). `engine_forward_ms` is published per cell but is NOT a classifier input.
 
   **Engine-cost source for the 5× rule.** `engine_cost_mean` for a cell MUST be the per-cohort mean engine_cost averaged across all 3 cohorts (each cohort publishes per-RPC engine_cost per FR-008). If any two cohorts' per-cell `engine_cost_mean` values disagree by more than **10%**, the cell MUST be annotated with an `engine_cost_drift_warning` flag in the report, and per-cohort `engine_cost_mean` values MUST be surfaced for operator review. The verdict MUST still be computed (the warning does not promote the cell to `cell_incomplete`).
+
+  **M5.2 baseline file precondition.** Before either the smoke gate (FR-011) or the full sweep (FR-017) launches any RPC, the harness MUST load and validate `docs/benchmarks/m5_2-transport-vs-tuning.json`. The validation MUST confirm the file exists, parses as valid JSON, and contains entries for all 6 M6 cells (the 6 (path, c) pairs in FR-001). If any precondition fails, the harness MUST exit with a non-zero status and a clear message naming the failing precondition (e.g. `m5.2 baseline missing cell entry: chat_stream c=4`) before any Modal compute is consumed. There MUST NOT be a fallback embedded snapshot or a "run without verdict table" degraded mode.
 - **FR-015**: The markdown report's executive section MUST name the inference engine, model identifier, hidden_size, Modal region, and GPU type, so a reader cannot mistake the M6 cell for an unrelated baseline.
 - **FR-016**: The JSON companion MUST be a strict superset of M5.2's JSON schema. M5.2-aware downstream consumers MUST continue to work unmodified.
 - **FR-017**: The system MUST be drivable from a single CLI invocation using the project's existing benchmark harness entry point, with `--m6` and `--m6-modal-region=<region>` flags (or equivalent) so the operator does not orchestrate cohorts or cells by hand.
-- **FR-018**: The system MUST embed the following fields in the JSON run metadata so results are fully traceable: `git_sha`, `hostname`, Modal function ID, GPU type, Modal region, model identifier, engine version, `cold_start_s`, and `m5_2_winner_deltas` (a per-cell snapshot of the M5.2 winner deltas the classifier actually consumed for this run, sourced from `docs/benchmarks/m5_2-transport-vs-tuning.json` at runtime — see FR-014).
+- **FR-018**: The system MUST embed the following fields in the JSON run metadata so results are fully traceable: `git_sha`, `hostname`, Modal function ID, GPU type, Modal region, model identifier, engine version, `cold_start_s`, `m5_2_winner_deltas` (a per-cell snapshot of the M5.2 winner deltas the classifier actually consumed for this run, sourced from `docs/benchmarks/m5_2-transport-vs-tuning.json` at runtime — see FR-014), and `m6_base_seed` (the `M6_BASE_SEED` constant used for per-RPC sampling seeds — see FR-025).
 - **FR-019**: The system MUST exclude Modal cold-start time from per-RPC latency numbers; cold-start MUST be recorded as `cold_start_s` (a single scalar per sweep — see FR-024 for engine instance lifecycle) in run metadata for transparency (inherits the M3.2 / M4.1 convention).
 
 **Engine warmup**
@@ -154,6 +166,14 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 
 - **FR-024**: The system MUST maintain **one engine instance** loaded across all 6 cells of the sweep. The engine MUST load once at sweep start and serve every (cell × cohort) measurement until the sweep completes. The system MUST NOT reload the engine between cells, between paths (embed vs chat_stream), or between cohorts. Rationale: the PLAN.md 75–90 min runtime budget (SC-001) assumes a single multi-second cold-start; per-cell or per-path reloads would breach the budget. Inter-cell engine state carryover is absorbed by the per-cohort warmup convention (FR-021) and does not bias verdict computation. `cold_start_s` (FR-019) is therefore recorded as a single scalar per sweep.
 
+**Sampling reproducibility**
+
+- **FR-025**: The system MUST set `SamplingParams.seed` deterministically per measurement RPC: `seed = M6_BASE_SEED + rpc_index`, where `M6_BASE_SEED` is a fixed published constant (default `42`) and `rpc_index` is the global RPC counter across the whole sweep (warmup RPCs (FR-021) MUST be excluded from the `rpc_index` sequence so they do not perturb measurement RPC seeds). `M6_BASE_SEED` MUST be recorded in RunMeta (FR-018) so anomalous runs can be reproduced bit-exactly. The same `rpc_index → seed` mapping MUST be applied identically across all 3 cohorts within a cell, so the i-th measurement RPC of any cohort uses the same seed (each cohort sees the same per-RPC engine output for engine_cost comparability). The seed MUST NOT vary by cohort or by path.
+
+**Operator-visible progress output**
+
+- **FR-026**: During the full sweep, the system MUST emit progress output to **stderr** as follows. (a) On startup, one banner line naming the sweep matrix shape (cells, cohorts, n per cohort) and the ETA derived from SC-001's runtime budget. (b) After each (cell × cohort) pair completes, one progress line in the form `[i/18] <cell> / <cohort> — <successes>/<n> succ — <wall_ms> ms — ETA <minutes>m` where `i` is the pair's 1-based index across the 18 (cell × cohort) pairs in the sweep. (c) On completion, one banner line naming the verdict-table file path. Stdout MUST be reserved for the final report path (so the sweep can be composed with shell pipes). The progress output MUST mirror the smoke-gate stderr convention (FR-011) so an operator sees the same channel/format style in both.
+
 **Per-RPC failure handling**
 
 - **FR-023**: The system MUST retry each failed measurement RPC up to **3 attempts** before counting it as a failure. The system MUST report each cohort at `n_successes` (≤ 100), and 95% CIs MUST reflect the actual successful sample size. The system MUST publish per-cohort `n_successes` and `failure_count` fields in the JSON companion. If any cohort in a cell has fewer than **80 successes** after retries, the cell MUST be marked with the terminal classification **`cell_incomplete`** — a 5th classification distinct from the 4 verdict categories in FR-014. `cell_incomplete` cells MUST appear in the verdict table with a clear marker and MUST NOT be folded into any of the 4 verdict categories. Warmup RPC failures (FR-021) MUST be silently retried until 10 warmup successes accumulate per cohort; if warmup cannot succeed, the cell is marked `cell_incomplete` without measurement RPCs being attempted.
@@ -167,9 +187,9 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 - **M6 cell**: A specific (path, hidden_size, concurrency) tuple in the 6-cell narrow slice. Each cell is benchmarked across all 3 cohorts and receives one canonical survival verdict.
 - **M6 cohort**: One of `rest_https_edge`, `default_grpc`, `tuned_grpc_multiplexed`. The cohort defines the wire format and transport.
 - **Verdict classification**: One of `verdict_survives` (M5.2 winner CI direction holds non-overlapping under real engine), `verdict_buried_by_engine` (CIs overlap AND engine cost is ≥5× the M5.2 winner delta for that cell — additional sampling cannot recover the prior signal), `verdict_changed` (real-engine CI direction is opposite of M5.2's), or `no_winner_at_n100` (CIs overlap and the `verdict_buried_by_engine` condition is not met — additional sampling could plausibly resolve the signal). Cells with insufficient data after retries (any cohort < 80 successes) take the terminal classification `cell_incomplete` instead (FR-023), distinct from the 4 verdicts. Discrimination rule is deterministic; see FR-014.
-- **Engine-cost-per-RPC baseline**: Server-instrumented per-RPC measurement returned via gRPC response/trailing metadata. For embed cells, `engine_forward_ms` (forward-pass wall-clock attributable to the engine alone). For chat_stream cells, `engine_ttft_ms` and `engine_tpot_ms` separately. Inherited by M7 as a real cost floor.
-- **Run metadata (RunMeta)**: git_sha, hostname, Modal function ID, GPU type, Modal region, model identifier, engine version, cold_start_s, m5_2_winner_deltas (per-cell snapshot of the M5.2 winner deltas the classifier consumed, for audit traceability). Embedded in every JSON report.
-- **Smoke result**: Per-cohort pass/fail outcome of the 1-cell × 3-cohort × n=10 pre-flight check. Not part of the canonical M6 verdict; gates whether the full sweep is sensible to launch.
+- **Engine-cost-per-RPC baseline**: Server-instrumented per-RPC measurement returned to the harness — via gRPC response/trailing metadata for the gRPC cohorts and via dedicated JSON-payload fields for the REST cohort (FR-008). For embed cells, `engine_forward_ms` (forward-pass wall-clock attributable to the engine alone). For chat_stream cells, `engine_ttft_ms` and `engine_tpot_ms` separately. Per-cell `engine_cost_mean` for the classifier's 5× rule (FR-014) is the per-cohort mean averaged across all 3 cohorts. Inherited by M7 as a real cost floor.
+- **Run metadata (RunMeta)**: git_sha, hostname, Modal function ID, GPU type, Modal region, model identifier, engine version, cold_start_s, m5_2_winner_deltas (per-cell snapshot of the M5.2 winner deltas the classifier consumed, for audit traceability), m6_base_seed (the M6_BASE_SEED constant used for per-RPC sampling seeds — see FR-025). Embedded in every JSON report.
+- **Smoke result**: Per-(cell × cohort) pass/fail outcome of the 2-cell × 3-cohort × n=10 pre-flight check (cells: `embed × c=1` and `chat_stream × c=1`; covers both unary and streaming code paths). Not part of the canonical M6 verdict; gates whether the full sweep is sensible to launch.
 
 ## Success Criteria *(mandatory)*
 
@@ -180,7 +200,7 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 - **SC-003**: Every chat_stream cell publishes both **TTFT** and **total wall-clock** for every cohort, each with a 95% CI half-width.
 - **SC-004**: The smoke gate completes within **5 minutes wall-clock** on Modal A10G and either reports per-cohort success or surfaces actionable per-cohort diagnostics on failure.
 - **SC-005**: The published report's executive section names the inference engine, model identifier, hidden_size, Modal region, and GPU type within the first screenful of content, so a reader can locate the topology in one read.
-- **SC-006**: The engine-cost-per-RPC metric is recorded for **every cell** so M7's prompt-length scaling work can interpret prompt-length deltas against a known real-engine cost floor.
+- **SC-006**: The engine-cost-per-RPC metric is recorded for **every cell**, both per-cohort and as a cohort-averaged `engine_cost_mean` (FR-014), so M7's prompt-length scaling work can interpret prompt-length deltas against a known real-engine cost floor.
 - **SC-007**: The JSON companion file is readable by an existing M5.2-aware consumer without schema breakage (strict superset compatibility).
 - **SC-008**: A reader who has only read M5.2 can read the M6 executive section and answer the question "did M5.2's per-cell verdicts survive under real engine?" without consulting any external document or source code.
 
