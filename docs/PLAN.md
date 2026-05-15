@@ -1,6 +1,6 @@
 # Project Plan: Protobuf/gRPC Frontend for vLLM
 
-**Status:** Draft v6 — updated 2026-05-14: marked M5.2 delivered; redirected milestone findings to top-level [`ANALYSIS.md`](../ANALYSIS.md) per FR-019 of the M5.2 spec (M3 § 4 fold-in to `ANALYSIS.md § M3` preserved byte-for-byte per FR-018; `docs/benchmarks/summary.md` is now a redirect)
+**Status:** Draft v7 — updated 2026-05-14: inserted M6 (Real-Engine Mini-Validation); renumbered prior M6/M7 to M7/M8 to make the focused real-engine validation a canonical milestone before corpus and model expansion
 **Repo:** Private GitHub repo (already provisioned), MIT license
 
 ---
@@ -13,9 +13,9 @@ When working with Claude Code on this project, point it at this file plus the ac
 
 ---
 
-## Milestone Roadmap (canonical, M1–M7)
+## Milestone Roadmap (canonical, M1–M8)
 
-This section mirrors the milestone framing in [`README.md`](../README.md). M1–M4 are delivered; M5–M7 are upcoming research directions. The Phase 1–7 plan below this section is preserved as completed-work history (see the boundary heading further down) — it captures decisions and trade-offs that still inform future work, but the milestones above are the canonical forward view.
+This section mirrors the milestone framing in [`README.md`](../README.md). M1 through M5.2 are delivered; M6 through M8 are upcoming research directions. As of Draft v7, the focused real-engine mini-validation (formerly a single line in M5.1/M5.2 caveats as "deferred to M7") is promoted to a canonical M6 milestone; what was previously M6 (Corpus Expansion) becomes M7 and what was previously M7 (Model Expansion) becomes M8. The Phase 1–7 plan below this section is preserved as completed-work history (see the boundary heading further down) — it captures decisions and trade-offs that still inform future work, but the milestones above are the canonical forward view.
 
 ### M1 — Foundation (delivered)
 
@@ -57,7 +57,7 @@ Outputs land at `docs/benchmarks/m5-cross-host-validation.{md,json}` plus a "Sup
 
 **Status (delivered 2026-05-11):** Full operator-driven sweep landed on branch `017-m5-cross-host-validation`. Published report at [`benchmarks/m5-cross-host-validation.{md,json}`](benchmarks/m5-cross-host-validation.md). **Findings**: see [`ANALYSIS.md`](../ANALYSIS.md) § M5. Harness implementation in `tools/benchmark/src/vllm_grpc_bench/{rtt_probe,modal_endpoint,m5_sweep,m5_supersede}.py` + reporter extensions; Modal app at `scripts/python/modal_bench_grpc_server.py`.
 
-Out of scope: real model (deferred to M7), corpus diversity (deferred to M6), Modal-side observability beyond what's needed to record per-RPC wall-clock and TTFT, any non-`mock-engine` workload, **and a direct REST-vs-gRPC head-to-head under cross-host conditions (deferred to M5.1)**.
+Out of scope: real model (narrow focused validation deferred to M6; full multi-model expansion deferred to M8), corpus diversity (deferred to M7), Modal-side observability beyond what's needed to record per-RPC wall-clock and TTFT, any non-`mock-engine` workload, **and a direct REST-vs-gRPC head-to-head under cross-host conditions (deferred to M5.1)**.
 
 ### M5.1 — REST vs gRPC Head-to-Head on Real Wire (delivered)
 
@@ -94,21 +94,53 @@ M5.1 surfaced two questions it could not answer with n=100 and a single (plain-T
 
 **Outputs.** `docs/benchmarks/m5_2-transport-vs-tuning.{md,json}` (strict superset of M5.1's JSON schema; M5.1-aware consumers continue to work unmodified). A "Supersedes M5.1" table for cells whose verdict moves under the HTTPS-edge transport or under the higher iteration count. Drive with `python -m vllm_grpc_bench --m5_2 --m5_2-modal-region=eu-west-1`.
 
-Out of scope: real vLLM (deferred to M7), corpus diversity (deferred to M6), additional gRPC channel-config axes beyond what M5 already winnowed, HTTPS-edge transport for gRPC (Modal's edge does not natively expose HTTP/2 plaintext + gRPC, so plain-TCP remains the only credible gRPC transport for this milestone; if Modal adds a TLS-terminated gRPC edge later, that becomes a follow-up).
+Out of scope: real vLLM (narrow focused validation deferred to M6; full multi-model expansion deferred to M8), corpus diversity (deferred to M7), additional gRPC channel-config axes beyond what M5 already winnowed, HTTPS-edge transport for gRPC (Modal's edge does not natively expose HTTP/2 plaintext + gRPC, so plain-TCP remains the only credible gRPC transport for this milestone; if Modal adds a TLS-terminated gRPC edge later, that becomes a follow-up).
 
-### M6 — Corpus Expansion (upcoming)
+### M6 — Real-Engine Mini-Validation (upcoming)
 
-Re-run all three access paths against a larger, more varied prompt corpus covering short and long prompts, multi-turn conversations, and domain-specific content (code, structured data). Determine whether the M1 wire-size and latency findings hold across input diversity — do wire-size deltas change with longer prompts or multi-turn context windows, and does streaming TPOT variance increase with structurally different prompt types?
+Run a focused, narrow re-measurement of the M5.2 transport × tuning matrix with the MockEngine replaced by real Qwen3-7B inference on Modal A10G. M5.1 and M5.2 both deferred real-engine validation, and that deferral is the loudest open caveat in both reports. M6 closes the caveat with the minimum compute commitment so M7 (corpus expansion) can be designed against the actual residual transport/protocol signal that real inference leaves behind, rather than against MockEngine assumptions.
 
-### M7 — Model Expansion (upcoming)
+**Approach.** Six-cell narrow slice of the M5.2 matrix at a single hidden_size (h=4096, fixed by Qwen3-7B's architecture):
 
-Repeat the M1, M3, M4, and M5 benchmarks with at least two additional models of different sizes and architecture families. Determine whether the wire-overhead thesis is model-agnostic or depends on tokeniser and output characteristics, and validate that the mock-derived findings from M3–M5 hold against real models.
+| # | Path | Concurrency | What it tests |
+|---|------|-------------|---------------|
+| 1 | embed | c=1 | M5.2's largest c=1 gRPC win (−51 ms tuned_grpc) — most likely to survive |
+| 2 | embed | c=4 | Mid-concurrency embed; engine batching dynamics enter the picture |
+| 3 | embed | c=8 | M5.2's high-concurrency REST win — tests whether RTT or batching dominated |
+| 4 | chat_stream | c=1 | TTFT under real generation; ~1.5–2.5 s total wall-clock |
+| 5 | chat_stream | c=4 | Median chat_stream cell — TTFT vs total wall-clock contrast |
+| 6 | chat_stream | c=8 | High-concurrency chat_stream; engine + tokenisation under load |
+
+Three cohorts (down from M5.2's five): `rest_https_edge`, `default_grpc`, `tuned_grpc_multiplexed`. `rest_plain_tcp` and `tuned_grpc_channels` are dropped — transport-only delta already characterised by M5.2, and `_channels`/`_multiplexed` were empirically interchangeable at c≥2 in M5.1 and M5.2.
+
+**Methodology.**
+
+- Same harness as M5.2 with the gRPC frontend launching real `AsyncLLM` (`enable_prompt_embeds=True`) loaded with Qwen3-7B on Modal A10G. MockEngine paths are not exercised.
+- **n=100 per cohort per cell** (vs M5.2's n=250). M6 is asking the larger "does the verdict structure survive?" question, not resolving sub-noise tuned-vs-default deltas.
+- **`max_tokens=50`** for chat_stream cells (vs M5.2's `max_tokens=10`). Bumps generation length into a production-realistic regime so engine cost is visible; preserves the chat_stream wall-clock vs TTFT contrast.
+- **TTFT as a first-class metric** for chat_stream cells alongside total wall-clock. At `max_tokens=50`, total wall-clock is engine-bound (~1.5–2.5 s) and only TTFT exposes residual transport-cost effects.
+- **Engine-cost-per-RPC published per cell** as a separate metric (forward-pass wall-clock for embed; TTFT + TPOT for chat_stream). This is M6's gift to M7: a real baseline against which corpus-length scaling effects can be interpreted.
+- **Smoke gate** before the full sweep: 1 cell × 3 cohorts × n=10 to validate the harness wires real Qwen3-7B correctly under the real-engine path.
+
+**Outputs.** `docs/benchmarks/m6-real-engine-mini-validation.{md,json}` plus a "Supersedes M5.2 under real engine" verdict table per cell, categorising each as `verdict_survives`, `verdict_buried_by_engine`, `verdict_changed`, or `no_winner_at_n100`. Drive with `python -m vllm_grpc_bench --m6 --m6-modal-region=eu-west-1`. Runtime budget: ~75–90 min on Modal A10G (Qwen3-7B fp16 ≈ 14 GB, fits with KV-cache headroom — no A100 needed).
+
+**Bytes axis preserved.** M6 measures latency only. M1's topology-immune wire-size findings (89% chat / 25% embed reductions) remain in force — encoding is structural, not engine-dependent.
+
+Out of scope: corpus diversity (deferred to M7), additional models (deferred to M8), real-engine validation at h≠4096 (deferred to M8 which uses multiple models spanning canonical widths), real-engine validation of the M3/M4 channel-tuning sweep (out of scope; M3/M4 verdicts were already validated cross-host by M5).
+
+### M7 — Corpus Expansion (upcoming)
+
+Re-run all three access paths against a larger, more varied prompt corpus covering short and long prompts, multi-turn conversations, and domain-specific content (code, structured data). Determine whether the M1 wire-size and latency findings hold across input diversity — do wire-size deltas change with longer prompts or multi-turn context windows, and does streaming TPOT variance increase with structurally different prompt types? M7 inherits M6's engine-cost-per-RPC baseline so prompt-length scaling effects can be interpreted against a known real-engine cost floor rather than against MockEngine assumptions.
+
+### M8 — Model Expansion (upcoming)
+
+Repeat the M1, M3, M4, and M5 benchmarks with at least two additional models of different sizes and architecture families. Determine whether the wire-overhead thesis is model-agnostic or depends on tokeniser and output characteristics, and validate that the mock-derived findings from M3–M5 hold against real models. M8 extends M6's single-model-at-h=4096 mini-validation across canonical widths (h=2048 / 4096 / 8192) and architecture families; the M6 verdict structure is the starting hypothesis M8 tests against alternative models.
 
 ---
 
 ## Phase History (preserved as completed-work record)
 
-The content below predates the milestone overlay above and is retained for the decisions and trade-offs it records. New phases of work are tracked under M3–M7 in the milestone roadmap; the Phase 1–7 framing here is read as history.
+The content below predates the milestone overlay above and is retained for the decisions and trade-offs it records. New phases of work are tracked under M3–M8 in the milestone roadmap; the Phase 1–7 framing here is read as history.
 
 ---
 
