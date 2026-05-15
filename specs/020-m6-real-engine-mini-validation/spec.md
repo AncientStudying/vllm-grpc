@@ -11,6 +11,15 @@ M5.1 and M5.2 published verdicts on REST vs gRPC over real wire using a MockEngi
 
 M6 deliberately picks a focused 6-cell × 3-cohort slice of M5.2's matrix at a single hidden_size (h=4096, fixed by the chosen real model's architecture). It does not expand corpus diversity (M7's job) or model coverage (M8's job).
 
+## Clarifications
+
+### Session 2026-05-14
+
+- Q: How is "engine cost alone" measured so it can be published as a separate per-cell metric? → A: Server-side instrumentation — the gRPC frontend wraps the engine call and emits per-RPC engine-cost spans (forward-pass wall-clock for embed; TTFT and TPOT separately for chat_stream) returned to the harness via gRPC response/trailing metadata. No subtraction from a transport baseline; no separate engine-only cohort.
+- Q: When does an overlapping-CI cell fall into `verdict_buried_by_engine` vs `no_winner_at_n100`? → A: Data-driven 5× threshold. Cell is `verdict_buried_by_engine` if cohort CIs overlap **and** `engine_cost_mean ≥ 5 × |M5.2_winner_delta|` (using the M5.2 published winner delta for that cell); otherwise overlapping-CI cells classify as `no_winner_at_n100`. Cells with no M5.2 winner delta to compare against (M5.2 verdict was itself `no_winner`) classify as `no_winner_at_n100`.
+- Q: What are the smoke-gate exit-code and diagnostics semantics? → A: Single exit code (`0` if all 3 cohorts pass; `1` otherwise) plus a per-cohort one-line summary printed to stderr (`cohort=<name> status=<ok|failed> reason=<short string>`). No persistent diagnostic file — smoke is cheap to re-run. Smoke is operator-triggered (not a CI gate), so differentiated exit codes are out of scope.
+- Q: Where does the verdict classifier read M5.2 winner deltas from? → A: Hybrid — classifier reads `docs/benchmarks/m5_2-transport-vs-tuning.json` at runtime as the single source of truth, AND snapshots the per-cell winner deltas it actually used into M6's JSON `RunMeta` (under a new `m5_2_winner_deltas` field). This gives one canonical input plus a per-run audit trail so an M6 report can be reread later against the exact M5.2 numbers it was classified against, even if the M5.2 JSON is later edited.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Resolve the "real engine" caveat with a per-cell survival verdict (Priority: P1)
@@ -55,7 +64,7 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 **Acceptance Scenarios**:
 
 1. **Given** the M6 smoke command and a healthy environment, **When** the operator runs it, **Then** the smoke run completes within ~5 minutes wall-clock and reports per-cohort success.
-2. **Given** the M6 smoke command and a deliberately broken cohort wiring (e.g. wrong model identifier), **When** the operator runs it, **Then** the smoke run exits with a non-zero status and surfaces a per-cohort diagnostic identifying which cohort failed and why.
+2. **Given** the M6 smoke command and a deliberately broken cohort wiring (e.g. wrong model identifier), **When** the operator runs it, **Then** the smoke run exits with status `1` and prints a stderr summary line for the failing cohort in the form `cohort=<name> status=failed reason=<short string>` identifying which cohort failed and why.
 3. **Given** a successful smoke run, **When** the operator chooses to proceed, **Then** the full M6 sweep is the next step — the smoke run does not implicitly trigger the full sweep.
 
 ---
@@ -86,25 +95,30 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 **Metrics**
 
 - **FR-007**: The system MUST publish **TTFT** as a first-class metric for every chat_stream cell, alongside total wall-clock per RPC.
-- **FR-008**: The system MUST publish an **engine-cost-per-RPC** metric per cell as a named, separate metric distinct from the cohort comparisons:
-  - For embed cells: forward-pass wall-clock attributable to the engine alone.
-  - For chat_stream cells: TTFT + TPOT attributable to the engine alone.
+- **FR-008**: The system MUST publish an **engine-cost-per-RPC** metric per cell as a named, separate metric distinct from the cohort comparisons. Engine cost MUST be measured by **server-side instrumentation**: the gRPC frontend wraps the engine call and emits per-RPC engine-cost spans, returned to the harness via gRPC response or trailing metadata. The harness MUST NOT derive engine cost by subtraction from a transport baseline, and MUST NOT introduce a separate "engine-only" cohort to estimate it.
+  - For embed cells: `engine_forward_ms` (forward-pass wall-clock attributable to the engine alone).
+  - For chat_stream cells: `engine_ttft_ms` and `engine_tpot_ms` (separately).
 - **FR-009**: The system MUST publish 95% CI half-widths for every numeric metric in the verdict table and engine-cost row, so the operator can adjudicate trust.
 - **FR-010**: The system MUST run a per-cohort RTT probe before the sweep and surface the result in the executive section of the report (inherits the M5.2 convention).
 
 **Smoke gate**
 
-- **FR-011**: The system MUST provide a smoke command that runs **1 cell × 3 cohorts × n=10** against the real engine. The smoke command MUST be invocable independently of the full sweep.
+- **FR-011**: The system MUST provide a smoke command that runs **1 cell × 3 cohorts × n=10** against the real engine. The smoke command MUST be invocable independently of the full sweep. The smoke command MUST exit with status `0` if all 3 cohorts pass and status `1` if any cohort fails. The smoke command MUST print one summary line per cohort to **stderr** in the form `cohort=<name> status=<ok|failed> reason=<short string>`. The smoke command MUST NOT write a persistent diagnostic file (smoke is cheap to re-run; the operator's terminal is the only consumer).
 - **FR-012**: The full M6 sweep MUST NOT proceed automatically when the smoke gate is failing; the operator's next action on smoke failure is to fix the failing cohort wiring and re-run smoke.
 
 **Outputs and reproducibility**
 
 - **FR-013**: The system MUST emit `docs/benchmarks/m6-real-engine-mini-validation.md` (markdown report) and `docs/benchmarks/m6-real-engine-mini-validation.json` (JSON companion) on a successful full sweep.
-- **FR-014**: The markdown report's executive section MUST contain a "Supersedes M5.2 under real engine" verdict table, one row per cell, classifying each cell into exactly one of four canonical categories: `verdict_survives`, `verdict_buried_by_engine`, `verdict_changed`, `no_winner_at_n100`.
+- **FR-014**: The markdown report's executive section MUST contain a "Supersedes M5.2 under real engine" verdict table, one row per cell, classifying each cell into exactly one of four canonical categories: `verdict_survives`, `verdict_buried_by_engine`, `verdict_changed`, `no_winner_at_n100`. Discrimination rule:
+  - `verdict_survives`: M6 cohort CIs are non-overlapping in the **same** direction as M5.2's published winner for that cell.
+  - `verdict_changed`: M6 cohort CIs are non-overlapping in the **opposite** direction from M5.2's published winner.
+  - `verdict_buried_by_engine`: M6 cohort CIs overlap **and** `engine_cost_mean ≥ 5 × |M5.2_winner_delta|` for that cell.
+  - `no_winner_at_n100`: M6 cohort CIs overlap **and** the `verdict_buried_by_engine` condition is not met (including the case where M5.2 itself published `no_winner` for the cell, so no winner delta exists to compare against).
+  The classifier MUST be deterministic given the M6 numeric inputs and the M5.2 published winner deltas; operator post-hoc re-classification is not permitted. The classifier MUST read M5.2 winner deltas from `docs/benchmarks/m5_2-transport-vs-tuning.json` at runtime (single source of truth) and MUST snapshot the per-cell deltas it used into M6's JSON `RunMeta` for audit traceability (see FR-018).
 - **FR-015**: The markdown report's executive section MUST name the inference engine, model identifier, hidden_size, Modal region, and GPU type, so a reader cannot mistake the M6 cell for an unrelated baseline.
 - **FR-016**: The JSON companion MUST be a strict superset of M5.2's JSON schema. M5.2-aware downstream consumers MUST continue to work unmodified.
 - **FR-017**: The system MUST be drivable from a single CLI invocation using the project's existing benchmark harness entry point, with `--m6` and `--m6-modal-region=<region>` flags (or equivalent) so the operator does not orchestrate cohorts or cells by hand.
-- **FR-018**: The system MUST embed `git_sha`, `hostname`, Modal function ID, GPU type, Modal region, model identifier, engine version, and `cold_start_s` in the JSON run metadata so results are fully traceable.
+- **FR-018**: The system MUST embed the following fields in the JSON run metadata so results are fully traceable: `git_sha`, `hostname`, Modal function ID, GPU type, Modal region, model identifier, engine version, `cold_start_s`, and `m5_2_winner_deltas` (a per-cell snapshot of the M5.2 winner deltas the classifier actually consumed for this run, sourced from `docs/benchmarks/m5_2-transport-vs-tuning.json` at runtime — see FR-014).
 - **FR-019**: The system MUST exclude Modal cold-start time from per-RPC latency numbers; cold-start MUST be recorded as `cold_start_s` in run metadata for transparency (inherits the M3.2 / M4.1 convention).
 
 **Bytes axis (preserved, not re-measured)**
@@ -115,9 +129,9 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 
 - **M6 cell**: A specific (path, hidden_size, concurrency) tuple in the 6-cell narrow slice. Each cell is benchmarked across all 3 cohorts and receives one canonical survival verdict.
 - **M6 cohort**: One of `rest_https_edge`, `default_grpc`, `tuned_grpc_multiplexed`. The cohort defines the wire format and transport.
-- **Verdict classification**: One of `verdict_survives` (M5.2 winner CI direction holds non-overlapping under real engine), `verdict_buried_by_engine` (engine cost dominates so completely that prior cohort deltas vanish into noise), `verdict_changed` (real-engine CI direction is opposite of M5.2's), or `no_winner_at_n100` (95% CIs overlap at n=100; signal not resolved at this iteration count).
-- **Engine-cost-per-RPC baseline**: For embed cells, forward-pass wall-clock attributable to the engine alone. For chat_stream cells, TTFT + TPOT attributable to the engine alone. Inherited by M7 as a real cost floor.
-- **Run metadata (RunMeta)**: git_sha, hostname, Modal function ID, GPU type, Modal region, model identifier, engine version, cold_start_s. Embedded in every JSON report.
+- **Verdict classification**: One of `verdict_survives` (M5.2 winner CI direction holds non-overlapping under real engine), `verdict_buried_by_engine` (CIs overlap AND engine cost is ≥5× the M5.2 winner delta for that cell — additional sampling cannot recover the prior signal), `verdict_changed` (real-engine CI direction is opposite of M5.2's), or `no_winner_at_n100` (CIs overlap and the `verdict_buried_by_engine` condition is not met — additional sampling could plausibly resolve the signal). Discrimination rule is deterministic; see FR-014.
+- **Engine-cost-per-RPC baseline**: Server-instrumented per-RPC measurement returned via gRPC response/trailing metadata. For embed cells, `engine_forward_ms` (forward-pass wall-clock attributable to the engine alone). For chat_stream cells, `engine_ttft_ms` and `engine_tpot_ms` separately. Inherited by M7 as a real cost floor.
+- **Run metadata (RunMeta)**: git_sha, hostname, Modal function ID, GPU type, Modal region, model identifier, engine version, cold_start_s, m5_2_winner_deltas (per-cell snapshot of the M5.2 winner deltas the classifier consumed, for audit traceability). Embedded in every JSON report.
 - **Smoke result**: Per-cohort pass/fail outcome of the 1-cell × 3-cohort × n=10 pre-flight check. Not part of the canonical M6 verdict; gates whether the full sweep is sensible to launch.
 
 ## Success Criteria *(mandatory)*
