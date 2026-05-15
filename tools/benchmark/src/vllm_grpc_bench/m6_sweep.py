@@ -400,11 +400,24 @@ async def run_sweep(
 def summarize_verdict_tally(cells: list[M6CellRecord]) -> str:
     """One-line summary for the completion banner (e.g.
     '4 verdict_survives / 1 verdict_changed / 1 cell_incomplete').
+
+    Ordering follows FR-014's enumeration of verdict literals plus
+    FR-023's ``cell_incomplete`` (the 5th terminal classification, placed
+    last so degenerate cells stand out): survives → changed →
+    buried_by_engine → no_winner → cell_incomplete. Matches the example
+    output in ``quickstart.md`` Step 2.
     """
     counts: dict[str, int] = {}
     for cell in cells:
         counts[cell.classification] = counts.get(cell.classification, 0) + 1
-    return " / ".join(f"{v} {k}" for k, v in sorted(counts.items()))
+    order = (
+        "verdict_survives",
+        "verdict_changed",
+        "verdict_buried_by_engine",
+        "no_winner_at_n100",
+        "cell_incomplete",
+    )
+    return " / ".join(f"{counts[k]} {k}" for k in order if k in counts)
 
 
 __all__ = [

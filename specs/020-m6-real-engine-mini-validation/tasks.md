@@ -207,10 +207,10 @@ description: "Task list for M6 — Real-Engine Mini-Validation"
 
 **Purpose**: Final validation, lint pass, documentation review.
 
-- [ ] T060 Run the project local-lint chain (`ruff check .`, `ruff format --check .`, `mypy --strict packages tools`, `pytest`) per `feedback_local_lint_chain` memory; fix any reported issues before push. All four gates MUST pass.
-- [ ] T061 [P] Run `graphify update .` to refresh the local project knowledge graph with the new M6 modules (per project CLAUDE.md `## graphify` Rules section).
-- [ ] T062 [P] Validate `quickstart.md` Step 1 (smoke) and Step 2 (full sweep) against the implemented harness — confirm stderr output format matches the quickstart's expected output exactly (FR-011 / FR-026). Update quickstart if implementation drifted from spec.
-- [ ] T063 [P] Validate that the published `docs/benchmarks/m6-real-engine-mini-validation.json` from a real sweep round-trips through `tools/benchmark/src/vllm_grpc_bench/m5_2_supersede.py` without schema-validation errors (FR-016 / SC-007) — runs the existing M5.2 reader against the M6 file in an integration test under `tools/benchmark/tests/test_m6_reporter.py`.
+- [X] T060 Run the project local-lint chain (`ruff check .`, `ruff format --check .`, `mypy --strict packages tools`, `pytest`) per `feedback_local_lint_chain` memory; fix any reported issues before push. All four gates MUST pass.
+- [X] T061 [P] Run `graphify update .` to refresh the local project knowledge graph with the new M6 modules (per project CLAUDE.md `## graphify` Rules section).
+- [X] T062 [P] Validate `quickstart.md` Step 1 (smoke) and Step 2 (full sweep) against the implemented harness — confirm stderr output format matches the quickstart's expected output exactly (FR-011 / FR-026). Update quickstart if implementation drifted from spec.
+- [X] T063 [P] Validate that the published `docs/benchmarks/m6-real-engine-mini-validation.json` from a real sweep round-trips through `tools/benchmark/src/vllm_grpc_bench/m5_2_supersede.py` without schema-validation errors (FR-016 / SC-007) — runs the existing M5.2 reader against the M6 file in an integration test under `tools/benchmark/tests/test_m6_reporter.py`.
 - [ ] T064 Re-run the full M6 sweep against Modal `eu-west-1` and confirm SC-001 (≤90 min) + SC-002 (every cell receives exactly one terminal classification) + SC-003 (chat_stream cells publish TTFT + wall-clock with 95% CI half-widths) + SC-004 (smoke ≤5 min) on the implemented harness; commit published artifacts to `docs/benchmarks/` per `quickstart.md` Step 4.
 
 ---

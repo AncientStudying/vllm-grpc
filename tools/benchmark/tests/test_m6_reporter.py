@@ -428,3 +428,150 @@ def test_write_markdown_emits_file(tmp_path: Path) -> None:
     text = out.read_text()
     assert "M6 — Real-Engine Mini-Validation" in text
     assert "Supersedes M5.2 Under Real Engine" in text
+
+
+# --- T063: M5.2 strict-superset integration ---------------------------------
+
+
+def test_t063_m6_json_round_trips_through_m5_2_protocol_comparison_row(tmp_path: Path) -> None:
+    """T063 / FR-016 / SC-007: M6's ``protocol_comparison_verdicts[]``
+    rows are structurally valid against M5.2's ``ProtocolComparisonRow``
+    dataclass. An M5.2-aware reader picking up the M6 JSON sees no
+    schema drift — each row deserializes cleanly into a typed
+    ProtocolComparisonRow instance and carries an in-range verdict
+    literal.
+    """
+    from vllm_grpc_bench.m3_types import ProtocolComparisonRow
+
+    cells = [
+        _make_cell_record("embed", 1, "verdict_survives"),
+        _make_cell_record("embed", 4, "verdict_changed", m5_2_winner_direction="rest_wins"),
+        _make_cell_record("embed", 8, "verdict_buried_by_engine"),
+        _make_cell_record("chat_stream", 1, "no_winner_at_n100", m5_2_winner_delta_ms=None),
+        _make_cell_record("chat_stream", 4, "cell_incomplete", n_successes=50),
+        _make_cell_record("chat_stream", 8, "verdict_survives"),
+    ]
+    run = _make_run(cells)
+    out = tmp_path / "m6.json"
+    write_json(run, out)  # type: ignore[arg-type]
+    doc = json.loads(out.read_text())
+    pcv = doc["protocol_comparison_verdicts"]
+    assert len(pcv) == 6
+
+    # Each row deserializes into a ProtocolComparisonRow dataclass
+    # cleanly. Any schema drift would raise TypeError on construction.
+    valid_verdicts = {
+        "tuned_grpc_recommend",
+        "tuned_grpc_multiplexed_recommend",
+        "tuned_grpc_channels_recommend",
+        "default_grpc_recommend",
+        "rest_https_edge_recommend",
+        "no_winner",
+        "comparison_unavailable",
+    }
+    valid_grpc_cohorts = {
+        "tuned_grpc",
+        "tuned_grpc_multiplexed",
+        "tuned_grpc_channels",
+        "default_grpc",
+    }
+    typed_rows: list[ProtocolComparisonRow] = []
+    for row in pcv:
+        assert row["verdict"] in valid_verdicts
+        assert row["grpc_cohort"] in valid_grpc_cohorts
+        assert row["rest_cohort"] == "rest_https_edge"
+        assert row["grpc_cohort_network_path"] == "plain_tcp"
+        assert row["rest_cohort_network_path"] == "https_edge"
+        typed_rows.append(
+            ProtocolComparisonRow(
+                path=row["path"],
+                hidden_size=int(row["hidden_size"]),
+                concurrency=int(row["concurrency"]),
+                grpc_cohort=row["grpc_cohort"],
+                verdict=row["verdict"],
+                comparison_unavailable_reason=row.get("comparison_unavailable_reason"),
+                delta_median_ms=float(row["delta_median_ms"]),
+                ci_lower_ms=float(row["ci_lower_ms"]),
+                ci_upper_ms=float(row["ci_upper_ms"]),
+                rest_cohort=row.get("rest_cohort", "rest_https_edge"),
+                grpc_cohort_network_path=row.get("grpc_cohort_network_path", "plain_tcp"),
+                rest_cohort_network_path=row.get("rest_cohort_network_path", "https_edge"),
+                low_rtt_caveat=bool(row.get("low_rtt_caveat", False)),
+            )
+        )
+    assert len(typed_rows) == 6
+
+    # cell_incomplete row maps to comparison_unavailable per FR-016
+    # mapping rules; M5.2-aware consumers see the row but it doesn't
+    # produce a verdict (correct semantics for an M6-incomplete cell).
+    incomplete_row = next(r for r in typed_rows if r.path == "chat_stream" and r.concurrency == 4)
+    assert incomplete_row.verdict == "comparison_unavailable"
+    assert incomplete_row.comparison_unavailable_reason is not None
+
+
+def test_t063_m6_json_protocol_verdicts_match_m5_2_top_level_schema(tmp_path: Path) -> None:
+    """T063 (companion): the JSON companion's top-level keys are a strict
+    superset of M5.2's published JSON. An M5.2-aware reader that grabs
+    ``protocol_comparison_verdicts``, ``cohorts``, ``rtt_distribution``,
+    ``transport_only_verdicts``, etc. sees all the expected keys (some
+    populated with the M6 equivalents, some empty arrays per the M6
+    out-of-scope axes).
+    """
+    cells = [
+        _make_cell_record("embed", 1, "verdict_survives"),
+        _make_cell_record("embed", 4, "no_winner_at_n100"),
+        _make_cell_record("embed", 8, "no_winner_at_n100"),
+        _make_cell_record("chat_stream", 1, "verdict_survives", m5_2_winner_delta_ms=10.0),
+        _make_cell_record("chat_stream", 4, "no_winner_at_n100", m5_2_winner_delta_ms=10.0),
+        _make_cell_record("chat_stream", 8, "no_winner_at_n100", m5_2_winner_delta_ms=10.0),
+    ]
+    run = _make_run(cells)
+    out = tmp_path / "m6.json"
+    write_json(run, out)  # type: ignore[arg-type]
+    doc = json.loads(out.read_text())
+
+    # M5.2-shape top-level keys (FR-016).
+    m5_2_keys = {
+        "schema_version",
+        "run_id",
+        "run_started_at",
+        "run_completed_at",
+        "harness_version_sha",
+        "modal_region",
+        "modal_instance_class",
+        "modal_metadata",
+        "client_external_geolocation",
+        "rtt_distribution",
+        "https_edge_endpoint",
+        "events_sidecar_path",
+        "cohorts",
+        "protocol_comparison_verdicts",
+        "transport_only_verdicts",
+        "channel_axis_recommendations",
+        "schema_candidate_recommendations",
+        "shared_baseline_cohorts",
+        "smoke_run_outcome",
+        "supersedes_m1_time",
+        "supersedes_m3",
+        "supersedes_m4",
+        "supersedes_m5_1",
+        "symmetry",
+        "payload_parity_audit",
+    }
+    missing = m5_2_keys - set(doc.keys())
+    assert not missing, f"M6 JSON missing M5.2-shape keys: {sorted(missing)}"
+
+    # M6-specific additions (strict superset).
+    m6_additions = {
+        "supersedes_m5_2_under_real_engine",
+        "engine_cost_baseline",
+        "m6_meta",
+    }
+    missing_m6 = m6_additions - set(doc.keys())
+    assert not missing_m6, f"M6 JSON missing M6-specific keys: {sorted(missing_m6)}"
+
+    # Empty arrays per M6 out-of-scope axes (FR-016).
+    assert doc["transport_only_verdicts"] == []
+    assert doc["channel_axis_recommendations"] == []
+    assert doc["schema_candidate_recommendations"] == []
+    assert doc["shared_baseline_cohorts"] == []
