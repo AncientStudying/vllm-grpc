@@ -298,8 +298,13 @@ def _supersedes_row_dict(row: SupersedesM5_2Row) -> dict[str, Any]:
         "cohort_pair": ["rest_https_edge", "tuned_grpc_multiplexed"],
         "m5_2_winner_cohort": row.m5_2_winner_cohort,
         "m5_2_winner_delta_ms": row.m5_2_winner_delta_ms,
+        "m5_2_winner_direction": row.m5_2_winner_direction,
         "engine_cost_mean_ms": row.engine_cost_mean_ms,
         "engine_cost_drift_warning": row.engine_cost_drift_warning,
+        # T050 / FR-014 sub-clause: per-cohort engine_cost means surfaced
+        # for operator review only when drift fires; None otherwise per
+        # data-model.md M6CellRecord validation rule.
+        "per_cohort_engine_cost_mean_ms": row.per_cohort_engine_cost_mean_ms,
         "per_cohort_classifier_metric": {
             kind: {
                 "mean_ms": row.m6_classifier_metric_mean_per_cohort.get(kind),
@@ -421,8 +426,10 @@ def _supersedes_rows_from_cells(cells: list[M6CellRecord]) -> list[SupersedesM5_
                 m6_classifier_metric_ci_per_cohort=cis,
                 m5_2_winner_cohort=winner_cohort,
                 m5_2_winner_delta_ms=cell.m5_2_winner_delta_ms,
+                m5_2_winner_direction=cell.m5_2_winner_direction,
                 engine_cost_mean_ms=cell.engine_cost_mean_ms,
                 engine_cost_drift_warning=cell.engine_cost_drift_warning,
+                per_cohort_engine_cost_mean_ms=cell.per_cohort_engine_cost_mean_ms,
                 notes=cell.classification_reason,
             )
         )

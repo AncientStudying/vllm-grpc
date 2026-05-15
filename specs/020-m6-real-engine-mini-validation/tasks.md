@@ -158,24 +158,24 @@ description: "Task list for M6 — Real-Engine Mini-Validation"
 
 ### Engine-cost baseline aggregation (FR-008, SC-006)
 
-- [ ] T045 [US2] [P] Implement `aggregate_engine_cost_per_cell(per_rpc_measurements) -> EngineCostAggregate` in `tools/benchmark/src/vllm_grpc_bench/m6_engine_cost.py`: mean + 95% CI half-width per path-discriminated field (`engine_forward_*` for embed; `engine_ttft_*` + `engine_tpot_*` for chat_stream). Reuses the existing `metrics.ci.compute_ci_half_width` helper.
-- [ ] T046 [US2] Compute the per-cell cohort-averaged `engine_cost_mean` (FR-014 classifier input) and per-cohort `engine_cost_mean` map in `tools/benchmark/src/vllm_grpc_bench/m6_supersede.py`, alongside `engine_cost_drift_warning` via `compute_drift_warning()` (T012); attach to `M6CellRecord` per data-model.md.
+- [X] T045 [US2] [P] Implement `aggregate_engine_cost_per_cell(per_rpc_measurements) -> EngineCostAggregate` in `tools/benchmark/src/vllm_grpc_bench/m6_engine_cost.py`: mean + 95% CI half-width per path-discriminated field (`engine_forward_*` for embed; `engine_ttft_*` + `engine_tpot_*` for chat_stream). Reuses the existing `metrics.ci.compute_ci_half_width` helper.
+- [X] T046 [US2] Compute the per-cell cohort-averaged `engine_cost_mean` (FR-014 classifier input) and per-cohort `engine_cost_mean` map in `tools/benchmark/src/vllm_grpc_bench/m6_supersede.py`, alongside `engine_cost_drift_warning` via `compute_drift_warning()` (T012); attach to `M6CellRecord` per data-model.md.
 
 ### Markdown — Engine Cost Per RPC table + drift footnotes (FR-014 sub-clause, contracts/output.md §1)
 
-- [ ] T047 [US2] Add the "Engine Cost Per RPC" section to the M6 markdown reporter in `tools/benchmark/src/vllm_grpc_bench/m6_reporter.py` per contracts/output.md §1: 6-row table (one per cell) with columns `engine_forward_ms` (embed) / `engine_ttft_ms` (chat_stream) / `engine_tpot_ms` (chat_stream) / `drift_warning`. Each numeric value rendered as `mean ± CI`.
-- [ ] T048 [US2] Render `⚠ engine drift` marker in the Supersedes M5.2 verdict-table row's Notes column AND a footnote under that row surfacing per-cohort engine_cost mean values (FR-014 sub-clause "per-cohort `engine_cost_mean` values MUST be surfaced for operator review") in `tools/benchmark/src/vllm_grpc_bench/m6_reporter.py`.
+- [X] T047 [US2] Add the "Engine Cost Per RPC" section to the M6 markdown reporter in `tools/benchmark/src/vllm_grpc_bench/m6_reporter.py` per contracts/output.md §1: 6-row table (one per cell) with columns `engine_forward_ms` (embed) / `engine_ttft_ms` (chat_stream) / `engine_tpot_ms` (chat_stream) / `drift_warning`. Each numeric value rendered as `mean ± CI`.
+- [X] T048 [US2] Render `⚠ engine drift` marker in the Supersedes M5.2 verdict-table row's Notes column AND a footnote under that row surfacing per-cohort engine_cost mean values (FR-014 sub-clause "per-cohort `engine_cost_mean` values MUST be surfaced for operator review") in `tools/benchmark/src/vllm_grpc_bench/m6_reporter.py`.
 
 ### JSON — engine_cost_baseline[] section (SC-006, FR-014)
 
-- [ ] T049 [US2] Add the `engine_cost_baseline[]` array to the JSON companion writer in `tools/benchmark/src/vllm_grpc_bench/m6_reporter.py` per contracts/output.md §2: one entry per cell with `engine_forward_mean_ms`, `engine_forward_ci_half_width_ms`, `engine_ttft_mean_ms`, `engine_tpot_mean_ms`, `drift_warning` (None for path-irrelevant fields per data-model.md `EngineCostSpan` validation rules).
-- [ ] T050 [US2] [P] Populate `per_cohort_engine_cost_mean_ms` in each `SupersedesM5_2Row` only when `engine_cost_drift_warning == True` (FR-014 sub-clause) in `tools/benchmark/src/vllm_grpc_bench/m6_reporter.py`; assert `None` otherwise per data-model.md `M6CellRecord` validation rule.
+- [X] T049 [US2] Add the `engine_cost_baseline[]` array to the JSON companion writer in `tools/benchmark/src/vllm_grpc_bench/m6_reporter.py` per contracts/output.md §2: one entry per cell with `engine_forward_mean_ms`, `engine_forward_ci_half_width_ms`, `engine_ttft_mean_ms`, `engine_tpot_mean_ms`, `drift_warning` (None for path-irrelevant fields per data-model.md `EngineCostSpan` validation rules).
+- [X] T050 [US2] [P] Populate `per_cohort_engine_cost_mean_ms` in each `SupersedesM5_2Row` only when `engine_cost_drift_warning == True` (FR-014 sub-clause) in `tools/benchmark/src/vllm_grpc_bench/m6_reporter.py`; assert `None` otherwise per data-model.md `M6CellRecord` validation rule.
 
 ### Tests for US2
 
-- [ ] T051 [US2] [P] Add pytest test for engine-cost aggregation in `tools/benchmark/tests/test_m6_engine_cost.py`: feed synthetic per-RPC `EngineCostSpan` values for an embed cell and a chat_stream cell; assert mean and 95% CI half-width match independent reference calculations.
-- [ ] T052 [US2] [P] Add pytest test for the "Engine Cost Per RPC" markdown section in `tools/benchmark/tests/test_m6_reporter.py`: construct a synthetic `M6Run` with mixed embed + chat_stream cells; assert all 6 rows render with correct path-discriminated columns (embed rows show `engine_forward_ms`; chat_stream rows show `engine_ttft_ms` and `engine_tpot_ms`; `n/a` in irrelevant cells).
-- [ ] T053 [US2] [P] Add pytest test for drift-warning rendering in `tools/benchmark/tests/test_m6_reporter.py`: feed synthetic per-cohort engine_cost means that disagree by 12%; assert the `⚠ engine drift` marker appears in the verdict-table row, the per-cohort values surface in a footnote, and the JSON companion populates `per_cohort_engine_cost_mean_ms` (not None) on that row.
+- [X] T051 [US2] [P] Add pytest test for engine-cost aggregation in `tools/benchmark/tests/test_m6_engine_cost.py`: feed synthetic per-RPC `EngineCostSpan` values for an embed cell and a chat_stream cell; assert mean and 95% CI half-width match independent reference calculations.
+- [X] T052 [US2] [P] Add pytest test for the "Engine Cost Per RPC" markdown section in `tools/benchmark/tests/test_m6_reporter.py`: construct a synthetic `M6Run` with mixed embed + chat_stream cells; assert all 6 rows render with correct path-discriminated columns (embed rows show `engine_forward_ms`; chat_stream rows show `engine_ttft_ms` and `engine_tpot_ms`; `n/a` in irrelevant cells).
+- [X] T053 [US2] [P] Add pytest test for drift-warning rendering in `tools/benchmark/tests/test_m6_reporter.py`: feed synthetic per-cohort engine_cost means that disagree by 12%; assert the `⚠ engine drift` marker appears in the verdict-table row, the per-cohort values surface in a footnote, and the JSON companion populates `per_cohort_engine_cost_mean_ms` (not None) on that row.
 
 **Checkpoint**: At this point, User Stories 1 AND 2 should both work independently. The Engine Cost Per RPC table is the M6 → M7 hand-off (SC-006).
 

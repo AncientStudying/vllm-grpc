@@ -189,8 +189,13 @@ class SupersedesM5_2Row:
     m6_classifier_metric_ci_per_cohort: dict[M6CohortKind, tuple[float, float]]
     m5_2_winner_cohort: M6CohortKind | None
     m5_2_winner_delta_ms: float | None
+    m5_2_winner_direction: M5_2WinnerDirection | None
     engine_cost_mean_ms: float
     engine_cost_drift_warning: bool
+    # T050 / FR-014 sub-clause: per-cohort engine_cost means MUST be
+    # surfaced for operator review when drift fires; MUST be None
+    # otherwise per data-model.md M6CellRecord validation rule.
+    per_cohort_engine_cost_mean_ms: dict[M6CohortKind, float] | None
     notes: str
 
 

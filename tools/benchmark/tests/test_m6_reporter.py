@@ -259,6 +259,41 @@ def test_verdict_table_drift_marker(tmp_path: Path) -> None:
     assert "per-cohort engine_cost:" in table
 
 
+def test_t053_drift_warning_json_payload(tmp_path: Path) -> None:
+    """T053 (strengthened) / T050: per-cohort engine_cost means surface in
+    the JSON companion's ``per_cohort_engine_cost_mean_ms`` field ONLY when
+    drift fires; rows without drift carry ``None`` per FR-014 sub-clause /
+    data-model.md M6CellRecord validation rule.
+
+    Synthetic per-cohort engine_cost means disagree by 12% on the first
+    cell only (above the >10% threshold).
+    """
+    cells = [
+        _make_cell_record("embed", 1, "verdict_survives", drift=True),
+        _make_cell_record("embed", 4, "no_winner_at_n100"),
+        _make_cell_record("embed", 8, "no_winner_at_n100"),
+        _make_cell_record("chat_stream", 1, "no_winner_at_n100", m5_2_winner_delta_ms=None),
+        _make_cell_record("chat_stream", 4, "no_winner_at_n100", m5_2_winner_delta_ms=None),
+        _make_cell_record("chat_stream", 8, "no_winner_at_n100", m5_2_winner_delta_ms=None),
+    ]
+    run = _make_run(cells)
+    doc = render_json(run)  # type: ignore[arg-type]
+    sm5_2 = doc["supersedes_m5_2_under_real_engine"]
+    drift_rows = [r for r in sm5_2 if r["engine_cost_drift_warning"]]
+    non_drift_rows = [r for r in sm5_2 if not r["engine_cost_drift_warning"]]
+    assert len(drift_rows) == 1
+    assert drift_rows[0]["per_cohort_engine_cost_mean_ms"] is not None
+    # Drift row's per-cohort mapping has all 3 cohorts.
+    assert set(drift_rows[0]["per_cohort_engine_cost_mean_ms"].keys()) == {
+        "rest_https_edge",
+        "default_grpc",
+        "tuned_grpc_multiplexed",
+    }
+    # Non-drift rows MUST carry None per FR-014 sub-clause / data-model.md.
+    for row in non_drift_rows:
+        assert row["per_cohort_engine_cost_mean_ms"] is None
+
+
 # --- Engine Cost Per RPC table (T040 — Phase 4 territory but tested here) ----
 
 

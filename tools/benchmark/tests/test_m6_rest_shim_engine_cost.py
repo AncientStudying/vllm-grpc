@@ -16,7 +16,6 @@ from typing import Any
 import httpx
 import numpy as np
 import pytest
-
 from vllm_grpc_bench.mock_engine import MockEngine, MockEngineConfig
 from vllm_grpc_bench.rest_shim import build_rest_shim
 
@@ -78,10 +77,11 @@ async def test_chat_stream_terminal_event_carries_engine_cost() -> None:
         "stream": True,
         "max_tokens": 4,
     }
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=shim), base_url="http://shim"
-    ) as client:
-        async with client.stream(
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=shim), base_url="http://shim"
+        ) as client,
+        client.stream(
             "POST",
             "/v1/chat/completions",
             content=json.dumps(body).encode(),
@@ -89,12 +89,13 @@ async def test_chat_stream_terminal_event_carries_engine_cost() -> None:
                 "authorization": f"Bearer {_TOKEN}",
                 "content-type": "application/json",
             },
-        ) as resp:
-            assert resp.status_code == 200
-            data_lines: list[str] = []
-            async for line in resp.aiter_lines():
-                if line.startswith("data:") and "[DONE]" not in line:
-                    data_lines.append(line[len("data:") :].strip())
+        ) as resp,
+    ):
+        assert resp.status_code == 200
+        data_lines: list[str] = []
+        async for line in resp.aiter_lines():
+            if line.startswith("data:") and "[DONE]" not in line:
+                data_lines.append(line[len("data:") :].strip())
 
     # The LAST data: event (just before [DONE]) MUST carry engine_cost.
     assert data_lines, "expected at least one SSE data: event"
