@@ -33,9 +33,9 @@ description: "Task list for M6 — Real-Engine Mini-Validation"
 
 **Purpose**: Verify the existing M5.2 harness is the right launch point; no new top-level packages or dependencies.
 
-- [ ] T001 Verify M5.2 baseline file present and valid by reading `docs/benchmarks/m5_2-transport-vs-tuning.json` and confirming `protocol_comparison_verdicts[]` contains rows for all 6 M6 cells (path ∈ {embed, chat_stream}, hidden_size=4096, concurrency ∈ {1, 4, 8}). If any cell entry is missing, abort M6 implementation and fix M5.2 first. (FR-014 baseline precondition; R-5)
-- [ ] T002 [P] Confirm `vllm`, `grpcio`, `grpcio-tools`, `FastAPI`, `uvicorn`, `modal`, `pytest`, `pytest-asyncio` are pinned in `pyproject.toml` / `uv.lock` at versions matching plan.md Technical Context; no version bump required for M6.
-- [ ] T003 [P] Add the M6 cell-iteration helper constants to `tools/benchmark/src/vllm_grpc_bench/m6_types.py` (NEW FILE): `M6_CELLS` tuple of 6 `(path, hidden_size=4096, concurrency)` triples in iteration order per data-model.md `M6Cell.Identity`; `M6_COHORTS` tuple `("rest_https_edge", "default_grpc", "tuned_grpc_multiplexed")`; `M6_SMOKE_CELLS` tuple of 2 (`embed × c=1`, `chat_stream × c=1`).
+- [X] T001 Verify M5.2 baseline file present and valid by reading `docs/benchmarks/m5_2-transport-vs-tuning.json` and confirming `protocol_comparison_verdicts[]` contains rows for all 6 M6 cells (path ∈ {embed, chat_stream}, hidden_size=4096, concurrency ∈ {1, 4, 8}). If any cell entry is missing, abort M6 implementation and fix M5.2 first. (FR-014 baseline precondition; R-5)
+- [X] T002 [P] Confirm `vllm`, `grpcio`, `grpcio-tools`, `FastAPI`, `uvicorn`, `modal`, `pytest`, `pytest-asyncio` are pinned in `pyproject.toml` / `uv.lock` at versions matching plan.md Technical Context; no version bump required for M6.
+- [X] T003 [P] Add the M6 cell-iteration helper constants to `tools/benchmark/src/vllm_grpc_bench/m6_types.py` (NEW FILE): `M6_CELLS` tuple of 6 `(path, hidden_size=4096, concurrency)` triples in iteration order per data-model.md `M6Cell.Identity`; `M6_COHORTS` tuple `("rest_https_edge", "default_grpc", "tuned_grpc_multiplexed")`; `M6_SMOKE_CELLS` tuple of 2 (`embed × c=1`, `chat_stream × c=1`).
 
 **Checkpoint**: Setup complete. Foundational phase can begin.
 
