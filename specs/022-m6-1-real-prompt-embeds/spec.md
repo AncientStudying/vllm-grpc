@@ -76,7 +76,7 @@ The operator wants to run a fast, low-cost smoke check before committing to the 
 **Acceptance Scenarios**:
 
 1. **Given** a configured Modal account and M6's baseline JSON present, **When** the operator runs the M6.1 smoke command, **Then** the smoke gate exercises 2 cells × 3 cohorts × n=10 (60 RPCs total) and exits within 5 minutes with status `0` if all 3 cohorts pass on both cells.
-2. **Given** the operator's local environment is missing `torch`, **When** the operator runs the M6.1 smoke command, **Then** the smoke gate surfaces the missing-`torch` failure within the first cohort attempt with a clear error message naming `torch` as the missing prerequisite, exits with status `1`, and prints a one-line per-cohort summary to stderr.
+2. **Given** the operator's local environment is missing `torch`, **When** the operator runs the M6.1 smoke command, **Then** the smoke gate surfaces the missing-`torch` failure at driver-start (before any RPC is sent) with a clear error message naming `torch` as the missing prerequisite, exits with status `2`, and prints a one-line per-cohort summary to stderr.
 3. **Given** the M6 baseline JSON is missing or malformed, **When** the operator runs the M6.1 smoke command, **Then** the smoke gate aborts with a clear pre-check error message naming the failing precondition before any RPC is sent, exits with status `2`, and does not attempt the sweep.
 
 ---
