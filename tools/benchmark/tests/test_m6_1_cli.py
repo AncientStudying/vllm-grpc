@@ -132,10 +132,24 @@ def test_m6_1_dispatch_aborts_on_torch_mismatch(
     assert exc_info.value.code == 2
 
 
+def _bypass_torch_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Patch the torch-pin validator to a no-op so baseline-precondition
+    tests exercise the path the test name advertises (not the FR-006 gate).
+
+    CI runners may resolve a different torch version than the pin (the
+    Linux torch wheel has heavy cuda-bindings deps); the torch-pin gate
+    is independently exercised in test_m6_1_torch_pin.
+    """
+    from vllm_grpc_bench import m6_1_torch_pin
+
+    monkeypatch.setattr(m6_1_torch_pin, "validate_torch_version", lambda: "2.11.0")
+
+
 def test_m6_1_dispatch_aborts_on_missing_baseline_full_sweep(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("MODAL_BENCH_TOKEN", "tok-xyz")
+    _bypass_torch_pin(monkeypatch)
     missing = tmp_path / "missing.json"
     ns = _parse("--m6_1", f"--m6_1-m6-baseline={missing}")
     assert _run_m6_1(ns) == 1
@@ -145,6 +159,7 @@ def test_m6_1_dispatch_aborts_on_missing_baseline_smoke(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("MODAL_BENCH_TOKEN", "tok-xyz")
+    _bypass_torch_pin(monkeypatch)
     missing = tmp_path / "missing.json"
     ns = _parse("--m6_1-smoke", f"--m6_1-m6-baseline={missing}")
     assert _run_m6_1(ns) == 2
@@ -154,6 +169,7 @@ def test_m6_1_dispatch_baseline_missing_cell_full_sweep(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("MODAL_BENCH_TOKEN", "tok-xyz")
+    _bypass_torch_pin(monkeypatch)
     baseline = tmp_path / "baseline.json"
     baseline.write_text(json.dumps({"supersedes_m5_2_under_real_engine": []}))
     ns = _parse("--m6_1", f"--m6_1-m6-baseline={baseline}")
