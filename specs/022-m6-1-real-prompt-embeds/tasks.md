@@ -168,6 +168,7 @@ description: "Task list for M6.1 — Real-Prompt-Embeds Engine Path"
 - [ ] T035 Run the local lint chain end-to-end before opening a PR per the project's `feedback_local_lint_chain` memory: `ruff check .` then `ruff format --check .` then `mypy --strict packages tools` then `pytest`. All four MUST pass with zero errors. If `mypy --strict` flags `torch.*` modules as untyped, ensure the existing `[[tool.mypy.overrides]]` block in `pyproject.toml` covering `torch.*` is preserved (it already exists per current pyproject.toml).
 - [ ] T036 [P] Run the quickstart smoke command end-to-end against Modal A10G eu-west-1 (`python -m vllm_grpc_bench --m6_1-smoke --m6_1-modal-region=eu-west-1`) and verify the actual stderr output matches the layout documented in `quickstart.md` Step 1. This is a manual operator validation step; if Modal credentials are not available, document the deferral in the PR description.
 - [ ] T037 [P] After the published M6.1 sweep lands, update `docs/PLAN.md`'s M6.1 section to link to the published `docs/benchmarks/m6_1-real-prompt-embeds.{md,json}` artifacts and mark the milestone status as "delivered". Update `ANALYSIS.md`'s M6 section to add an "M6.1 followup" footnote summarising the headline verdict counts (e.g. "3/6 cells verdict_survives, 2/6 verdict_changed, 1/6 cell_incomplete") and pointing readers at the published "Engine path differential" section as the methodology disclosure.
+- [ ] T038 [P] Update the REST contract documentation surface so both `input_kind` values are named and described per FR-004 (operator-facing REST documentation). Concretely: add (or extend) a module-level docstring on `tools/benchmark/src/vllm_grpc_bench/rest_shim.py` (or the `_EmbedRequest` Pydantic model + the embed handler) that documents (a) `input_kind="prompt_embedding_b64"` — raw float32 bytes hashed to a text digest server-side; engine work is text-prompt unary completion; preserved for M5.x / M6 reproductions; (b) `input_kind="prompt_embedding_torch_b64"` — base64-encoded `torch.save(tensor)` bytes; `decode_embeds` deserialises and the engine consumes via `enable_prompt_embeds=True`; used by M6.1+ sweeps; (c) cross-reference to `docs/benchmarks/m6_1-real-prompt-embeds.md`'s "Engine path differential" section as the operator's decision aid for choosing between paths. Add a one-line note in `tools/benchmark/README.md` if it exists, pointing at the shim docstring as the canonical REST contract reference.
 
 ---
 
@@ -201,7 +202,7 @@ description: "Task list for M6.1 — Real-Prompt-Embeds Engine Path"
 - **US1**: T017+T018 (gRPC driver) parallel with T019+T020+T021 (REST shim+cohort); both feed into T022 (classifier); T024 (sweep orchestrator) composes everything; T026 (reporter) is final.
 - **US2**: T028+T029 (differential compute) parallel with each other; both block T030 (reporter extension); T032 (strict-superset test) parallel with T031.
 - **US3**: T033+T034 (smoke + tests) parallel pair, completely independent of US1/US2 after Foundational.
-- **Polish**: T036 + T037 parallel; T035 (lint chain) is the final blocker before PR.
+- **Polish**: T036 + T037 + T038 parallel; T035 (lint chain) is the final blocker before PR.
 
 ---
 

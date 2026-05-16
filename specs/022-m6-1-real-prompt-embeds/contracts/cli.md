@@ -52,9 +52,10 @@ python -m vllm_grpc_bench --m6_1 [options...]
 | Code | Meaning |
 |---|---|
 | `0` | Full sweep completed; all 6 cells received a terminal classification; report written. |
-| `1` | Sweep aborted at launch — precondition failed. Includes M6 baseline JSON missing/malformed/incomplete (FR-009) AND torch version mismatch (FR-006). Error message names the failing precondition. |
-| `2` | Sweep aborted mid-run — Modal deploy failure or model-load failure (the throwaway forward-pass per M6's R-10 surfaced an OOM or load error). |
-| `3` | Sweep ran but published JSON validation failed against the M6 strict-superset schema (FR-021). Report still written for investigation. |
+| `1` | Sweep aborted at launch — M6 baseline JSON pre-check failed (FR-009). File missing, isn't valid JSON, or doesn't contain entries for all 6 M6.1 cells. Error message names the failing precondition. |
+| `2` | Sweep aborted at launch — client `torch` pre-check failed (FR-006). Either `torch` is not importable on the client, or `torch.__version__` does not match the pinned `2.11.0`. Error message names both detected and expected versions. |
+| `3` | Sweep aborted mid-run — Modal deploy failure or model-load failure (the throwaway forward-pass per M6's R-10 surfaced an OOM or load error). |
+| `4` | Sweep ran but published JSON validation failed against the M6 strict-superset schema (FR-021). Report still written for investigation. |
 
 ### Stdout / stderr contract (FR-023)
 
@@ -90,8 +91,8 @@ a persistent diagnostic file (FR-012).
 | Code | Meaning |
 |---|---|
 | `0` | All 6 (cell × cohort) pairs in the smoke matrix passed — FR-012. |
-| `1` | One or more (cell × cohort) pairs failed — FR-012. Per-pair stderr summary lines name the failing pairs. Includes missing-`torch` failure (Edge case in spec) surfaced within the first cohort attempt. |
-| `2` | Smoke aborted at launch — M6 baseline JSON pre-check failed (FR-013) OR torch version mismatch (FR-006). Same precondition treatment as full-sweep code 1 but distinguished with code 2 so the operator can tell apart "pre-check failed" from "RPC failed". |
+| `1` | One or more (cell × cohort) pairs failed — FR-012. Per-pair stderr summary lines name the failing pairs. (Missing-`torch` failures are caught earlier by the FR-006 pre-check and surface as code `2`, not as a code-`1` RPC failure.) |
+| `2` | Smoke aborted at launch — either pre-check failed: the M6 baseline JSON pre-check (FR-013) OR the client `torch` pre-check (FR-006). Smoke collapses both pre-check failures under a single non-RPC code because smoke's design intent is "wiring validation, not failure-mode discrimination". Full-sweep mode splits these into codes `1` (baseline) and `2` (torch) so the operator can tell them apart when ~80 min of compute is on the line. |
 
 ### Stdout / stderr contract (FR-012)
 
