@@ -58,6 +58,21 @@ from vllm_grpc_bench.rtt_probe import measure_rtt
 
 _DEFAULT_RTT_PROBE_N: int = 32
 
+
+def _resolve_rpc_index(seed: int, base_seed: int) -> int:
+    """Convert a per-RPC sampling seed into a non-negative ``rpc_index``.
+
+    Measurement RPCs use ``seed = base_seed + rpc_index`` (FR-019), so
+    ``seed - base_seed`` recovers the index. Smoke + warmup RPCs pass
+    ``seed=0`` by convention (FR-015 / FR-012 — they're not part of the
+    indexed sequence), which would otherwise produce a negative index and
+    crash ``build_torch_generator_for_rpc``. Clamping to 0 means smoke +
+    warmup RPCs share a single deterministic tensor — fine, because those
+    paths are wiring validation, not measurement.
+    """
+    return max(0, seed - base_seed)
+
+
 # Re-export chat_stream builders for callers that want symmetry with M6.
 __all__ = [
     "_build_chat_grpc_request",
@@ -295,8 +310,7 @@ async def provide_m6_1_rpc_driver(
         }
 
         async def driver(cohort: M6_1CohortKind, cell: M6_1Cell, seed: int) -> RPCResult:
-            # ``seed`` is the per-RPC sampling seed; rpc_index = seed - base_seed.
-            rpc_index = seed - base_seed
+            rpc_index = _resolve_rpc_index(seed, base_seed)
             if cohort == "rest_https_edge":
                 if cell.path == "embed":
                     return await _drive_rest_embed_m6_1(

@@ -67,3 +67,28 @@ def test_rest_payload_round_trips_via_decode_embeds() -> None:
 def test_build_torch_save_bytes_zip_magic() -> None:
     raw = build_torch_save_bytes(seq_len=8, hidden_size=4096, rpc_index=0, base_seed=42)
     assert raw[:4] == b"PK\x03\x04"
+
+
+def test_resolve_rpc_index_handles_smoke_warmup_seed_zero() -> None:
+    """Regression: smoke + warmup pass seed=0; driver must NOT compute a
+    negative rpc_index (would crash build_torch_generator_for_rpc)."""
+    from vllm_grpc_bench.m6_1_rpc_driver import _resolve_rpc_index
+
+    # Smoke + warmup convention: seed=0 → clamp to rpc_index=0.
+    assert _resolve_rpc_index(0, base_seed=42) == 0
+    assert _resolve_rpc_index(0, base_seed=1) == 0
+
+    # Measurement RPCs: seed = base_seed + rpc_index.
+    assert _resolve_rpc_index(42, base_seed=42) == 0
+    assert _resolve_rpc_index(43, base_seed=42) == 1
+    assert _resolve_rpc_index(141, base_seed=42) == 99
+
+
+def test_smoke_seed_builds_valid_payload() -> None:
+    """End-to-end regression for the smoke/warmup seed=0 → torch.save path."""
+    from vllm_grpc_bench.m6_1_rpc_driver import _resolve_rpc_index
+
+    rpc_index = _resolve_rpc_index(0, base_seed=42)
+    # If the clamp is missing this raises ValueError("rpc_index must be >= 0").
+    raw = build_torch_save_bytes(seq_len=8, hidden_size=4096, rpc_index=rpc_index, base_seed=42)
+    assert raw[:4] == b"PK\x03\x04"
