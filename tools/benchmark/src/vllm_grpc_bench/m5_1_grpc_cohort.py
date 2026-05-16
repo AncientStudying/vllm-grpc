@@ -52,16 +52,12 @@ from vllm_grpc_bench.m3_types import GRPCSubCohortKind, Path_, RTTRecord, Sample
 from vllm_grpc_bench.rtt_probe import measure_rtt
 
 
-async def _read_engine_cost_trailing_metadata(
-    call: Any,
-    path: Path_,
-) -> dict[str, float] | None:
-    """Extract M6 engine-cost values from a gRPC call's trailing metadata.
+async def _read_trailing_metadata_dict(call: Any) -> dict[str, str] | None:
+    """Fetch a gRPC call's trailing metadata once and return a flat dict.
 
-    Returns ``None`` if the call has no trailing metadata, if the keys are
-    absent (pre-M6 server), or if any value fails to parse as a float.
-    Stored on ``Sample.engine_cost_payload`` for downstream M6 consumers.
-    The path-keyed shape matches contracts/instrumentation.md §1.
+    Both the M6 engine-cost extractor and the M6.1.1 timing extractor read
+    from this; centralising the await avoids any ambiguity about
+    re-awaiting ``trailing_metadata()`` on the same call.
     """
     try:
         md_raw = await call.trailing_metadata()
@@ -69,7 +65,21 @@ async def _read_engine_cost_trailing_metadata(
         return None
     if md_raw is None:
         return None
-    md: dict[str, str] = {k: v for k, v in md_raw}
+    return {k: v for k, v in md_raw}
+
+
+def _parse_engine_cost_from_md(
+    md: dict[str, str] | None,
+    path: Path_,
+) -> dict[str, float] | None:
+    """Parse the M6 engine-cost trio from a flat trailing-metadata dict.
+
+    Returns ``None`` when ``md`` is None or any required key is missing /
+    unparseable (pre-M6 server). The path-keyed shape matches
+    contracts/instrumentation.md §1.
+    """
+    if md is None:
+        return None
     try:
         if path == "embed":
             return {"engine_forward_ms": float(md["engine-forward-ms"])}
@@ -79,6 +89,53 @@ async def _read_engine_cost_trailing_metadata(
         }
     except (KeyError, ValueError, TypeError):
         return None
+
+
+def _parse_m6_1_1_timing_from_md(md: dict[str, str] | None) -> dict[str, int] | None:
+    """Parse the M6.1.1 timing checkpoints from a flat trailing-metadata
+    dict. Returns ``None`` when the m6_1_1_t_* keys are absent (pre-M6.1.1
+    server) or any value is non-numeric. Re-hydrates back to ``dict[str, int]``
+    so it can be stored on ``Sample.m6_1_1_timing_payload`` without
+    introducing an m6_1_1_types import cycle.
+    """
+    if md is None:
+        return None
+    from vllm_grpc_bench.m6_1_1_timing import extract_grpc_timings
+
+    ckpt = extract_grpc_timings(md)
+    if ckpt is None:
+        return None
+    return {
+        "handler_entry_ns": ckpt.handler_entry_ns,
+        "pre_engine_ns": ckpt.pre_engine_ns,
+        "first_chunk_ns": ckpt.first_chunk_ns,
+        "terminal_emit_ns": ckpt.terminal_emit_ns,
+        "perturbation_audit_ns": ckpt.perturbation_audit_ns,
+    }
+
+
+async def _read_engine_cost_trailing_metadata(
+    call: Any,
+    path: Path_,
+) -> dict[str, float] | None:
+    """Compatibility wrapper for the M6 engine-cost extractor.
+
+    Existing callers continue to receive just the engine-cost dict. M6.1.1
+    callers use ``_read_call_trailing_extractions`` to get both engine-cost
+    and timing payloads from a single trailing-metadata read.
+    """
+    md = await _read_trailing_metadata_dict(call)
+    return _parse_engine_cost_from_md(md, path)
+
+
+async def _read_call_trailing_extractions(
+    call: Any,
+    path: Path_,
+) -> tuple[dict[str, float] | None, dict[str, int] | None]:
+    """Single trailing-metadata read; both engine_cost (M6) and m6_1_1
+    timing (M6.1.1) parsed from the same dict."""
+    md = await _read_trailing_metadata_dict(call)
+    return (_parse_engine_cost_from_md(md, path), _parse_m6_1_1_timing_from_md(md))
 
 
 @dataclass(frozen=True)
@@ -155,6 +212,7 @@ async def _send_chat_rpc(
     error: str | None = None
     error_kind = None
     engine_cost_payload: dict[str, float] | None = None
+    m6_1_1_timing_payload: dict[str, int] | None = None
     try:
         call = stub.CompleteStream(req, timeout=timeout_s, metadata=metadata)
         async for chunk in call:
@@ -165,7 +223,11 @@ async def _send_chat_rpc(
         # M6 (T014): chat_stream trailing metadata carries engine-ttft-ms /
         # engine-tpot-ms (contracts/instrumentation.md §1). M5.x callers
         # see None when the metadata is absent (pre-M6 servers).
-        engine_cost_payload = await _read_engine_cost_trailing_metadata(call, path="chat_stream")
+        # M6.1.1 (T022): the same trailing-metadata read also surfaces the
+        # four perf_counter_ns checkpoints via m6_1_1_t_* keys.
+        engine_cost_payload, m6_1_1_timing_payload = await _read_call_trailing_extractions(
+            call, path="chat_stream"
+        )
     except Exception as exc:  # noqa: BLE001
         error = str(exc)
         error_kind = _classify_error(exc)
@@ -182,6 +244,7 @@ async def _send_chat_rpc(
         error=error,
         error_kind=error_kind,
         engine_cost_payload=engine_cost_payload,
+        m6_1_1_timing_payload=m6_1_1_timing_payload,
     )
 
 
@@ -203,6 +266,7 @@ async def _send_embed_rpc(
     error_kind = None
     response_bytes = 0
     engine_cost_payload: dict[str, float] | None = None
+    m6_1_1_timing_payload: dict[str, int] | None = None
     try:
         # M6 (T014): read trailing metadata for ``engine-forward-ms``
         # (contracts/instrumentation.md §1) without changing the response
@@ -211,10 +275,14 @@ async def _send_embed_rpc(
         # is to invoke the stub directly to get a ``UnaryUnaryCall``,
         # await it for the response, then read ``trailing_metadata()``
         # on the same call object.
+        # M6.1.1 (T022): same trailing-metadata read surfaces the
+        # m6_1_1_t_* timing keys (FR-011 audit-only embed controls).
         call = stub.Complete(req, timeout=timeout_s, metadata=metadata)
         resp = await call
         response_bytes = len(resp.SerializeToString())
-        engine_cost_payload = await _read_engine_cost_trailing_metadata(call, path="embed")
+        engine_cost_payload, m6_1_1_timing_payload = await _read_call_trailing_extractions(
+            call, path="embed"
+        )
     except Exception as exc:  # noqa: BLE001
         error = str(exc)
         error_kind = _classify_error(exc)
@@ -228,6 +296,7 @@ async def _send_embed_rpc(
         error=error,
         error_kind=error_kind,
         engine_cost_payload=engine_cost_payload,
+        m6_1_1_timing_payload=m6_1_1_timing_payload,
     )
 
 

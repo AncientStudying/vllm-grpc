@@ -140,6 +140,19 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
 
     @shim.post("/v1/chat/completions")
     async def chat_completions(req: _ChatRequest) -> Any:
+        # M6.1.1 (FR-012): self-calibrate the perturbation budget at handler
+        # entry. Five back-to-back perf_counter_ns reads yield 4 deltas whose
+        # sum approximates the cost the 4 real checkpoint reads add to this
+        # request. Captured once per RPC.
+        _pa_t0 = time.perf_counter_ns()
+        time.perf_counter_ns()
+        time.perf_counter_ns()
+        time.perf_counter_ns()
+        _pa_t4 = time.perf_counter_ns()
+        perturbation_audit_ns = _pa_t4 - _pa_t0
+        # M6.1.1 checkpoint (a): handler_entry — captured after calibration so
+        # the calibration cost doesn't perturb the user-facing seg_ab span.
+        handler_entry_ns = time.perf_counter_ns()
         handler_entry = time.perf_counter()
         prompt = "".join(m.content for m in req.messages)
         sampling = _build_sampling_params(req.max_tokens, req.seed)
@@ -151,6 +164,8 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
             # be set on the StreamingResponse before any data: line is sent.
             # The buffered first_chunk is then re-emitted as the first SSE
             # event — no duplicate engine work.
+            # M6.1.1 checkpoint (b): pre_engine — just before engine.generate.
+            pre_engine_ns = time.perf_counter_ns()
             engine_start = time.perf_counter()
             gen = engine.generate(prompt, sampling, request_id=request_id)
             try:
@@ -167,6 +182,10 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
             first_token_at: float | None = None
             last_token_at: float | None = None
             token_count = 0
+            # M6.1.1 checkpoint (c): first_chunk — captured on the same code
+            # path that sets ``first_token_at`` so the two are sampled at the
+            # same instant.
+            first_chunk_ns: int | None = None
 
             def _format_chunk(chunk: Any) -> bytes:
                 completion = chunk.outputs[0] if chunk.outputs else None
@@ -184,13 +203,14 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
                 return f"data: {json.dumps(payload)}\n\n".encode()
 
             async def _sse_body() -> AsyncIterator[bytes]:
-                nonlocal first_token_at, last_token_at, token_count
+                nonlocal first_token_at, last_token_at, token_count, first_chunk_ns
                 if first_chunk is not None:
                     completion = first_chunk.outputs[0] if first_chunk.outputs else None
                     if completion is not None and completion.text:
                         now = time.perf_counter()
                         if first_token_at is None:
                             first_token_at = now
+                            first_chunk_ns = time.perf_counter_ns()
                         last_token_at = now
                         token_count = len(getattr(completion, "token_ids", []) or [])
                     payload = _format_chunk(first_chunk)
@@ -202,6 +222,7 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
                         now = time.perf_counter()
                         if first_token_at is None:
                             first_token_at = now
+                            first_chunk_ns = time.perf_counter_ns()
                         last_token_at = now
                         token_count = len(getattr(completion, "token_ids", []) or [])
                     payload = _format_chunk(chunk)
@@ -217,12 +238,31 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
                     )
                 else:
                     engine_tpot_ms = 0.0
+                # M6.1.1 checkpoint (d): terminal_emit — captured just before
+                # the JSON payload is yielded onto the SSE stream.
+                terminal_emit_ns = time.perf_counter_ns()
                 terminal = {
                     "id": completion_id,
                     "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}],
                     "engine_cost": {
                         "engine_ttft_ms": engine_ttft_ms,
                         "engine_tpot_ms": engine_tpot_ms,
+                    },
+                    # M6.1.1 (FR-007): additive sub-object. M6 / M6.1 parsers
+                    # ignore unknown keys; M6.1.1 client extracts via
+                    # m6_1_1_timing.extract_rest_timings.
+                    "m6_1_1_timings": {
+                        "handler_entry_ns": handler_entry_ns,
+                        "pre_engine_ns": pre_engine_ns,
+                        # first_chunk_ns is None if the stream produced no
+                        # token (cold-start failures etc.); fall back to
+                        # terminal_emit_ns so the segment delta is zero rather
+                        # than negative.
+                        "first_chunk_ns": (
+                            first_chunk_ns if first_chunk_ns is not None else terminal_emit_ns
+                        ),
+                        "terminal_emit_ns": terminal_emit_ns,
+                        "perturbation_audit_ns": perturbation_audit_ns,
                     },
                 }
                 yield f"data: {json.dumps(terminal)}\n\n".encode()
@@ -264,6 +304,18 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
         for continuity with the contract doc and existing test wiring; the
         operation is 'completion-from-embedding', not 'return embedding'.
         """
+        # M6.1.1 (FR-011 audit-only controls): same 4-checkpoint instrumentation
+        # as chat_stream so embed cells expose the same per-segment audit. The
+        # wire-format emission is a top-level ``m6_1_1_timings`` key on the
+        # JSONResponse body (analogous to chat_stream's terminal SSE event
+        # sub-object).
+        _pa_t0 = time.perf_counter_ns()
+        time.perf_counter_ns()
+        time.perf_counter_ns()
+        time.perf_counter_ns()
+        _pa_t4 = time.perf_counter_ns()
+        perturbation_audit_ns = _pa_t4 - _pa_t0
+        handler_entry_ns = time.perf_counter_ns()
         handler_entry = time.perf_counter()
         if req.input_kind not in (
             "prompt_embedding_b64",
@@ -308,23 +360,44 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
         request_id = f"rest-embed-{uuid.uuid4().hex}"
         # M6 (FR-008 / R-4): time the engine.generate() call so the unary
         # response carries engine_cost.engine_forward_ms (top-level field).
+        # M6.1.1 checkpoint (b): pre_engine.
+        pre_engine_ns = time.perf_counter_ns()
         engine_start = time.perf_counter()
         # Drain the generator to its final chunk (parity with M3 Complete RPC).
         final_text = ""
         final_finish = "stop"
+        first_chunk_ns: int | None = None
         async for output in engine.generate(prompt, sampling, request_id=request_id):
+            # M6.1.1 checkpoint (c): first_chunk — captured on the first
+            # yielded output to mirror chat_stream's first-token semantics.
+            if first_chunk_ns is None:
+                first_chunk_ns = time.perf_counter_ns()
             if output.outputs:
                 comp = output.outputs[0]
                 final_text = comp.text
                 final_finish = comp.finish_reason or "stop"
         engine_forward_ms = (time.perf_counter() - engine_start) * 1000.0
         overhead_ms = (time.perf_counter() - handler_entry) * 1000.0
+        # M6.1.1 checkpoint (d): terminal_emit — captured just before the
+        # JSONResponse is constructed.
+        terminal_emit_ns = time.perf_counter_ns()
         response = JSONResponse(
             {
                 "model": "mock",
                 "generated_text": final_text,
                 "finish_reason": final_finish,
                 "engine_cost": {"engine_forward_ms": engine_forward_ms},
+                # M6.1.1 (FR-011): same shape as chat_stream's sub-object so
+                # one client extractor handles both REST endpoints.
+                "m6_1_1_timings": {
+                    "handler_entry_ns": handler_entry_ns,
+                    "pre_engine_ns": pre_engine_ns,
+                    "first_chunk_ns": (
+                        first_chunk_ns if first_chunk_ns is not None else terminal_emit_ns
+                    ),
+                    "terminal_emit_ns": terminal_emit_ns,
+                    "perturbation_audit_ns": perturbation_audit_ns,
+                },
             }
         )
         response.headers["X-Shim-Overhead-Ms"] = f"{overhead_ms:.6f}"

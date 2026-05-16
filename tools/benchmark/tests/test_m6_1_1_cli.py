@@ -168,13 +168,18 @@ def test_torch_pin_mismatch_exits_code_2(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_torch_pin_bypass_allows_dispatch_attempt(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """With the torch-pin bypassed, _run_m6_1_1 reaches dispatch — the
-    orchestrator is a NotImplementedError stub in Phase 1+2 foundational
-    scope. The orchestrator-side exit codes (1, 3, 5) are covered by US1/US2
-    tests once T023 / T029 land."""
+    """With the torch-pin bypassed, _run_m6_1_1 reaches the orchestrator
+    and hits the FR-001 baseline-not-found gate (the test runs from the
+    bench cwd, so the default relative ``docs/benchmarks/...`` path
+    doesn't resolve). Exit code 1 confirms the dispatch chain reached the
+    orchestrator; the orchestrator-side exit codes 1 / 3 / 5 are fully
+    covered by test_m6_1_1_diagnose."""
     monkeypatch.setenv("MODAL_BENCH_TOKEN", "tok-xyz")
     _bypass_torch_pin(monkeypatch)
     ns = _parse("--m6_1_1-diagnose")
-    with pytest.raises(NotImplementedError, match="run_m6_1_1_diagnose lands in T023"):
-        _run_m6_1_1(ns)
+    rc = _run_m6_1_1(ns)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "M6.1 baseline not found" in err

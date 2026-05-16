@@ -37,6 +37,7 @@ import json
 import statistics
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 import numpy as np
@@ -50,6 +51,51 @@ from vllm_grpc_bench.m3_types import (
     RestHttpsEdgeCohortRecord,
     RTTRecord,
 )
+
+
+def _extract_m6_1_1_timing_from_sse_payload(payload: str | None) -> dict[str, int] | None:
+    """Parse the M6.1.1 ``m6_1_1_timings`` sub-object from a chat_stream
+    terminal SSE event JSON payload. Best-effort: returns None on missing or
+    malformed sub-object (pre-M6.1.1 server)."""
+    if not payload:
+        return None
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    # Late import to avoid touching m6_1_1_timing at module-load time on
+    # callers that don't need it (consistency with the M6 extractor).
+    from vllm_grpc_bench.m6_1_1_timing import extract_rest_timings
+
+    ckpt = extract_rest_timings(data)
+    if ckpt is None:
+        return None
+    return {
+        "handler_entry_ns": ckpt.handler_entry_ns,
+        "pre_engine_ns": ckpt.pre_engine_ns,
+        "first_chunk_ns": ckpt.first_chunk_ns,
+        "terminal_emit_ns": ckpt.terminal_emit_ns,
+        "perturbation_audit_ns": ckpt.perturbation_audit_ns,
+    }
+
+
+def _extract_m6_1_1_timing_from_body_json(body_json: dict[str, Any]) -> dict[str, int] | None:
+    """Parse the M6.1.1 ``m6_1_1_timings`` sub-object from a parsed embed
+    JSONResponse body (FR-011 audit-only controls)."""
+    from vllm_grpc_bench.m6_1_1_timing import extract_rest_timings
+
+    ckpt = extract_rest_timings(body_json)
+    if ckpt is None:
+        return None
+    return {
+        "handler_entry_ns": ckpt.handler_entry_ns,
+        "pre_engine_ns": ckpt.pre_engine_ns,
+        "first_chunk_ns": ckpt.first_chunk_ns,
+        "terminal_emit_ns": ckpt.terminal_emit_ns,
+        "perturbation_audit_ns": ckpt.perturbation_audit_ns,
+    }
 
 
 def _extract_engine_cost_from_sse_payload(
@@ -98,6 +144,13 @@ class RESTCohortSample:
     # §2). None on pre-M6 REST shims; M5.x callers that ignore the field
     # are unaffected.
     engine_cost_payload: dict[str, float] | None = None
+    # M6.1.1 (FR-007): the four perf_counter_ns checkpoints parsed from the
+    # ``m6_1_1_timings`` sub-object on the terminal SSE event (chat_stream)
+    # or the JSONResponse body (embed). Stored as dict[str, int] to keep
+    # the m3_types / rest_cohort modules free of an m6_1_1_types import
+    # cycle; M6.1.1 callers re-hydrate to ``TimingCheckpoint`` via
+    # ``TimingCheckpoint(**payload)``. None on pre-M6.1.1 servers.
+    m6_1_1_timing_payload: dict[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -242,12 +295,17 @@ async def _single_chat_stream_request(
             if line and line.startswith("data:") and "[DONE]" not in line:
                 last_data_payload = line[len("data:") :].strip()
     engine_cost_payload = _extract_engine_cost_from_sse_payload(last_data_payload, "chat_stream")
+    # M6.1.1 (FR-007): parse the same terminal SSE payload for the
+    # m6_1_1_timings sub-object. Best-effort: pre-M6.1.1 servers don't
+    # emit the sub-object and the extractor returns None.
+    m6_1_1_timing_payload = _extract_m6_1_1_timing_from_sse_payload(last_data_payload)
     return RESTCohortSample(
         wall_clock_seconds=ttft_seconds,
         shim_overhead_ms=shim_overhead_ms,
         request_bytes=len(body_bytes),
         response_bytes=total_response_bytes,
         engine_cost_payload=engine_cost_payload,
+        m6_1_1_timing_payload=m6_1_1_timing_payload,
     )
 
 
@@ -301,12 +359,18 @@ async def _single_embed_request(
                 engine_cost_payload = {"engine_forward_ms": float(ec["engine_forward_ms"])}
             except (TypeError, ValueError):
                 engine_cost_payload = None
+    # M6.1.1 (FR-007 / FR-011): same sub-object shape on the embed
+    # JSONResponse body; pre-M6.1.1 servers don't emit it.
+    m6_1_1_timing_payload: dict[str, int] | None = None
+    if isinstance(body_json, dict):
+        m6_1_1_timing_payload = _extract_m6_1_1_timing_from_body_json(body_json)
     return RESTCohortSample(
         wall_clock_seconds=elapsed,
         shim_overhead_ms=shim_overhead_ms,
         request_bytes=len(body_bytes),
         response_bytes=len(resp.content),
         engine_cost_payload=engine_cost_payload,
+        m6_1_1_timing_payload=m6_1_1_timing_payload,
     )
 
 
