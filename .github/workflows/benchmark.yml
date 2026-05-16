@@ -58,19 +58,19 @@ jobs:
         run: |
           {
             if [ -f docs/benchmarks/phase-4.2-three-way-comparison.md ]; then
-              echo "## Phase 4.2 — REST vs gRPC-Proxy vs gRPC-Direct"
+              echo "## REST vs gRPC-Proxy vs gRPC-Direct (M1 three-way)"
               echo ""
               cat docs/benchmarks/phase-4.2-three-way-comparison.md
               echo ""
             fi
             if [ -f docs/benchmarks/phase-5-streaming-comparison.md ]; then
-              echo "## Phase 5 — Streaming Comparison"
+              echo "## Streaming Comparison (M1)"
               echo ""
               cat docs/benchmarks/phase-5-streaming-comparison.md
               echo ""
             fi
             if [ -f docs/benchmarks/phase-6-completions-comparison.md ]; then
-              echo "## Phase 6 — Completions Wire-Size Comparison"
+              echo "## Completions Wire-Size Comparison (M1)"
               echo ""
               cat docs/benchmarks/phase-6-completions-comparison.md
               echo ""
@@ -89,7 +89,7 @@ jobs:
               ? fs.readFileSync('modal-cross-summary.md', 'utf8')
               : '';
             const modalSection = modalSummary
-              ? `\n\n## Modal GPU Baselines — All Phases\n\n${modalSummary}`
+              ? `\n\n## Modal GPU Baselines (M1 reports)\n\n${modalSummary}`
               : '';
             const body = `## Benchmark CI (stub backend)\n\n${comparison}${modalSection}\n\n<!-- benchmark-ci-comment -->`;
             const sentinel = '<!-- benchmark-ci-comment -->';

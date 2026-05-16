@@ -1,4 +1,4 @@
-# Phase 6 Completions Benchmark: Wire-Size and Latency
+# Completions Benchmark: Wire-Size and Latency (M1)
 
 ## Methodology
 

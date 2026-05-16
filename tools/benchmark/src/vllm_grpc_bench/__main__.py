@@ -6,8 +6,9 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from vllm_grpc_bench.compare import compare, compare_cross, compare_three_way
 from vllm_grpc_bench.corpus import load_corpus
@@ -331,6 +332,99 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="M5.2: override the auto-generated run identifier (used for "
         "the events sidecar + run config filename).",
+    )
+
+    # ---- M6 mode (real-engine mini-validation) ----
+    # See specs/020-m6-real-engine-mini-validation/contracts/cli.md.
+    parser.add_argument(
+        "--m6",
+        action="store_true",
+        help="Run the M6 real-engine mini-validation sweep "
+        "(6 cells × 3 cohorts × n=100, Qwen3-8B on Modal A10G).",
+    )
+    parser.add_argument(
+        "--m6-smoke",
+        action="store_true",
+        help="M6: pre-flight smoke gate (FR-011). Runs 2 cells × 3 cohorts × n=10 "
+        "(~5 min wall-clock). Mutually exclusive with --m6.",
+    )
+    parser.add_argument(
+        "--m6-modal-region",
+        default="eu-west-1",
+        help="M6: Modal region for the deploy (default eu-west-1; FR-006).",
+    )
+    parser.add_argument(
+        "--m6-modal-token-env",
+        default="MODAL_BENCH_TOKEN",
+        help="M6: env-var name carrying the bearer token (token VALUE never logged).",
+    )
+    parser.add_argument(
+        "--m6-modal-endpoint",
+        default=None,
+        help="M6: pre-existing endpoint (advanced; implies --m6-skip-deploy).",
+    )
+    parser.add_argument(
+        "--m6-skip-deploy",
+        action="store_true",
+        help="M6: skip Modal deploy and reuse --m6-modal-endpoint.",
+    )
+    parser.add_argument(
+        "--m6-base-seed",
+        type=int,
+        default=42,
+        help="M6: M6_BASE_SEED for the per-RPC seed mapping (FR-025; default 42).",
+    )
+    parser.add_argument(
+        "--m6-model",
+        default="Qwen/Qwen3-8B",
+        help="M6: model identifier passed to the Modal app via M6_MODEL env var (R-10).",
+    )
+    parser.add_argument(
+        "--m6-events-sidecar-out",
+        type=Path,
+        default=Path("bench-results/m6-full"),
+        help="M6: per-RPC events JSONL sidecar output directory.",
+    )
+    parser.add_argument(
+        "--m6-report-out",
+        type=Path,
+        default=Path("docs/benchmarks/m6-real-engine-mini-validation.md"),
+        help="M6: markdown report output path (FR-013).",
+    )
+    parser.add_argument(
+        "--m6-report-json-out",
+        type=Path,
+        default=Path("docs/benchmarks/m6-real-engine-mini-validation.json"),
+        help="M6: JSON companion output path (FR-013 / FR-016 strict superset of M5.2).",
+    )
+    parser.add_argument(
+        "--m6-rtt-validity-ms",
+        type=float,
+        default=1.0,
+        help="M6: refuse verdict below this median RTT (default 1.0 ms).",
+    )
+    parser.add_argument(
+        "--m6-rtt-exercise-ms",
+        type=float,
+        default=20.0,
+        help="M6: low_rtt_caveat fires below this median RTT (default 20.0 ms).",
+    )
+    parser.add_argument(
+        "--m6-shim-overhead-warn-pct",
+        type=float,
+        default=5.0,
+        help="M6: warn if REST shim overhead exceeds this fraction of cohort wallclock.",
+    )
+    parser.add_argument(
+        "--m6-run-id",
+        default=None,
+        help="M6: override the auto-generated run identifier (ISO timestamp + git_sha).",
+    )
+    parser.add_argument(
+        "--m6-m5-2-baseline",
+        type=Path,
+        default=Path("docs/benchmarks/m5_2-transport-vs-tuning.json"),
+        help="M6: M5.2 baseline JSON path (FR-014 hard precondition).",
     )
 
     # ---- M5.1 mode (REST vs gRPC head-to-head on real wire) ----
@@ -1536,9 +1630,281 @@ def _emit_m5_1_outputs(args: argparse.Namespace, run: M5_1Run) -> int:
     return 0
 
 
+def _validate_m6_args(args: argparse.Namespace) -> int:
+    """Pre-flight validation for M6 mode. Returns exit code; 0 means OK."""
+    import os as _os
+
+    # Mutual exclusion: --m6 and --m6-smoke are mutually exclusive with each
+    # other AND with all M5.x mode flags (contracts/cli.md §"CLI cross-cutting").
+    if getattr(args, "m6", False) and getattr(args, "m6_smoke", False):
+        print(
+            "Error: --m6 and --m6-smoke are mutually exclusive (pick one).",
+            file=sys.stderr,
+        )
+        return 2
+    if (
+        getattr(args, "m3", False)
+        or getattr(args, "m4", False)
+        or getattr(args, "m5", False)
+        or getattr(args, "m5_1", False)
+        or getattr(args, "m5_2", False)
+        or getattr(args, "m5_2_smoke", False)
+    ):
+        print(
+            "Error: --m6 / --m6-smoke are mutually exclusive with --m3, --m4, "
+            "--m5, --m5_1, --m5_2, and --m5_2-smoke.",
+            file=sys.stderr,
+        )
+        return 2
+    if bool(getattr(args, "m6_skip_deploy", False)) and not getattr(
+        args, "m6_modal_endpoint", None
+    ):
+        print(
+            "Error: --m6-skip-deploy requires --m6-modal-endpoint",
+            file=sys.stderr,
+        )
+        return 2
+    if float(args.m6_rtt_exercise_ms) < float(args.m6_rtt_validity_ms):
+        print(
+            "Error: --m6-rtt-exercise-ms must be >= --m6-rtt-validity-ms",
+            file=sys.stderr,
+        )
+        return 2
+    token_env = str(args.m6_modal_token_env)
+    if not _os.environ.get(token_env):
+        print(
+            f"Error: bearer-token env var {token_env!r} is unset; "
+            "export it before running --m6 "
+            "(see specs/020-m6-real-engine-mini-validation/quickstart.md)",
+            file=sys.stderr,
+        )
+        return 4
+    return 0
+
+
+def _run_m6(args: argparse.Namespace) -> int:
+    """Dispatch to the M6 full sweep or smoke gate (T044).
+
+    Exit codes per contracts/cli.md:
+    * 0 — success (full sweep: all 6 cells classified; smoke: all 6 pairs ok)
+    * 1 — full-sweep abort at launch (M5.2 baseline missing); smoke: any pair failed
+    * 2 — argparse / preflight validation rejection; or sweep abort mid-run
+          (Modal deploy / model-load failure)
+    * 3 — JSON validation failed against M5.2 strict-superset schema (full sweep only)
+    * 4 — bearer-token env var unset
+    """
+    rc = _validate_m6_args(args)
+    if rc != 0:
+        return rc
+
+    from vllm_grpc_bench.m6_supersede import (
+        M5_2BaselineMissingCellError,
+        load_and_validate_m5_2_baseline,
+    )
+
+    # FR-014 sub-clause "M5.2 baseline file precondition" — both --m6 and
+    # --m6-smoke validate the baseline JSON before any Modal compute is
+    # consumed. Full-sweep maps the failure to exit code 1; smoke maps to
+    # exit code 2 (contracts/cli.md §"Exit codes").
+    try:
+        baseline = load_and_validate_m5_2_baseline(args.m6_m5_2_baseline)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1 if getattr(args, "m6", False) else 2
+    except M5_2BaselineMissingCellError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1 if getattr(args, "m6", False) else 2
+
+    if getattr(args, "m6_smoke", False):
+        return asyncio.run(_run_m6_smoke_async(args, baseline))
+
+    return asyncio.run(_run_m6_full_sweep_async(args, baseline))
+
+
+async def _run_m6_smoke_async(args: argparse.Namespace, baseline: dict[str, Any]) -> int:
+    """Execute the M6 smoke gate (T056) end-to-end against live Modal.
+
+    Composes Modal deploy → RPC driver → smoke runner → stderr summary →
+    exit code mapping. Per FR-012, this function NEVER invokes the full
+    sweep regardless of smoke outcome.
+
+    Exit codes per contracts/cli.md §"Exit codes" (smoke):
+    - 0 — all 6 (cell × cohort) pairs ok
+    - 1 — one or more pairs failed
+    - 2 — baseline precondition failed at launch OR Modal deploy failure
+    """
+    from vllm_grpc_bench.m6_rpc_driver import provide_m6_rpc_driver
+    from vllm_grpc_bench.m6_smoke import emit_smoke_summary, run_smoke, smoke_exit_code
+    from vllm_grpc_bench.modal_endpoint import ModalDeployError, provide_m6_endpoint
+
+    _ = baseline  # baseline already validated by caller (precondition check)
+
+    try:
+        async with (
+            provide_m6_endpoint(
+                region=str(args.m6_modal_region),
+                token_env=str(args.m6_modal_token_env),
+                model_id=str(args.m6_model),
+            ) as endpoints,
+            provide_m6_rpc_driver(endpoints) as (driver, _rtt),
+        ):
+            result = await run_smoke(driver)
+    except ModalDeployError as exc:
+        print(f"Error: M6 smoke Modal deploy failed: {exc}", file=sys.stderr)
+        return 2
+
+    emit_smoke_summary(result)
+    return smoke_exit_code(result)
+
+
+def _read_pinned_vllm_version() -> str:
+    """Read the pinned vllm version from ``pyproject.toml``.
+
+    Used by M6 RunMeta when ``import vllm`` fails (operator's macOS box
+    intentionally doesn't have vllm installed — it's CUDA-only). The
+    pyproject pin is the version the Modal image actually pip-installs,
+    so it's accurate provenance for the server-side engine.
+
+    Returns ``"unknown"`` on parse failure rather than an empty string so
+    the published RunMeta carries a meaningful value.
+    """
+    import re as _re
+    from pathlib import Path as _Path
+
+    project_root = _Path(__file__).resolve().parents[4]
+    pyproject = project_root / "pyproject.toml"
+    if not pyproject.exists():
+        return "unknown"
+    text = pyproject.read_text()
+    match = _re.search(r'"vllm==([0-9][^";\s]*)', text)
+    if match is None:
+        return "unknown"
+    return match.group(1)
+
+
+async def _run_m6_full_sweep_async(args: argparse.Namespace, baseline: dict[str, Any]) -> int:
+    """Execute the M6 full sweep end-to-end (T044) against live Modal.
+
+    Composes Modal deploy → RPC driver + RTT probe → run_sweep
+    (T026-T028) → classifier → reporter (T039-T043). Exits with code 2
+    on Modal deploy / sweep mid-run failure; 0 on success.
+    """
+    import datetime as _datetime
+    import socket
+    import subprocess
+    from pathlib import Path as _Path
+
+    from vllm_grpc_bench.m6_reporter import build_m6_run, write_json, write_markdown
+    from vllm_grpc_bench.m6_rpc_driver import provide_m6_rpc_driver
+    from vllm_grpc_bench.m6_supersede import snapshot_m5_2_winner_deltas
+    from vllm_grpc_bench.m6_sweep import (
+        ProgressReporter,
+        run_sweep,
+        summarize_verdict_tally,
+    )
+    from vllm_grpc_bench.m6_types import M6RunMeta
+    from vllm_grpc_bench.modal_endpoint import ModalDeployError, provide_m6_endpoint
+
+    progress = ProgressReporter()
+    progress.emit_startup(model=args.m6_model, region=args.m6_modal_region)
+
+    started_at = _datetime.datetime.now(_datetime.UTC)
+    cold_start_started = time.monotonic()
+    cold_start_s: float = 0.0
+    cells: list[Any] = []
+    rtt_distribution: dict[Any, Any] = {}
+
+    try:
+        async with provide_m6_endpoint(
+            region=str(args.m6_modal_region),
+            token_env=str(args.m6_modal_token_env),
+            model_id=str(args.m6_model),
+        ) as endpoints:
+            cold_start_s = time.monotonic() - cold_start_started
+            async with provide_m6_rpc_driver(endpoints) as (driver, rtt):
+                rtt_distribution = dict(rtt)
+                cells, _measurements = await run_sweep(
+                    driver,
+                    baseline,
+                    base_seed=int(args.m6_base_seed),
+                    progress=progress,
+                )
+    except ModalDeployError as exc:
+        print(f"Error: M6 Modal deploy failed: {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error: M6 sweep aborted mid-run: {exc}", file=sys.stderr)
+        return 2
+
+    # T038: build RunMeta (cold_start, git_sha, hostname, vllm version).
+    try:
+        git_sha = (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
+            .decode()
+            .strip()
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        git_sha = "unknown"
+
+    # The vllm version that runs INSIDE the Modal container — not the
+    # operator's macOS box (where vllm is intentionally not installed
+    # because it's CUDA-only). Try the local import first for the rare
+    # case where the operator runs M6 from a Linux machine with vllm
+    # installed; otherwise fall back to the pinned version from
+    # pyproject.toml (which IS the version the Modal image pip-installs).
+    try:
+        import vllm
+
+        engine_version = getattr(vllm, "__version__", "unknown")
+    except ImportError:
+        engine_version = _read_pinned_vllm_version()
+
+    run_id = args.m6_run_id or f"{started_at.strftime('%Y-%m-%dT%H:%M:%SZ')}-{git_sha[:7]}"
+    meta = M6RunMeta(
+        git_sha=git_sha,
+        hostname=socket.gethostname(),
+        # ``provide_m6_endpoint`` doesn't surface a discrete Modal function
+        # id (the spawn call is consumed inside the context manager); we
+        # use the Modal app + function name for audit traceability — the
+        # operator can correlate via the Modal web UI.
+        modal_function_id="vllm-grpc-bench-rest-grpc-m6/serve_bench_real_engine",
+        gpu_type="A10G",
+        modal_region=str(args.m6_modal_region),
+        model_identifier=str(args.m6_model),
+        engine_version=engine_version,
+        cold_start_s=cold_start_s,
+        m5_2_winner_deltas=snapshot_m5_2_winner_deltas(baseline),
+        m6_base_seed=int(args.m6_base_seed),
+    )
+
+    completed_at = _datetime.datetime.now(_datetime.UTC)
+    run = build_m6_run(
+        run_id=run_id,
+        run_started_at=started_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        run_completed_at=completed_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        meta=meta,
+        cells=cells,
+        rtt_distribution=rtt_distribution,
+    )
+
+    # T039 / T042 — write the two artifacts.
+    report_md = _Path(args.m6_report_out)
+    report_json = _Path(args.m6_report_json_out)
+    write_markdown(run, report_md)
+    write_json(run, report_json)
+
+    tally = summarize_verdict_tally(cells)
+    progress.emit_completion(str(report_md), tally)
+    print(str(report_md))  # stdout — composes with shell pipes per contracts/cli.md.
+    return 0
+
+
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+
+    if getattr(args, "m6", False) or getattr(args, "m6_smoke", False):
+        sys.exit(_run_m6(args))
 
     if getattr(args, "m5_2", False) or getattr(args, "m5_2_smoke", False):
         sys.exit(_run_m5_2(args))

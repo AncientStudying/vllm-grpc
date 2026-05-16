@@ -154,7 +154,7 @@ Re-ran the M4 four-axis channel sweep with the gRPC server deployed on Modal eu-
 
 **Caveats — kept prominent in the report:**
 
-- **MockEngine, not real vLLM.** Engine cost held constant across cohorts so the verdict reflects transport + framing only. Real-engine re-validation deferred to M7.
+- **MockEngine, not real vLLM.** Engine cost held constant across cohorts so the verdict reflects transport + framing only. Real-engine re-validation deferred to M6 (narrow focused scope, single model at h=4096); full multi-model expansion deferred to M8.
 - **Both protocols travel Modal's plain-TCP tunnel.** The original FR-019 "REST uses Modal-managed TLS" assumption was voided after a smoke run measured a ~2× RTT gap between Modal's HTTPS edge and plain-TCP that would have dominated every verdict. M5.1 does **not** measure REST against the production-realistic HTTPS edge — **M5.2 closes that gap** by adding the HTTPS-edge transport as a separate cohort.
 - Bytes-axis findings from M1 (89% chat response reduction, 25% embed request reduction) remain in force unchanged (FR-021) — M5.1 measures time only.
 

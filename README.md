@@ -87,8 +87,10 @@ Milestone-by-milestone findings live in [`ANALYSIS.md`](ANALYSIS.md); per-milest
 - **M5** — Cross-host re-run resolved M4's loopback caveat; 5 channel-config wins at `embed/h=2048` (-23% to -25%). [`ANALYSIS.md § M5`](ANALYSIS.md#m5--cross-host-time-axis-validation).
 - **M5.1** — REST vs gRPC head-to-head on the **same-fabric** topology (enterprise/homelab audience). [`ANALYSIS.md § M5.1`](ANALYSIS.md#m51--rest-vs-grpc-head-to-head-on-real-wire).
 - **M5.2** — REST vs gRPC across HTTPS-edge and plain-TCP; **managed-edge-provider** topology (hobbyist tenant audience). [`ANALYSIS.md § M5.2`](ANALYSIS.md#m52--rest-transport-path--grpc-tuning-surface).
-- **M6** — Corpus expansion (upcoming): longer prompts, multi-turn, domain-specific content.
-- **M7** — Model expansion (upcoming): real vLLM re-validation on multiple model sizes.
+- **M6** — Real-engine mini-validation (upcoming): Qwen3-8B on Modal A10G, narrow 6-cell slice of the M5.2 matrix to close the MockEngine caveat.
+- **M6.1** — Real-prompt-embeddings engine path (planned, post-M6): re-run M6's 6-cell slice with vLLM's `enable_prompt_embeds=True` path on both transports, characterising the protocol comparison for the workload that sends actual embedding tensors (a path M3–M6 don't exercise — they hash the binary payload to a text digest server-side). Speckit cycle runs after M6 publishes.
+- **M7** — Corpus expansion (upcoming): longer prompts, multi-turn, domain-specific content.
+- **M8** — Model expansion (upcoming): real vLLM re-validation on multiple model sizes.
 
 The [Topology guide](ANALYSIS.md#topology-guide--which-milestone-result-applies-to-your-deployment) in `ANALYSIS.md` names which M5-era milestone applies to which deployment shape.
 

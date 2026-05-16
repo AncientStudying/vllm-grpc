@@ -102,6 +102,16 @@ class Sample:
     off_canonical: bool = False
     error: str | None = None
     error_kind: ErrorKind | None = None
+    # M6 (T014/T015): per-RPC server-instrumented engine cost, surfaced
+    # via gRPC trailing metadata (gRPC cohorts) or REST JSON payload field
+    # (REST cohort). Stored as a plain ``dict`` here to keep the m3_types
+    # module free of an m6_types import cycle; M6 code constructs
+    # ``EngineCostSpan`` instances from this dict. Keys are a subset of
+    # ``{"engine_forward_ms", "engine_ttft_ms", "engine_tpot_ms"}``
+    # depending on path (per contracts/instrumentation.md). None on
+    # pre-M6 samples and on M6 samples where the trailing metadata was
+    # absent / unparseable.
+    engine_cost_payload: dict[str, float] | None = None
 
 
 @dataclass(frozen=True)

@@ -40,6 +40,18 @@ class PerRequestEventRecord:
     serializer emits keys alphabetically (``sort_keys=True``); the reader
     accepts and ignores additional fields (warning to stderr) so future
     milestones can extend the schema additively.
+
+    M6 (T016 — FR-021/FR-025/FR-008): adds optional fields ``rpc_phase``,
+    ``rpc_index``, ``seed``, engine_cost trio, ``success``,
+    ``failure_reason``, ``retry_count``. M5.2-shape readers MUST keep
+    working (additive only; FR-016 strict superset). All M6 fields
+    default to None so M5.2 callers that don't set them are unaffected.
+
+    M6 validation rules (per data-model.md ``M6PerRequestEvent``):
+    - ``rpc_phase == "warmup"`` ⇒ ``rpc_index is None`` AND ``seed is None``
+    - ``rpc_phase == "measurement"`` ⇒ both set
+    - embed path ⇒ engine_ttft_ms / engine_tpot_ms None
+    - chat_stream path ⇒ engine_forward_ms None
     """
 
     cohort: M5_2CohortKind
@@ -57,9 +69,41 @@ class PerRequestEventRecord:
     request_body_bytes: int
     response_body_bytes: int
     status: str
+    # --- M6 additive extensions (T016) — default None for M5.2 back-compat:
+    rpc_phase: Literal["warmup", "measurement"] | None = None
+    rpc_index: int | None = None
+    seed: int | None = None
+    engine_forward_ms: float | None = None
+    engine_ttft_ms: float | None = None
+    engine_tpot_ms: float | None = None
+    success: bool | None = None
+    failure_reason: str | None = None
+    retry_count: int | None = None
 
 
-_REQUIRED_FIELDS: frozenset[str] = frozenset(f.name for f in fields(PerRequestEventRecord))
+# M5.2-original required fields (the M6 additive fields are optional —
+# T016: M5.2-shape readers MUST keep working against pre-M6 sidecars).
+_REQUIRED_FIELDS: frozenset[str] = frozenset(
+    {
+        "cohort",
+        "path",
+        "hidden_size",
+        "concurrency",
+        "network_path",
+        "request_uuid",
+        "issue_ts_ms",
+        "first_byte_ts_ms",
+        "done_ts_ms",
+        "rtt_at_issue_ms",
+        "phase",
+        "server_bound",
+        "request_body_bytes",
+        "response_body_bytes",
+        "status",
+    }
+)
+_ALL_FIELDS: frozenset[str] = frozenset(f.name for f in fields(PerRequestEventRecord))
+_M6_OPTIONAL_FIELDS: frozenset[str] = _ALL_FIELDS - _REQUIRED_FIELDS
 
 
 def serialize_record(record: PerRequestEventRecord) -> str:
@@ -173,12 +217,27 @@ def _coerce_record_dict(raw: dict[str, object]) -> PerRequestEventRecord | None:
             file=sys.stderr,
         )
         return None
-    extra = raw.keys() - _REQUIRED_FIELDS
+    # Unknown = not in REQUIRED nor in M6 optional fields. M5.2-shape records
+    # without the M6 optional fields are still accepted unchanged.
+    extra = raw.keys() - _ALL_FIELDS
     if extra:
         print(
             f"m5_2_events: record has unknown additional fields (ignored): {sorted(extra)}",
             file=sys.stderr,
         )
+
+    def _opt_float(key: str) -> float | None:
+        v = raw.get(key)
+        return None if v is None else float(v)  # type: ignore[arg-type]
+
+    def _opt_int(key: str) -> int | None:
+        v = raw.get(key)
+        return None if v is None else int(v)  # type: ignore[call-overload]
+
+    def _opt_str(key: str) -> str | None:
+        v = raw.get(key)
+        return None if v is None else str(v)
+
     try:
         return PerRequestEventRecord(
             cohort=raw["cohort"],  # type: ignore[arg-type]
@@ -198,6 +257,15 @@ def _coerce_record_dict(raw: dict[str, object]) -> PerRequestEventRecord | None:
             request_body_bytes=int(raw["request_body_bytes"]),  # type: ignore[call-overload]
             response_body_bytes=int(raw["response_body_bytes"]),  # type: ignore[call-overload]
             status=str(raw["status"]),
+            rpc_phase=raw.get("rpc_phase"),  # type: ignore[arg-type]
+            rpc_index=_opt_int("rpc_index"),
+            seed=_opt_int("seed"),
+            engine_forward_ms=_opt_float("engine_forward_ms"),
+            engine_ttft_ms=_opt_float("engine_ttft_ms"),
+            engine_tpot_ms=_opt_float("engine_tpot_ms"),
+            success=(None if raw.get("success") is None else bool(raw["success"])),
+            failure_reason=_opt_str("failure_reason"),
+            retry_count=_opt_int("retry_count"),
         )
     except (TypeError, ValueError) as exc:
         print(
