@@ -356,6 +356,27 @@ async def serve_bench_real_engine(
     use_real_engine = os.environ.get("M6_USE_REAL_ENGINE", "true").lower() == "true"
     effective_model = os.environ.get("M6_MODEL", model_id)
 
+    # Defensively invalidate stale handshake state from any previous deploy
+    # that crashed before its `finally` cleanup ran (e.g., M6.1 rpc_index
+    # crash on the smoke n=10). The slow engine-load below takes ~3 min;
+    # without this clear, a client polling the dict in that window would see
+    # stale ``ready=True`` + old ``token`` and abort with "bearer-token echo
+    # does not match" before the new app gets to publish its own state.
+    _early_dict = modal.Dict.from_name(_DICT_NAME, create_if_missing=True)
+    for _stale_key in (
+        "grpc",
+        "rest",
+        "rest_plain_tcp_url",
+        "rest_https_edge_url",
+        "token",
+        "region",
+        "model",
+        "ready",
+        "teardown",
+    ):
+        with contextlib.suppress(Exception):
+            await _early_dict.pop.aio(_stale_key)
+
     class _HealthServicer(health_pb2_grpc.HealthServicer):  # type: ignore[misc]
         async def Ping(  # noqa: N802
             self,
@@ -459,7 +480,7 @@ async def serve_bench_real_engine(
     rest_edge_server = uvicorn.Server(uv_config_edge)
     rest_edge_task = asyncio.create_task(rest_edge_server.serve())
 
-    d = modal.Dict.from_name(_DICT_NAME, create_if_missing=True)
+    d = _early_dict  # reuse the dict handle opened at the start for the early clear
     started = time.monotonic()
     try:
         async with modal.forward.aio(_GRPC_PORT, unencrypted=True) as grpc_tunnel:
