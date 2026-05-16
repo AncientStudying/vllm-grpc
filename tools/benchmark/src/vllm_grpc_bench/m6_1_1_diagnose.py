@@ -310,8 +310,12 @@ async def run_m6_1_1_diagnose(
     if gate_message:
         print(f"m6.1.1: {gate_message}", file=sys.stderr)
 
-    # Step 7: write the report (T025 reporter wires here).
-    if write_report is not None:
+    # Step 7: write the report. Production callers pass no override —
+    # default to the canonical reporter that materialises the M6_1_1Run
+    # and writes both the markdown and JSON companion to disk.
+    if write_report is None:
+        _default_write_report(args, accumulated_records, gate_message)
+    else:
         write_report(args, accumulated_records, gate_message)
 
     # T032: at the drift_not_reproduced_confirmed close, write M6.1
@@ -323,6 +327,107 @@ async def run_m6_1_1_diagnose(
             date_yyyy_mm_dd=date_yyyy_mm_dd,
         )
     return exit_code
+
+
+def _default_write_report(
+    args: argparse.Namespace,
+    accumulated_records: list[Phase1RunRecord],
+    gate_message: str | None,
+) -> None:
+    """Default reporter wired into the production dispatch path.
+
+    Builds an :class:`M6_1_1Run` from the accumulated phase_1_runs[] +
+    gate state and writes the markdown + JSON companion via
+    :func:`m6_1_1_reporter.write_m6_1_1_report`.
+
+    The reporter handles the sentinel-object dispatch under each
+    ``phase_2_path`` value per round-2 Q1 / Q2.
+    """
+    from vllm_grpc_bench.m6_1_1_reporter import build_sentinel, write_m6_1_1_report
+    from vllm_grpc_bench.m6_1_1_types import (
+        M6_1_1Run,
+        M6_1_1RunMeta,
+        Phase2Path,
+    )
+
+    latest = accumulated_records[-1]
+    phase_2_path: Phase2Path = (
+        "drift_not_reproduced_confirmed"
+        if gate_message == "drift_not_reproduced_confirmed"
+        else "phase_2_pending"
+    )
+
+    meta = M6_1_1RunMeta(
+        git_sha=_git_sha(),
+        hostname=_hostname(),
+        modal_function_id=None,
+        gpu_type="A10G",
+        modal_region=str(getattr(args, "m6_1_1_modal_region", "eu-west-1")),
+        model_identifier=str(getattr(args, "m6_1_1_model", "Qwen/Qwen3-8B")),
+        hidden_size=4096,
+        cold_start_s=0.0,
+        max_model_len=2048,
+        gpu_memory_utilization=0.92,
+        engine_version="0.20.1",
+        m6_1_baseline_engine_version="0.20.1",
+        torch_version="2.11.0",
+        M6_1_1_BASE_SEED=int(getattr(args, "m6_1_1_base_seed", 42)),
+        seq_len=512,
+        phase_1_n=latest.n_per_cohort,
+        phase_2_path=phase_2_path,
+        run_started_at=latest.run_started_at,
+        run_completed_at=latest.run_completed_at,
+    )
+
+    run = M6_1_1Run(
+        schema_version="m6_1_1.v1",
+        run_id=latest.run_id,
+        run_started_at=latest.run_started_at,
+        run_completed_at=latest.run_completed_at,
+        run_meta=meta,
+        phase_1_classifications=latest.phase_1_classifications,
+        phase_1_runs=accumulated_records,
+        multi_point_timings=latest.multi_point_timings,
+        phase_2_outcome=None,
+        phase_2_choice=None,
+        chat_stream_baseline_post_symmetrisation=build_sentinel(phase_2_path),
+        embed_baseline_post_symmetrisation=build_sentinel(phase_2_path, is_embed=True),
+        embed_regression_check=None,
+        m6_1_baseline_pointer=str(
+            getattr(
+                args,
+                "m6_1_1_m6_1_baseline",
+                "docs/benchmarks/m6_1-real-prompt-embeds.json",
+            )
+        ),
+        methodology_supersedence="",
+    )
+
+    md_path = Path(
+        getattr(args, "m6_1_1_report_out", "docs/benchmarks/m6_1_1-engine-cost-instrumentation.md")
+    )
+    json_path = Path(args.m6_1_1_report_json_out)
+    write_m6_1_1_report(run, md_path, json_path)
+    print(f"m6.1.1: report written to {md_path} and {json_path}", file=sys.stderr)
+
+
+def _git_sha() -> str:
+    import subprocess
+
+    try:
+        return (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
+            .decode()
+            .strip()[:7]
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
+
+
+def _hostname() -> str:
+    import socket
+
+    return socket.gethostname()
 
 
 def _write_drift_not_reproduced_supersedence(
