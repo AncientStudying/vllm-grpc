@@ -1,7 +1,7 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/022-m6-1-real-prompt-embeds/plan.md
+at specs/023-m6-1-1-engine-cost-instrumentation/plan.md
 <!-- SPECKIT END -->
 
 ## Codebase navigation
