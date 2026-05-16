@@ -24,8 +24,10 @@ chat_stream + embed baseline sentinels, and returns the
 from __future__ import annotations
 
 import argparse
+import math
 import socket
 import subprocess
+import sys
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -55,6 +57,75 @@ from vllm_grpc_bench.m6_1_types import (
     M6_1Cell,
 )
 from vllm_grpc_bench.m6_sweep import RPCDriver, RPCResult
+
+# --- Progress reporter (stderr lines as the sweep advances) ----------------
+
+
+class M6_1_1ProgressReporter:
+    """Streams per-cell × per-cohort progress to stderr so the operator
+    has visibility during the ~30–75 min sweep wall-clock.
+
+    Total pair count is fixed at 18 (6 cells × 3 cohorts). Each
+    ``emit_cell_cohort`` call updates the rolling ETA based on the
+    measured per-pair wall-clock.
+    """
+
+    def __init__(self, *, phase: str, n: int, eta_minutes_total: int) -> None:
+        self.phase = phase
+        self.n = n
+        self.eta_minutes_total = eta_minutes_total
+        self.total_pairs = 18
+        self.completed_pairs = 0
+        self.start_time: float = 0.0
+
+    def emit_startup(self, *, model: str, region: str, seq_len: int) -> None:
+        self.start_time = time.monotonic()
+        print(
+            f"M6.1.1 {self.phase} sweep: 6 cells × 3 cohorts × n={self.n}, "
+            f"runtime ETA ≤{self.eta_minutes_total} min, model={model}, "
+            f"region={region}, seq_len={seq_len}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    def emit_cell_cohort(
+        self,
+        cell: M6_1_1Cell,
+        cohort: M6_1_1Cohort,
+        successes: int,
+        elapsed_s: float,
+    ) -> None:
+        self.completed_pairs += 1
+        elapsed_total = time.monotonic() - self.start_time
+        if self.completed_pairs > 0:
+            per_pair = elapsed_total / self.completed_pairs
+            remaining = (self.total_pairs - self.completed_pairs) * per_pair
+            eta_min = max(0, math.ceil(remaining / 60.0))
+        else:
+            eta_min = 0
+        print(
+            f"[{self.completed_pairs}/{self.total_pairs}] {cell.path} × "
+            f"c={cell.concurrency} / {cohort} — {successes}/{self.n} succ — "
+            f"{elapsed_s * 1000:.0f} ms — ETA {eta_min}m",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    def emit_cold_start(self, cold_start_s: float) -> None:
+        print(
+            f"M6.1.1 cold-start (Modal deploy + model load): {cold_start_s:.1f} s",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    def emit_completion(self, report_path: str) -> None:
+        elapsed_min = (time.monotonic() - self.start_time) / 60.0
+        print(
+            f"M6.1.1 {self.phase} sweep complete in {elapsed_min:.1f} min; report at {report_path}",
+            file=sys.stderr,
+            flush=True,
+        )
+
 
 # --- Aggregation helpers ----------------------------------------------------
 
@@ -166,6 +237,7 @@ async def _measure_cell(
     n_measurement: int,
     n_warmup: int,
     base_seed: int,
+    reporter: M6_1_1ProgressReporter | None = None,
 ) -> dict[M6_1_1Cohort, list[RPCResult]]:
     """Run ``n_warmup`` + ``n_measurement`` RPCs per cohort for one cell.
 
@@ -173,6 +245,9 @@ async def _measure_cell(
     warmup results are discarded (their purpose is engine warm-state
     stabilisation, not measurement). Reuses M6.1's RPCDriver signature
     (driver dispatches by ``(cohort, M6_1Cell, seed)``).
+
+    When a ``reporter`` is supplied, ``emit_cell_cohort`` fires after each
+    (cell, cohort) pair completes so the operator sees per-pair progress.
     """
     # Cast M6.1.1 cell ↔ M6.1 cell (they're aliases — same shape).
     m6_1_cell = M6_1Cell(path=cell.path, hidden_size=cell.hidden_size, concurrency=cell.concurrency)
@@ -183,13 +258,17 @@ async def _measure_cell(
         for _ in range(n_warmup):
             await driver(cohort, m6_1_cell, 0)
 
-    # Measurement.
+    # Measurement — per-cohort to give the operator timely progress lines.
     per_cohort: dict[M6_1_1Cohort, list[RPCResult]] = {k: [] for k in M6_1_COHORTS}
     for cohort in M6_1_COHORTS:
+        cohort_start = time.monotonic()
         for i in range(n_measurement):
             seed = base_seed + i
             result = await driver(cohort, m6_1_cell, seed)
             per_cohort[cohort].append(result)
+        if reporter is not None:
+            successes = sum(1 for r in per_cohort[cohort] if r.success)
+            reporter.emit_cell_cohort(cell, cohort, successes, time.monotonic() - cohort_start)
     return per_cohort
 
 
@@ -216,9 +295,17 @@ async def run_m6_1_1_phase_1_sweep(
 
     seq_len = pin_seq_len_at_sweep_start(str(getattr(args, "m6_1_1_model", "Qwen/Qwen3-8B")))
     base_seed = int(getattr(args, "m6_1_1_base_seed", 42))
+    reporter = M6_1_1ProgressReporter(phase="Phase 1 diagnose", n=50, eta_minutes_total=45)
+    reporter.emit_startup(
+        model=str(getattr(args, "m6_1_1_model", "Qwen/Qwen3-8B")),
+        region=str(getattr(args, "m6_1_1_modal_region", "eu-west-1")),
+        seq_len=seq_len,
+    )
 
     all_timings: list[MultiPointTimings] = []
+    cold_start_t0 = time.monotonic()
     async with _open_endpoint_and_driver(args, seq_len, base_seed, driver_factory) as driver:
+        reporter.emit_cold_start(time.monotonic() - cold_start_t0)
         for cell in _make_cells():
             per_cohort = await _measure_cell(
                 driver,
@@ -226,6 +313,7 @@ async def run_m6_1_1_phase_1_sweep(
                 n_measurement=50,
                 n_warmup=10,
                 base_seed=base_seed,
+                reporter=reporter,
             )
             all_timings.extend(aggregate_multi_point_timings(per_cohort, cell))
 
@@ -240,7 +328,7 @@ async def run_m6_1_1_phase_1_sweep(
         if len(per_cohort_dict) == len(M6_1_COHORTS):
             classifications[_cell_key(cell)] = classify_cell(cell, per_cohort_dict)
 
-    return Phase1RunRecord(
+    record = Phase1RunRecord(
         run_id=run_id,
         run_started_at=started_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
         run_completed_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -250,6 +338,14 @@ async def run_m6_1_1_phase_1_sweep(
         perturbation_audit=PerturbationAudit(per_cohort_per_cell={}, exceeded=False),
         n_per_cohort=50,
     )
+    reporter.emit_completion(
+        str(
+            getattr(
+                args, "m6_1_1_report_out", "docs/benchmarks/m6_1_1-engine-cost-instrumentation.md"
+            )
+        )
+    )
+    return record
 
 
 # --- Phase 2(a) sweep wrapper ----------------------------------------------
@@ -278,6 +374,12 @@ async def run_m6_1_1_phase_2a_sweep(
     """
     seq_len = pin_seq_len_at_sweep_start(str(getattr(args, "m6_1_1_model", "Qwen/Qwen3-8B")))
     base_seed = int(getattr(args, "m6_1_1_base_seed", 42))
+    reporter = M6_1_1ProgressReporter(phase="Phase 2(a) verification", n=100, eta_minutes_total=75)
+    reporter.emit_startup(
+        model=str(getattr(args, "m6_1_1_model", "Qwen/Qwen3-8B")),
+        region=str(getattr(args, "m6_1_1_modal_region", "eu-west-1")),
+        seq_len=seq_len,
+    )
 
     chat_stream_entries: list[BaselineCellEntry] = []
     embed_entries: list[BaselineCellEntry] = []
@@ -287,7 +389,9 @@ async def run_m6_1_1_phase_2a_sweep(
     # Map cell -> per-cohort engine_ttft_ms means for the drift-cleared check.
     chat_stream_per_cohort_means: dict[M6_1_1Cell, dict[M6_1_1Cohort, float]] = {}
 
+    cold_start_t0 = time.monotonic()
     async with _open_endpoint_and_driver(args, seq_len, base_seed, driver_factory) as driver:
+        reporter.emit_cold_start(time.monotonic() - cold_start_t0)
         for cell in _make_cells():
             per_cohort = await _measure_cell(
                 driver,
@@ -295,6 +399,7 @@ async def run_m6_1_1_phase_2a_sweep(
                 n_measurement=100,
                 n_warmup=10,
                 base_seed=base_seed,
+                reporter=reporter,
             )
             timings = aggregate_multi_point_timings(per_cohort, cell)
             for t in timings:
@@ -328,6 +433,13 @@ async def run_m6_1_1_phase_2a_sweep(
     ctrl_note = (
         "expected — reflects bracketing change in Phase 2(a) symmetrisation; "
         "not infrastructure drift (round-1 Q2)"
+    )
+    reporter.emit_completion(
+        str(
+            getattr(
+                args, "m6_1_1_report_out", "docs/benchmarks/m6_1_1-engine-cost-instrumentation.md"
+            )
+        )
     )
     return (
         chat_stream_entries,
