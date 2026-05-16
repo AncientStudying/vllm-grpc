@@ -168,9 +168,9 @@ def test_m6_dispatch_invokes_sweep_when_baseline_ok(
 def test_m6_smoke_dispatch_routes_to_smoke_runner(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Phase 5 (US3): --m6-smoke dispatches to ``_run_m6_smoke``. The
-    smoke runner exits with code 2 because the production Modal driver
-    is not yet wired (the same seam the full sweep uses).
+    """M6 US3 (smoke gate): --m6-smoke dispatches to ``_run_m6_smoke``.
+    The smoke runner exits with code 2 because the production Modal
+    deploy fails in unit-test context (no Modal session).
     """
     monkeypatch.setenv("MODAL_BENCH_TOKEN", "tok-xyz")
     real_baseline = Path("docs/benchmarks/m5_2-transport-vs-tuning.json")

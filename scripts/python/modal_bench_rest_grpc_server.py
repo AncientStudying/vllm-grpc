@@ -274,7 +274,7 @@ _image_real_engine = (
         "protobuf",
         "fastapi",
         "uvicorn[standard]",
-        # vLLM real-engine deps (Phase 6.1 enable_prompt_embeds compatibility).
+        # vLLM real-engine deps (the frontend's prebuilt enable_prompt_embeds support).
         "vllm==0.20.1",
         "torch",
         "transformers",
@@ -335,7 +335,7 @@ async def serve_bench_real_engine(
 
     Identical to :func:`serve_bench` except that the engine instance is
     an ``AsyncLLM`` loaded with ``model_id`` at fp16 with
-    ``enable_prompt_embeds=True`` (Phase 6.1 carry-over). Loads ONCE at
+    ``enable_prompt_embeds=True`` (prebuilt frontend support). Loads ONCE at
     startup (FR-024) before the gRPC + REST servers begin accepting
     traffic, and runs a throwaway smoke forward-pass (R-10) to surface
     OOM / load failures as explicit errors.
@@ -407,7 +407,7 @@ async def serve_bench_real_engine(
         engine_args = AsyncEngineArgs(
             model=effective_model,
             dtype="float16",
-            enable_prompt_embeds=True,  # Phase 6.1 carry-over
+            enable_prompt_embeds=True,  # prebuilt frontend support
             max_model_len=2048,
             gpu_memory_utilization=0.92,
         )

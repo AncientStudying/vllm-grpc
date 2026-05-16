@@ -286,7 +286,7 @@ def serve_bench():
         engine_args = AsyncEngineArgs(
             model=M6_MODEL,
             dtype="float16",
-            enable_prompt_embeds=True,  # Phase 6.1
+            enable_prompt_embeds=True,  # prebuilt frontend support
         )
         engine = AsyncLLM.from_engine_args(engine_args)
         # Run a single throwaway forward pass to surface OOM/load-failures as
@@ -306,7 +306,7 @@ The harness's `--m6` CLI flag sets the `M6_USE_REAL_ENGINE=true` env var on the 
 - Confirmed by codebase mapping: the Modal app currently only instantiates MockEngine; adding a flag-gated branch is the minimal additive change.
 - Env var (rather than a Modal function arg) keeps the M5.x deploy path unchanged for backward compatibility — the env var defaults to MockEngine.
 - The throwaway forward-pass at startup catches OOM/model-load failures before the smoke gate's per-cohort RPCs start, surfacing them as a clear startup error per the spec edge case.
-- Phase 6.1's `enable_prompt_embeds=True` is preserved.
+- The frontend's prebuilt `enable_prompt_embeds=True` support is preserved.
 
 **Alternatives considered**:
 - Two parallel Modal apps (one MockEngine, one real engine) — duplicates the gRPC + REST server wiring code and proto stubs. Rejected: more divergence to maintain.

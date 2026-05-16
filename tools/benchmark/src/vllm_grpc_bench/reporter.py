@@ -300,13 +300,13 @@ def write_wire_size_comparison_md(
     summaries: list[RunSummary],
     output_path: Path,
 ) -> Path:
-    """Render Phase 6 completions report: wire-size summary + per-concurrency latency tables."""
+    """Render the M1 completions report: wire-size summary + per-concurrency latency tables."""
     completion_summaries = [
         s for s in summaries if s.request_type in ("completion-text", "completion-embeds")
     ]
 
     lines: list[str] = [
-        "# Phase 6 Completions Benchmark: Wire-Size and Latency",
+        "# Completions Benchmark: Wire-Size and Latency (M1)",
         "",
         "## Methodology",
         "",
