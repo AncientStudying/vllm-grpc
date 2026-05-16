@@ -194,12 +194,21 @@ async def _drive_grpc_embed_m6_1(
     engine_cost: EngineCostSpan | None = (
         parse_grpc_trailing_metadata(md, "embed") if md is not None else None
     )
+    # M6.1.1 (FR-011 audit-only): extract 4-checkpoint timing from the same
+    # trailing metadata. Best-effort — None on pre-M6.1.1 servers.
+    from vllm_grpc_bench.m6_1_1_timing import extract_grpc_timings, timing_checkpoint_to_payload
+
+    md_dict = {k: v for k, v in md} if md is not None else None
+    m6_1_1_payload = timing_checkpoint_to_payload(
+        extract_grpc_timings(md_dict) if md_dict is not None else None
+    )
     return RPCResult(
         success=True,
         wall_clock_ms=wall_ms,
         ttft_ms=None,
         engine_cost=engine_cost,
         failure_reason=None,
+        m6_1_1_timing_payload=m6_1_1_payload,
     )
 
 
@@ -245,12 +254,19 @@ async def _drive_rest_embed_m6_1(
     except (ValueError, json.JSONDecodeError):
         payload = {}
     engine_cost = parse_rest_response(payload, "embed") if isinstance(payload, dict) else None
+    # M6.1.1 (FR-011 audit-only): same JSONResponse body carries m6_1_1_timings.
+    from vllm_grpc_bench.m6_1_1_timing import extract_rest_timings, timing_checkpoint_to_payload
+
+    m6_1_1_payload = timing_checkpoint_to_payload(
+        extract_rest_timings(payload) if isinstance(payload, dict) else None
+    )
     return RPCResult(
         success=True,
         wall_clock_ms=wall_ms,
         ttft_ms=None,
         engine_cost=engine_cost,
         failure_reason=None,
+        m6_1_1_timing_payload=m6_1_1_payload,
     )
 
 

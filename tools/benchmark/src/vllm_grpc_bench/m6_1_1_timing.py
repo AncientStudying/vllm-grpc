@@ -80,8 +80,30 @@ def compute_per_segment_delta(ckpt: TimingCheckpoint) -> PerSegmentDelta:
     return PerSegmentDelta.from_checkpoint(ckpt)
 
 
+def timing_checkpoint_to_payload(
+    ckpt: TimingCheckpoint | None,
+) -> dict[str, int] | None:
+    """Convert a :class:`TimingCheckpoint` to a ``dict[str, int]`` payload.
+
+    Used by RPC drivers to populate ``RPCResult.m6_1_1_timing_payload``
+    without introducing an m6_sweep / m6_types → m6_1_1_types import
+    cycle. The dict shape mirrors :class:`TimingCheckpoint`'s fields so
+    re-hydration via ``TimingCheckpoint(**payload)`` is mechanical.
+    """
+    if ckpt is None:
+        return None
+    return {
+        "handler_entry_ns": ckpt.handler_entry_ns,
+        "pre_engine_ns": ckpt.pre_engine_ns,
+        "first_chunk_ns": ckpt.first_chunk_ns,
+        "terminal_emit_ns": ckpt.terminal_emit_ns,
+        "perturbation_audit_ns": ckpt.perturbation_audit_ns,
+    }
+
+
 __all__ = [
     "compute_per_segment_delta",
     "extract_grpc_timings",
     "extract_rest_timings",
+    "timing_checkpoint_to_payload",
 ]

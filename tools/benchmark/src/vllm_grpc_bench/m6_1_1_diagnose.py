@@ -223,20 +223,19 @@ def evaluate_phase_1_gates(
 def _run_phase_1_sweep(
     args: argparse.Namespace,
     baseline: dict[str, Any],
-) -> Phase1RunRecord:
+) -> Any:
     """Run the 6-cell × 3-cohort × n=50 Phase 1 sweep on the deployed Modal app.
 
-    The real implementation is deferred — the Modal deploy + cohort runner
-    integration is exercised end-to-end against Modal directly (manual
-    operator step per quickstart.md). T024 tests replace this function with
-    a synthetic generator so the gate logic is unit-testable.
+    Returns an awaitable that resolves to :class:`Phase1RunRecord`. The
+    orchestrator awaits it (the hook supports both sync and async
+    returns — see ``run_m6_1_1_diagnose`` step 4).
+
+    Wires :func:`m6_1_1_sweep.run_m6_1_1_phase_1_sweep` which reuses M6.1's
+    Modal endpoint + RPC driver infrastructure.
     """
-    del args, baseline
-    raise NotImplementedError(
-        "Phase 1 sweep is wired against Modal; for unit tests, replace "
-        "_run_phase_1_sweep via monkeypatch. The Modal-integration end-to-end "
-        "test lives in T024's --m6_1_1-diagnose live invocation per quickstart."
-    )
+    from vllm_grpc_bench.m6_1_1_sweep import run_m6_1_1_phase_1_sweep
+
+    return run_m6_1_1_phase_1_sweep(args, baseline)
 
 
 # --- Orchestrator entry point (called from __main__._run_m6_1_1) ------------
@@ -286,8 +285,16 @@ async def run_m6_1_1_diagnose(
         print(f"m6.1.1: {msg}", file=sys.stderr)
 
     # Step 4: run the Phase 1 sweep (hook is replaceable for tests).
+    # Tests typically pass a sync lambda returning Phase1RunRecord; the
+    # production hook (Modal sweep) is async. Accept either by inspecting
+    # the return value.
+    import inspect
+
     hook = sweep_hook or _run_phase_1_sweep
-    new_run = hook(args, baseline)
+    sweep_result: Any = hook(args, baseline)
+    if inspect.isawaitable(sweep_result):
+        sweep_result = await sweep_result
+    new_run: Phase1RunRecord = sweep_result
 
     # Step 5: perturbation budget gate (FR-012, round-2 Q3).
     audit = check_perturbation_budget(new_run)

@@ -53,6 +53,13 @@ class RPCResult:
     embed). ``engine_cost`` is the server-instrumented per-RPC cost
     parsed from the trailing metadata / SSE payload; None on
     instrumentation gap.
+
+    ``m6_1_1_timing_payload`` is the four-checkpoint timing data parsed
+    from the M6.1.1 wire format (``m6_1_1_timings`` SSE sub-object or
+    ``m6_1_1_t_*`` trailing-metadata keys). Stored as a ``dict[str, int]``
+    to keep m6_sweep / m6_types free of an m6_1_1_types import cycle;
+    M6.1.1 callers re-hydrate to ``TimingCheckpoint`` via
+    ``TimingCheckpoint(**payload)``. ``None`` on pre-M6.1.1 servers.
     """
 
     success: bool
@@ -60,6 +67,7 @@ class RPCResult:
     ttft_ms: float | None
     engine_cost: EngineCostSpan | None
     failure_reason: str | None
+    m6_1_1_timing_payload: dict[str, int] | None = None
 
 
 RPCDriver = Callable[[M6CohortKind, M6Cell, int], Awaitable[RPCResult]]

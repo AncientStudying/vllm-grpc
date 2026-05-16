@@ -130,21 +130,19 @@ def _uniform_chat_stream_label(
 def _run_phase_2a_sweep(
     args: argparse.Namespace,
     baseline: dict[str, Any],
-) -> Phase2aSweepResult:
+) -> Any:
     """Run the 6-cell × 3-cohort × n=100 verification sweep on Modal.
 
-    The real implementation is deferred to the Modal-integration end-to-end
-    work. T030 tests replace this function with a synthetic generator so the
-    branch logic is unit-testable. The signature documents the expected
-    return shape for the future implementation.
+    Returns an awaitable that resolves to :class:`Phase2aSweepResult`. The
+    orchestrator awaits it (the hook supports both sync and async returns).
+
+    Wires :func:`m6_1_1_sweep.run_m6_1_1_phase_2a_sweep` — reuses M6.1's
+    Modal stack + adds the FR-015b embed regression check + 9-cell
+    chat_stream + 9-cell embed baseline sentinels.
     """
-    del args, baseline
-    raise NotImplementedError(
-        "Phase 2(a) verification sweep is wired against Modal; for unit "
-        "tests, replace _run_phase_2a_sweep via monkeypatch. The Modal-"
-        "integration end-to-end test lives in T030's --m6_1_1 live "
-        "invocation per quickstart."
-    )
+    from vllm_grpc_bench.m6_1_1_sweep import run_m6_1_1_phase_2a_sweep
+
+    return run_m6_1_1_phase_2a_sweep(args, baseline)
 
 
 # --- Phase 2 orchestrator entry point --------------------------------------
@@ -199,7 +197,7 @@ async def run_m6_1_1_phase_2(  # noqa: PLR0911 — branch logic has many distinc
 
     # Round-3 Q2 dispatch.
     if uniform_label == "instrumentation_artifact":
-        return _dispatch_phase_2a(
+        return await _dispatch_phase_2a(
             args,
             baseline,
             sweep_hook=sweep_hook,
@@ -241,7 +239,7 @@ async def run_m6_1_1_phase_2(  # noqa: PLR0911 — branch logic has many distinc
     return 1
 
 
-def _dispatch_phase_2a(
+async def _dispatch_phase_2a(
     args: argparse.Namespace,
     baseline: dict[str, Any],
     *,
@@ -252,7 +250,12 @@ def _dispatch_phase_2a(
     date_yyyy_mm_dd: str,
 ) -> int:
     """Phase 2(a) dispatch: n=100 verification sweep + fresh baselines."""
+    import inspect
+
     hook = sweep_hook or _run_phase_2a_sweep
+    sweep_out: Any = hook(args, baseline)
+    if inspect.isawaitable(sweep_out):
+        sweep_out = await sweep_out
     (
         chat_stream_cells,
         embed_cells,
@@ -261,7 +264,7 @@ def _dispatch_phase_2a(
         drift_warning,
         ctrl_warning,
         ctrl_note,
-    ) = hook(args, baseline)
+    ) = sweep_out
 
     # FR-015b: if any embed regression warning fires and the operator hasn't
     # acknowledged it, refuse to close (round-2 Q2).
