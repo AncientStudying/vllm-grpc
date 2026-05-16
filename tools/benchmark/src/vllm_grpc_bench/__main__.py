@@ -427,6 +427,100 @@ def _build_parser() -> argparse.ArgumentParser:
         help="M6: M5.2 baseline JSON path (FR-014 hard precondition).",
     )
 
+    # ---- M6.1 mode (real-prompt-embeds engine path) ----
+    # See specs/022-m6-1-real-prompt-embeds/contracts/cli.md.
+    parser.add_argument(
+        "--m6_1",
+        action="store_true",
+        help="Run the M6.1 real-prompt-embeds engine path sweep "
+        "(6 cells × 3 cohorts × n=100, Qwen3-8B on Modal A10G, "
+        "enable_prompt_embeds=True engine path).",
+    )
+    parser.add_argument(
+        "--m6_1-smoke",
+        action="store_true",
+        help="M6.1: pre-flight smoke gate (FR-012). Runs 2 cells × 3 cohorts × "
+        "n=10 (~5 min wall-clock). Mutually exclusive with --m6_1.",
+    )
+    parser.add_argument(
+        "--m6_1-modal-region",
+        default="eu-west-1",
+        help="M6.1: Modal region for the deploy (default eu-west-1).",
+    )
+    parser.add_argument(
+        "--m6_1-modal-token-env",
+        default="MODAL_BENCH_TOKEN",
+        help="M6.1: env-var name carrying the bearer token.",
+    )
+    parser.add_argument(
+        "--m6_1-modal-endpoint",
+        default=None,
+        help="M6.1: pre-existing endpoint (advanced; implies --m6_1-skip-deploy).",
+    )
+    parser.add_argument(
+        "--m6_1-skip-deploy",
+        action="store_true",
+        help="M6.1: skip Modal deploy and reuse --m6_1-modal-endpoint.",
+    )
+    parser.add_argument(
+        "--m6_1-base-seed",
+        type=int,
+        default=42,
+        help="M6.1: M6_1_BASE_SEED for the per-RPC seed mapping (FR-019; default 42).",
+    )
+    parser.add_argument(
+        "--m6_1-model",
+        default="Qwen/Qwen3-8B",
+        help="M6.1: model identifier (FR-007 — engine config reused from M6).",
+    )
+    parser.add_argument(
+        "--m6_1-events-sidecar-out",
+        type=Path,
+        default=Path("bench-results/m6_1-full"),
+        help="M6.1: per-RPC events JSONL sidecar output directory.",
+    )
+    parser.add_argument(
+        "--m6_1-report-out",
+        type=Path,
+        default=Path("docs/benchmarks/m6_1-real-prompt-embeds.md"),
+        help="M6.1: markdown report output path (FR-026).",
+    )
+    parser.add_argument(
+        "--m6_1-report-json-out",
+        type=Path,
+        default=Path("docs/benchmarks/m6_1-real-prompt-embeds.json"),
+        help="M6.1: JSON companion output path (FR-021 strict superset of M6).",
+    )
+    parser.add_argument(
+        "--m6_1-rtt-validity-ms",
+        type=float,
+        default=1.0,
+        help="M6.1: refuse verdict below this median RTT (default 1.0 ms).",
+    )
+    parser.add_argument(
+        "--m6_1-rtt-exercise-ms",
+        type=float,
+        default=20.0,
+        help="M6.1: low_rtt_caveat fires below this median RTT (default 20.0 ms).",
+    )
+    parser.add_argument(
+        "--m6_1-shim-overhead-warn-pct",
+        type=float,
+        default=5.0,
+        help="M6.1: warn if REST shim overhead exceeds this fraction of cohort wallclock.",
+    )
+    parser.add_argument(
+        "--m6_1-run-id",
+        default=None,
+        help="M6.1: override the auto-generated run identifier (ISO timestamp + git_sha).",
+    )
+    parser.add_argument(
+        "--m6_1-m6-baseline",
+        type=Path,
+        default=Path("docs/benchmarks/m6-real-engine-mini-validation.json"),
+        help="M6.1: M6 baseline JSON path (FR-008/FR-009 hard precondition).",
+    )
+
     # ---- M5.1 mode (REST vs gRPC head-to-head on real wire) ----
     parser.add_argument(
         "--m5_1",
@@ -1649,10 +1743,12 @@ def _validate_m6_args(args: argparse.Namespace) -> int:
         or getattr(args, "m5_1", False)
         or getattr(args, "m5_2", False)
         or getattr(args, "m5_2_smoke", False)
+        or getattr(args, "m6_1", False)
+        or getattr(args, "m6_1_smoke", False)
     ):
         print(
             "Error: --m6 / --m6-smoke are mutually exclusive with --m3, --m4, "
-            "--m5, --m5_1, --m5_2, and --m5_2-smoke.",
+            "--m5, --m5_1, --m5_2, --m5_2-smoke, --m6_1, and --m6_1-smoke.",
             file=sys.stderr,
         )
         return 2
@@ -1899,9 +1995,119 @@ async def _run_m6_full_sweep_async(args: argparse.Namespace, baseline: dict[str,
     return 0
 
 
+def _validate_m6_1_args(args: argparse.Namespace) -> int:
+    """Pre-flight validation for M6.1 mode. Returns exit code; 0 means OK.
+
+    See specs/022-m6-1-real-prompt-embeds/contracts/cli.md §"Exit codes".
+    """
+    import os as _os
+
+    if getattr(args, "m6_1", False) and getattr(args, "m6_1_smoke", False):
+        print(
+            "Error: --m6_1 and --m6_1-smoke are mutually exclusive (pick one).",
+            file=sys.stderr,
+        )
+        return 2
+    if (
+        getattr(args, "m3", False)
+        or getattr(args, "m4", False)
+        or getattr(args, "m5", False)
+        or getattr(args, "m5_1", False)
+        or getattr(args, "m5_2", False)
+        or getattr(args, "m5_2_smoke", False)
+        or getattr(args, "m6", False)
+        or getattr(args, "m6_smoke", False)
+    ):
+        print(
+            "Error: --m6_1 / --m6_1-smoke are mutually exclusive with all "
+            "earlier mode flags (--m3, --m4, --m5, --m5_1, --m5_2, --m6).",
+            file=sys.stderr,
+        )
+        return 2
+    if bool(getattr(args, "m6_1_skip_deploy", False)) and not getattr(
+        args, "m6_1_modal_endpoint", None
+    ):
+        print(
+            "Error: --m6_1-skip-deploy requires --m6_1-modal-endpoint",
+            file=sys.stderr,
+        )
+        return 2
+    if float(args.m6_1_rtt_exercise_ms) < float(args.m6_1_rtt_validity_ms):
+        print(
+            "Error: --m6_1-rtt-exercise-ms must be >= --m6_1-rtt-validity-ms",
+            file=sys.stderr,
+        )
+        return 2
+    token_env = str(args.m6_1_modal_token_env)
+    if not _os.environ.get(token_env):
+        print(
+            f"Error: bearer-token env var {token_env!r} is unset; "
+            "export it before running --m6_1 "
+            "(see specs/022-m6-1-real-prompt-embeds/quickstart.md)",
+            file=sys.stderr,
+        )
+        return 4
+    return 0
+
+
+def _run_m6_1(args: argparse.Namespace) -> int:
+    """Dispatch to the M6.1 full sweep or smoke gate.
+
+    Exit codes per contracts/cli.md:
+    * 0 — success
+    * 1 — full-sweep: M6 baseline pre-check failed at launch
+    * 2 — argparse rejection, torch-pin pre-check failed, OR smoke baseline /
+          torch failure (smoke collapses these to a single non-RPC code)
+    * 3 — Modal deploy / model-load failure mid-run
+    * 4 — bearer-token env var unset
+    """
+    rc = _validate_m6_1_args(args)
+    if rc != 0:
+        return rc
+
+    # FR-006: torch-pin validation runs FIRST, before any baseline file or
+    # Modal compute is touched. Raises SystemExit(2) on mismatch — that
+    # exit code matches contracts/cli.md exit code 2 for both modes.
+    from vllm_grpc_bench.m6_1_torch_pin import validate_torch_version
+
+    validate_torch_version()
+
+    from vllm_grpc_bench.m6_1_supersede import (
+        M6BaselineMissingCellError,
+        load_and_validate_m6_baseline,
+    )
+
+    try:
+        baseline_tuple = load_and_validate_m6_baseline(args.m6_1_m6_baseline)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1 if getattr(args, "m6_1", False) else 2
+    except M6BaselineMissingCellError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1 if getattr(args, "m6_1", False) else 2
+    except (ValueError, json.JSONDecodeError) as exc:  # noqa: PERF203
+        print(
+            f"Error: M6 baseline at {args.m6_1_m6_baseline} could not be parsed: {exc}",
+            file=sys.stderr,
+        )
+        return 1 if getattr(args, "m6_1", False) else 2
+
+    if getattr(args, "m6_1_smoke", False):
+        from vllm_grpc_bench.m6_1_smoke import run_m6_1_smoke
+
+        return asyncio.run(run_m6_1_smoke(args, baseline_tuple))
+
+    from vllm_grpc_bench.m6_1_sweep import run_m6_1_sweep
+
+    return asyncio.run(run_m6_1_sweep(args, baseline_tuple))
+
+
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+
+    if getattr(args, "m6_1", False) or getattr(args, "m6_1_smoke", False):
+        sys.exit(_run_m6_1(args))
 
     if getattr(args, "m6", False) or getattr(args, "m6_smoke", False):
         sys.exit(_run_m6(args))

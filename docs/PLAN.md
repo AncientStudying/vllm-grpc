@@ -128,7 +128,18 @@ Three cohorts (down from M5.2's five): `rest_https_edge`, `default_grpc`, `tuned
 
 Out of scope: corpus diversity (deferred to M7), additional models (deferred to M8), real-engine validation at h≠4096 (deferred to M8 which uses multiple models spanning canonical widths), real-engine validation of the M3/M4 channel-tuning sweep (out of scope; M3/M4 verdicts were already validated cross-host by M5).
 
-### M6.1 — Real-Prompt-Embeddings Engine Path (planned, post-M6)
+### M6.1 — Real-Prompt-Embeddings Engine Path (implementation landed; full-sweep pending operator-driven Modal run)
+
+The harness, classifier, reporter, smoke gate, and torch-pin gate are in
+place per `specs/022-m6-1-real-prompt-embeds/` (38 tasks; 87 unit tests
+green; ruff / mypy --strict clean). Published artifacts at
+`docs/benchmarks/m6_1-real-prompt-embeds.{md,json}` are produced by the
+operator-driven Modal full sweep (`python -m vllm_grpc_bench --m6_1
+--m6_1-modal-region=eu-west-1`). See ["Engine path differential"
+section](./benchmarks/m6_1-real-prompt-embeds.md#engine-path-differential-m61--m6)
+once the operator publishes the artifacts.
+
+
 
 Re-run M6's narrow 6-cell × 3-cohort slice with the embed cohort wired to vLLM's **real `enable_prompt_embeds=True`** engine path on both transports, instead of M5.x's "hash binary payload → short text prompt" symmetry. Tests the protocol-comparison question for the workload where the caller sends actual prompt embedding tensors to vLLM (a path M3–M6 don't exercise because they hash the binary payload to a text digest server-side for apples-to-apples engine work).
 

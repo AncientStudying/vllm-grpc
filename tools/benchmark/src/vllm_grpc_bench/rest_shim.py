@@ -85,6 +85,25 @@ class _ChatRequest(BaseModel):
 
 
 class _EmbedRequest(BaseModel):
+    """REST embed-cell request body.
+
+    Three ``input_kind`` values are accepted (all coexist indefinitely per
+    spec FR-004 — no deprecation, no migration mandate):
+
+    * ``prompt_embedding_b64`` — raw float32 ``tensor.tobytes()`` bytes
+      (M5.x / M6 wire format). The shim hashes them to a short text digest
+      via ``blake2b`` and feeds that text to ``engine.generate``; engine work
+      is text-prompt unary completion. Used by M5.x / M6 reproductions.
+    * ``prompt_embedding_torch_b64`` — base64-encoded ``torch.save(tensor)``
+      bytes (M6.1+ wire format). The shim calls ``decode_embeds`` to
+      deserialise and ships ``{"prompt_embeds": tensor}`` directly to
+      ``engine.generate(...)``, driving the real prompt-embeds engine path
+      via ``enable_prompt_embeds=True``. Used by M6.1+ sweeps. See
+      ``docs/benchmarks/m6_1-real-prompt-embeds.md`` § "Engine path
+      differential" for the operator-facing decision aid.
+    * ``text`` — plain text prompt fed straight to the engine.
+    """
+
     model: str = "mock"
     input_kind: str = "prompt_embedding_b64"
     input: str
@@ -246,11 +265,33 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
         operation is 'completion-from-embedding', not 'return embedding'.
         """
         handler_entry = time.perf_counter()
-        if req.input_kind not in ("prompt_embedding_b64", "text"):
+        if req.input_kind not in (
+            "prompt_embedding_b64",
+            "prompt_embedding_torch_b64",
+            "text",
+        ):
             return JSONResponse({"error": "unsupported input_kind"}, status_code=422)
         if req.hidden_size not in (2048, 4096, 8192):
             return JSONResponse({"error": "hidden_size must be 2048/4096/8192"}, status_code=422)
-        if req.input_kind == "prompt_embedding_b64":
+        if req.input_kind == "prompt_embedding_torch_b64":
+            # M6.1 (FR-003): base64-decoded torch.save bytes, deserialised by
+            # decode_embeds and shipped to the engine via {"prompt_embeds":
+            # tensor} — drives enable_prompt_embeds=True real-engine path.
+            try:
+                raw_bytes = base64.b64decode(req.input, validate=True)
+            except (ValueError, base64.binascii.Error):  # type: ignore[attr-defined]
+                return JSONResponse({"error": "input not valid base64"}, status_code=400)
+            try:
+                from vllm_grpc_frontend.completions_translate import decode_embeds
+
+                tensor = decode_embeds(raw_bytes)
+            except (ValueError, Exception) as exc:  # noqa: BLE001
+                return JSONResponse(
+                    {"error": f"decode_embeds failed: {exc}"},
+                    status_code=422,
+                )
+            prompt: Any = {"prompt_embeds": tensor}
+        elif req.input_kind == "prompt_embedding_b64":
             try:
                 raw_bytes = base64.b64decode(req.input, validate=True)
             except (ValueError, base64.binascii.Error):  # type: ignore[attr-defined]
@@ -259,7 +300,7 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
             # embedding bytes into a deterministic prompt token so the engine
             # produces stable per-request output across both protocols.
             digest = hashlib.blake2b(raw_bytes, digest_size=8).hexdigest()
-            prompt: Any = f"embeds:{digest}"
+            prompt = f"embeds:{digest}"
         else:
             prompt = req.input
 

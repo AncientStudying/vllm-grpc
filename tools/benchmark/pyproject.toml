@@ -6,6 +6,10 @@ dependencies = [
     "httpx>=0.27",
     "numpy>=1.26",
     "psutil>=5.9",
+    # M6.1 (FR-006): pinned to vllm==0.20.1's transitive requirement so
+    # client-side torch.save bytes deserialise on the server-side decode_embeds
+    # call. Future bumps MUST stay in sync with the project's vllm pin.
+    "torch==2.11.0",
     "vllm-grpc-client",
 ]
 

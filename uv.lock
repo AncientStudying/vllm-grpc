@@ -3063,6 +3063,7 @@ dependencies = [
     { name = "httpx" },
     { name = "numpy" },
     { name = "psutil" },
+    { name = "torch" },
     { name = "vllm-grpc-client" },
 ]
 
@@ -3071,6 +3072,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "psutil", specifier = ">=5.9" },
+    { name = "torch", specifier = "==2.11.0" },
     { name = "vllm-grpc-client", editable = "packages/client" },
 ]
 
