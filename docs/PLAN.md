@@ -13,9 +13,9 @@ When working with Claude Code on this project, point it at this file plus the ac
 
 ---
 
-## Milestone Roadmap (canonical, M1–M8, with M6.1 follow-up)
+## Milestone Roadmap (canonical, M1–M8, with M6.1 and M6.2 follow-ups)
 
-This section mirrors the milestone framing in [`README.md`](../README.md). M1 through M5.2 are delivered; M6 through M8 are upcoming research directions. As of Draft v7, the focused real-engine mini-validation (formerly a single line in M5.1/M5.2 caveats as "deferred to M7") is promoted to a canonical M6 milestone; what was previously M6 (Corpus Expansion) becomes M7 and what was previously M7 (Model Expansion) becomes M8. The Phase 1–7 plan below this section is preserved as completed-work history (see the boundary heading further down) — it captures decisions and trade-offs that still inform future work, but the milestones above are the canonical forward view.
+This section mirrors the milestone framing in [`README.md`](../README.md). M1 through M5.2 are delivered; M6 through M8 are upcoming research directions. As of Draft v7, the focused real-engine mini-validation (formerly a single line in M5.1/M5.2 caveats as "deferred to M7") is promoted to a canonical M6 milestone; what was previously M6 (Corpus Expansion) becomes M7 and what was previously M7 (Model Expansion) becomes M8. M6 has two narrow follow-ups: **M6.1** (real-prompt-embeds engine path — exactly one variable change vs M6) and **M6.2** (token-budget characterization — `max_tokens` axis across the realistic-generation regime). The Phase 1–7 plan below this section is preserved as completed-work history (see the boundary heading further down) — it captures decisions and trade-offs that still inform future work, but the milestones above are the canonical forward view.
 
 ### M1 — Foundation (delivered)
 
@@ -160,9 +160,31 @@ Re-run M6's narrow 6-cell × 3-cohort slice with the embed cohort wired to vLLM'
 
 Out of scope: prompt-length variation in the embeddings (deferred to M7), additional models (deferred to M8), real-engine re-validation of M3/M4 channel-tuning under the embeddings path (defer until M6.1 produces a verdict — if M6.1 says `verdict_buried_by_engine` everywhere, channel-tuning re-validation is moot).
 
+### M6.2 — Token-Budget Characterization (planned, post-M6.1)
+
+Re-run M6.1's narrow 6-cell × 3-cohort slice with **`max_tokens` lifted from a fixed cap to a 6-point measurement axis** (`10 / 50 / 256 / 512 / 1024 / 2048`) so the published latency budget covers the realistic production response-length regime, not just M5.x / M6 / M6.1's protocol-isolation regime. Same hardware (Modal A10G eu-west-1), same model (Qwen3-8B fp16, real prompt-embeds engine path from M6.1), same `max_model_len=2048` ceiling — `max_tokens` is the *only* variable that moves vs M6.1.
+
+**Why a separate slice rather than bundling into M7.** M5.x / M6 / M6.1 deliberately held `max_tokens=10` (embed) / `max_tokens=50` (chat_stream) to keep engine work approximately constant, so the protocol/transport-cost differential was the signal. At realistic generation lengths the engine cost dominates: at `max_tokens=256` chat_stream completes in ~1.2–2.5s, making the 1-50 ms protocol-overhead differences M5.2/M6/M6.1 measured 2-5% of wall-clock — likely buried by run-to-run noise. **M6.2's operator question shifts** from *"which protocol wins under fixed engine work"* to *"what's the p50/p95/p99 latency budget per cohort at realistic response lengths, and at what `max_tokens` does protocol choice stop mattering?"*. Bundling into M7 (corpus diversity) would mix two variables in one verdict — exactly the methodological confound M6.1 was created to avoid. Phase Discipline (Constitution Principle III) keeps M6.2 narrow so the diff against M6.1's published JSON is unambiguous.
+
+**Approach.** Reuse the M6.1 harness wholesale (engine config, RPC drivers, classifier primitives, smoke gate, torch-pin gate, M6 baseline loader — all already in place). One change: the sweep orchestrator iterates `max_tokens ∈ {10, 50, 256, 512, 1024, 2048}` as an inner axis under each (cell × cohort) pair. Both embed and chat_stream cells vary the axis — embed's measurement becomes a hybrid engine-path + generation signal (informative for retrieval-then-generate workloads), while chat_stream remains a pure generation-latency measurement. The `max_tokens=10` and `max_tokens=50` points serve as null anchors: they should reproduce M6.1's measurements within published CIs (any drift surfaces as a chat_stream control-drift warning per FR-029-equivalent rule), validating that the M6.2 sweep wasn't compromised. `max_tokens=2048` (the `max_model_len` ceiling, set deterministically rather than "uncapped" to avoid EOS-sampling variance) probes the KV-cache-pressure-at-c=8 regime: 8 × 2048 = 16K tokens of needed KV cache against the ~31K-token budget — half-headroom; close enough to capacity that scheduling and prefix-caching dynamics may surface, far enough that OOM is unlikely.
+
+**Report shape (different from M6.1).** Published artifacts are *not* a verdict-supersedes table — at realistic generation lengths most cells will classify `no_winner_at_n100` because generation dominates protocol. Instead M6.2 publishes:
+
+- **Latency budget table** — p50 / p95 / p99 wall-clock per (cell × cohort × `max_tokens`) point (108 rows: 6 cells × 3 cohorts × 6 caps).
+- **TPOT (time-per-output-token) curves** — chat_stream cohorts, becomes the primary throughput signal at `max_tokens ≥ 256`.
+- **Engine-cost decomposition curves** — `engine_forward_ms` (embed) / `engine_ttft_ms` + `engine_tpot_ms` (chat_stream) per `max_tokens` point.
+- **Protocol-crossover threshold** — for each cell, identify the smallest `max_tokens` at which the M6.1 cohort-pair CI overlap becomes statistically indistinguishable from "no winner". Tells the operator *"M6.1's verdict_survives at this cell holds up to `max_tokens=X`; above that the protocol choice doesn't matter"*.
+- **KV-cache-pressure note** at `max_tokens=2048 × c=8` — fraction of KV cache budget consumed, scheduling-stall observation if any.
+
+**Outputs.** `docs/benchmarks/m6_2-token-budget.{md,json}` plus a "Production latency budget" section. Drive with `python -m vllm_grpc_bench --m6_2 --m6_2-modal-region=eu-west-1`. Runtime budget: ~4–6 hours on Modal A10G (108 measurement points × n=100 = 10,800 RPCs vs M6.1's 1,800; chat_stream cells dominate wall-clock because their per-RPC latency scales with `max_tokens`). Modal compute cost estimate: ~$4–6 (M6 was $0.87 at 1,800 RPCs; M6.2 is ~6× that, partially offset by warmup amortising better across the inner axis). The JSON is a strict superset of M6.1's schema (FR-021-equivalent) so M6.1-aware consumers keep working.
+
+**Speckit cycle.** Run `/speckit-specify` → `/speckit-clarify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement` against this section after M6.1 publishes. M6.1's published JSON is M6.2's baseline reference (FR-008-equivalent hard precondition) — the `max_tokens=10` / `50` anchor points compare against M6.1's verdicts to validate sweep integrity.
+
+Out of scope: corpus diversity (deferred to M7), additional models (deferred to M8), prompt-length variation in the embeddings (deferred to M7 — the *prompt* side is M7's axis, the *generation* side is M6.2's axis), `max_model_len` increase above 2048 (deferred to M8 — requires KV-cache budget re-tuning and likely a smaller model or larger GPU).
+
 ### M7 — Corpus Expansion (upcoming)
 
-Re-run all three access paths against a larger, more varied prompt corpus covering short and long prompts, multi-turn conversations, and domain-specific content (code, structured data). Determine whether the M1 wire-size and latency findings hold across input diversity — do wire-size deltas change with longer prompts or multi-turn context windows, and does streaming TPOT variance increase with structurally different prompt types? M7 inherits M6's engine-cost-per-RPC baseline so prompt-length scaling effects can be interpreted against a known real-engine cost floor rather than against MockEngine assumptions.
+Re-run all three access paths against a larger, more varied prompt corpus covering short and long prompts, multi-turn conversations, and domain-specific content (code, structured data). Determine whether the M1 wire-size and latency findings hold across input diversity — do wire-size deltas change with longer prompts or multi-turn context windows, and does streaming TPOT variance increase with structurally different prompt types? M7 inherits M6's engine-cost-per-RPC baseline AND M6.2's per-`max_tokens` latency-budget tables so prompt-length scaling effects can be interpreted against a known real-engine cost floor and a known generation-length cost curve — rather than against MockEngine assumptions or a single fixed `max_tokens` point.
 
 ### M8 — Model Expansion (upcoming)
 
