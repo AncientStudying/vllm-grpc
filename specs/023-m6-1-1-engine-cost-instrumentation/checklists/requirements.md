@@ -66,8 +66,22 @@ Four clarifications recorded; sections touched: Clarifications (round 2 subsecti
 - Updated Key Entities → Phase 2(a) Verification Run to reflect the embed baseline (FR-015c) and regression check (FR-015b).
 - Normalized FR-015a / FR-015c wording so the JSON key is *always* present with the sentinel-object shape under non-Phase-2(a) outcomes (round-2 Q1 / Q2 strict-superset rule).
 
+## Clarify Round 3 Resolutions (Session 2026-05-16)
+
+Two clarifications recorded; sections touched: Clarifications (round 3 subsection), FR-016 (Phase 2(b) finalisation workflow), FR-021 (`phase_1_runs[]` full-record schema), FR-025 (CLI branching semantics), SC-002 (per-run vs total wall-clock budget), Edge Cases (perturbation budget stale-text fix).
+
+| # | Topic | Resolution |
+|---|---|---|
+| Q1 | Phase 1 run-data preservation across re-runs | Single M6.1.1 report file; each `--m6_1_1-diagnose` appends a *full* record (multi_point_timings + per-segment deltas + perturbation audit + classifications) to `phase_1_runs[]`; top-level fields reflect the most recent run |
+| Q2 | `phase_2_pending` → terminal state transition | `--m6_1_1` branches internally on Phase 1 classification: under `instrumentation_artifact` runs Phase 2(a) sweep; under `channel_dependent_batching` validates `contracts/instrumentation.md` heading and flips to `phase_2b_documented` (no Modal sweep); under any other state refuses with exit `1` |
+
+### Housekeeping (silent fixes alongside round 3)
+
+- Edge Cases perturbation-budget line updated from "soft warning, weight cautiously" to "exit code `4` hard gate" per round-2 Q3.
+- SC-002 disambiguated as "<45 min per `--m6_1_1-diagnose` invocation" (with <90 min total across both runs under fallback paths).
+
 ## Notes
 
-- All checklist items pass after rounds 1 and 2.
-- Per project memory `feedback_thorough_clarify_cycles`, the user may invoke a third clarify round before `/speckit-plan` — if so, do a fresh honest scan focused on the round-2 additions (sentinel-object schema, `split_required` workflow, embed baseline parallel to chat_stream).
-- If the user proceeds directly to `/speckit-plan`, the spec is ready: 5 exit codes are deterministic (`1` missing baseline, `2` torch mismatch, `3` re-run needed, `4` perturbation budget exceeded, `5` milestone split required); 4 deterministic classifier outcomes; explicit sentinel-object schema for downstream M6.2 dispatch.
+- All checklist items pass after rounds 1, 2, and 3.
+- Spec contract is now tight: 5 deterministic exit codes (`1` missing baseline / contracts heading, `2` torch mismatch, `3` re-run needed, `4` perturbation budget exceeded, `5` milestone split required); 4 deterministic Phase 1 classifications; 5 terminal `phase_2_path` values; uniform CLI (`--m6_1_1-diagnose` + `--m6_1_1`) across both Phase 2 paths; explicit sentinel-object schema for downstream M6.2 dispatch.
+- Per project memory `feedback_thorough_clarify_cycles`, the user may invoke another clarify round. If they proceed to `/speckit-plan` directly, the spec is ready.
