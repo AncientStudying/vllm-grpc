@@ -80,8 +80,21 @@ Two clarifications recorded; sections touched: Clarifications (round 3 subsectio
 - Edge Cases perturbation-budget line updated from "soft warning, weight cautiously" to "exit code `4` hard gate" per round-2 Q3.
 - SC-002 disambiguated as "<45 min per `--m6_1_1-diagnose` invocation" (with <90 min total across both runs under fallback paths).
 
+## /speckit-analyze Resolutions (Session 2026-05-16, post-tasks)
+
+Four findings resolved in a single follow-up commit; spec/plan/tasks edits applied.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| I1 (gRPC servicer file path) | HIGH | T017 narrowed to REST FastAPI handler (`scripts/python/modal_bench_rest_grpc_server.py`); T018 redirected to gRPC `ChatServicer` at `packages/frontend/src/vllm_grpc_frontend/chat.py:77-84`; new T018a added for `CompletionsServicer` embed RPC paths at `packages/frontend/src/vllm_grpc_frontend/completions.py:99,161-170`. plan.md Project Structure updated to flip `completions.py` from "POSSIBLY MODIFY" to "MODIFY" and add `chat.py` as a modified file. |
+| I2 (Phase 2(a) symmetrisation visibility) | MEDIUM | New T028a placeholder task added in Phase 4 documenting the three symmetrisation options (A: move REST forward; B: move gRPC backward; C: align BOTH on canonical pre-engine point) per `contracts/instrumentation.md`. Task explicitly says "no pre-committed implementation per round-1 Q3 diagnose-first discipline" to avoid TDD confusion. |
+| C1 (SC-002 wall-clock validation) | MEDIUM | New T038a in Phase 6 Polish added; reads `phase_1_runs[].wall_clock_s` + `phase_2_outcome.wall_clock_s` from published JSON and asserts SC-002 (<45 min per run; <90 min two-run total) + SC-007 (<75 min Phase 2(a)). If any budget exceeded, PR halts and either harness is retuned or SC amended with measured ceiling. |
+| A1 (FR-021 enum note clarity) | LOW | Reworded to distinguish "Phase 1 cell-level classification" (`inconclusive`) from "Phase 1 cross-cell divergence pattern" (`mixed_per_cell`); explicitly states neither is written to `phase_2_path` directly; both collapse to `split_required` after second-run confirmation. |
+
+Total: 3 files touched (spec.md, plan.md, tasks.md); 44 tasks now (was 41 — added T018a, T028a, T038a); 37 FRs preserved.
+
 ## Notes
 
-- All checklist items pass after rounds 1, 2, and 3.
+- All checklist items pass after rounds 1, 2, 3, and /speckit-analyze resolutions.
 - Spec contract is now tight: 5 deterministic exit codes (`1` missing baseline / contracts heading, `2` torch mismatch, `3` re-run needed, `4` perturbation budget exceeded, `5` milestone split required); 4 deterministic Phase 1 classifications; 5 terminal `phase_2_path` values; uniform CLI (`--m6_1_1-diagnose` + `--m6_1_1`) across both Phase 2 paths; explicit sentinel-object schema for downstream M6.2 dispatch.
 - Per project memory `feedback_thorough_clarify_cycles`, the user may invoke another clarify round. If they proceed to `/speckit-plan` directly, the spec is ready.

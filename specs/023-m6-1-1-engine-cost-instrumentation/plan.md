@@ -139,14 +139,19 @@ tools/benchmark/
 └── pyproject.toml              # UNCHANGED — M6.1 already added `torch==2.11.0`; M6.1.1 reuses the existing pin (FR-003 same validator).
 
 scripts/python/
-└── modal_bench_rest_grpc_server.py  # MODIFY (the largest server-side change in M6.1.1):
-                                #   • REST chat_stream handler: capture 4 `perf_counter_ns()` checkpoints; emit them as a `m6_1_1_timings` sub-object on the terminal SSE event JSON (FR-007).
-                                #   • gRPC chat_stream servicer: capture 4 `perf_counter_ns()` checkpoints; emit them as trailing-metadata keys prefixed `m6_1_1_t_` (FR-008).
-                                #   • Existing M6 engine_cost fields (`engine_ttft_ms`, `engine_tpot_ms`) preserved exactly in both shapes.
-                                #   • Under Phase 2(a) symmetrisation (operator-applied AFTER Phase 1): the specific bracketing change is data-driven and identified by Phase 1's per-segment data — see contracts/instrumentation.md "Symmetrisation Shape" section. No pre-committed code change shipped from /speckit-plan.
+└── modal_bench_rest_grpc_server.py  # MODIFY — REST FastAPI chat_stream handler instrumentation:
+                                #   • Capture 4 `perf_counter_ns()` checkpoints; emit them as a `m6_1_1_timings` sub-object on the terminal SSE event JSON (FR-007).
+                                #   • Existing M6 engine_cost fields (`engine_ttft_ms`, `engine_tpot_ms`) preserved exactly.
+                                #   • REST handler is the FastAPI route on this file; gRPC servicer instrumentation lives in the frontend package (see below) — not here.
 
 packages/frontend/src/vllm_grpc_frontend/
-├── completions.py              # POSSIBLY MODIFY — only if Phase 2(a) `instrumentation_artifact` symmetrisation requires moving the gRPC bracketing point. M6.1.1's spec is silent on whether the bracket change lands in the modal server entrypoint vs the frontend completions servicer — Phase 1's data identifies the exact location.
+├── chat.py                     # MODIFY — gRPC `ChatServicer.chat_stream` instrumentation (around the existing `engine_ttft_ms` capture at `chat.py:77-84`):
+                                #   • Capture 4 `perf_counter_ns()` checkpoints; emit them as trailing-metadata keys prefixed `m6_1_1_t_` (FR-008).
+                                #   • Existing M6 trailing-metadata keys (`engine-ttft-ms`, `engine-tpot-ms`) preserved exactly.
+├── completions.py              # MODIFY — gRPC `CompletionsServicer` embed RPC paths (around the existing captures at `completions.py:99` + `completions.py:161-170`):
+                                #   • Capture the same 4 `perf_counter_ns()` checkpoints + `perturbation_audit_ns` (FR-011 audit-only control; same wire-format emission shape as chat_stream).
+                                #   • Existing M6 trailing-metadata keys (`engine-forward-ms`, `engine-ttft-ms`) preserved exactly.
+                                #   • POSSIBLY ADDITIONALLY MODIFIED under Phase 2(a) `instrumentation_artifact` symmetrisation if Phase 1's data identifies the gRPC bracket as the misaligned one (operator-applied AFTER Phase 1; specific edit per `contracts/instrumentation.md` § "Phase 2(a) symmetrisation shape").
 └── main.py                     # UNCHANGED — engine config identical to M6.1.
 
 docs/benchmarks/
