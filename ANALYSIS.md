@@ -154,7 +154,7 @@ Re-ran the M4 four-axis channel sweep with the gRPC server deployed on Modal eu-
 
 **Caveats — kept prominent in the report:**
 
-- **MockEngine, not real vLLM.** Engine cost held constant across cohorts so the verdict reflects transport + framing only. Real-engine re-validation deferred to M6 (narrow focused scope, single model at h=4096); full multi-model expansion deferred to M8.
+- **MockEngine, not real vLLM.** Engine cost held constant across cohorts so the verdict reflects transport + framing only. Real-engine re-validation delivered as **M6** below (single model at h=4096); full multi-model expansion remains deferred to M8.
 - **Both protocols travel Modal's plain-TCP tunnel.** The original FR-019 "REST uses Modal-managed TLS" assumption was voided after a smoke run measured a ~2× RTT gap between Modal's HTTPS edge and plain-TCP that would have dominated every verdict. M5.1 does **not** measure REST against the production-realistic HTTPS edge — **M5.2 closes that gap** by adding the HTTPS-edge transport as a separate cohort.
 - Bytes-axis findings from M1 (89% chat response reduction, 25% embed request reduction) remain in force unchanged (FR-021) — M5.1 measures time only.
 
@@ -189,6 +189,39 @@ Five-cohort head-to-head on the same 18-cell (path × hidden_size × concurrency
 - **M5.2 does not supersede M5.1 in general.** It measures a different deployment topology — the production-equivalent managed-edge baseline — that M5.1 deliberately controlled out. Verdict-changed cells in the Supersedes-M5.1 table are **topology-dependent**, not regressions of M5.1's measurement. The audience for M5.2 is the managed-provider tenant; the audience for M5.1 is the same-fabric operator. See [Topology guide](#topology-guide--which-milestone-result-applies-to-your-deployment).
 - **M1 bytes-axis preserved.** Topology-immune encoding wins from M1 still apply (89% chat response reduction, 25% embed request reduction).
 - **M5 transport-axis preserved.** M5.2 reuses M5's frozen-tuned channel composition unchanged per FR-007; the M5 axis-level recommendations are not re-litigated.
+- **M6 contextualises M5.2 along the engine-cost axis.** M6 re-runs the 6-cell subset at h=4096 (c=1/4/8 × embed/chat_stream) against a real vLLM AsyncLLM. Four of the six M5.2 verdicts flip direction (REST→gRPC) once real engine cost is loaded — the topology framing still applies, but the protocol verdict at c≥4 is not engine-invariant for this model. See § M6 below.
+
+---
+
+## M6 — Real-Engine Mini-Validation
+
+**Status**: delivered 2026-05-15
+**Report**: [`docs/benchmarks/m6-real-engine-mini-validation.md`](docs/benchmarks/m6-real-engine-mini-validation.md)
+
+Closes the MockEngine caveat that M5.1 and M5.2 both deferred. M6 re-runs a focused 6-cell × 3-cohort subset of the M5.2 matrix against a real `vllm.AsyncLLM(Qwen/Qwen3-8B, dtype=fp16, max_model_len=2048, gpu_memory_utilization=0.92)` engine on Modal A10G eu-west-1. Hidden_size=4096 fixed by Qwen3-8B's architecture; paths × concurrencies = {embed, chat_stream} × {c=1, c=4, c=8}. Cohorts: `rest_https_edge`, `default_grpc`, `tuned_grpc_multiplexed`. n=100 measurement RPCs per (cell × cohort) plus 10 warmup; cohorts run round-robin per c-batch to control for engine/network drift (FR-022). Per-RPC engine cost recorded via gRPC trailing metadata and REST JSON top-level fields (`engine_forward_ms` for embed, `engine_ttft_ms`/`engine_tpot_ms` for chat_stream).
+
+**Headline finding(s)**:
+
+- **4 of 6 cells overturned M5.2 under real engine.** Every `verdict_changed` cell — `embed/c=4`, `embed/c=8`, `chat_stream/c=4`, `chat_stream/c=8` — flips from `rest_wins` (M5.2) to `grpc_wins` (M6). M5.2's "REST wins at c≥4" headline does **not** hold under real-engine cost for this model.
+- **`embed/c=1` verdict survives.** M6 cohort-pair CIs non-overlapping; rest_https_edge=519.73 ms vs default_grpc=489.02 ms / tuned_grpc_multiplexed=495.69 ms. Direction matches M5.2's gRPC win.
+- **`chat_stream/c=1` buried by engine.** M5.2 winner delta was 0.96 ms (gRPC); M6 engine TTFT is ~46.6 ms cohort-mean. Engine cost ≥ 5× |M5.2 winner delta| classifies as `verdict_buried_by_engine` per FR-014 — no protocol verdict can be drawn at this scale for this model.
+- **Engine-cost drift flag set on all 3 chat_stream cells.** Per-cohort `engine_ttft_ms` varies 7–14% between cohorts (e.g. chat_stream/c=4: rest=45.10, default=48.72, tuned=43.05). Verdict still computed per FR-014; per-cohort engine_cost values surfaced in the report. Embed paths show no drift (per-cohort variation <1%).
+- **`tuned_grpc_multiplexed` matches or beats `default_grpc` on every cell under real engine.** M5.1's "M5 tuning provides no measurable benefit over M1-default on this path" finding holds — the tuned config is never worse, but the win it claims over default-gRPC is within CI on this subset. RTT shim overhead median below the 5 ms materiality threshold.
+
+**Caveats — kept prominent:**
+
+- **The `embed` cohort under M6 does NOT exercise real prompt-embeddings inference.** The frontend hashes opaque prompt_embeds bytes to a text digest (preserving M5.x behaviour) because the bytes the bench client emits are raw float32 arrays rather than `torch.save`-encoded tensors with the ZIP magic prefix. M6's "embed" path therefore measures text-prompt unary completion through the embeddings endpoint, not real `enable_prompt_embeds=True` inference. **M6.1 will close this specific gap** — see Phase Roadmap in [`docs/PLAN.md`](docs/PLAN.md) and [`README.md`](README.md).
+- **Single model, hidden_size=4096 fixed.** Qwen/Qwen3-8B chosen for fp16 VRAM fit on A10G after the `max_model_len=2048` cap. Multi-model expansion (other model families, larger hidden_size, larger VRAM classes) remains deferred to M8.
+- **`max_model_len=2048` is a KV-cache fit cap, not a workload limit.** The model's natural context window is 40,960 tokens. M6's worst-case RPC length is ≤100 tokens (prompt + max_tokens=50), so the cap is 20× the actual sequence demand and does not affect measured engine cost.
+- **`engine_version` recorded as `unknown` for this run.** The helper that reads it from `pyproject.toml` landed after the sweep (commit `e385881`); future M6 reruns will record the pinned vLLM version automatically.
+- **Bytes axis from M1 preserved unchanged** (FR-020). Encoding is structural, not engine-dependent.
+
+**Cross-milestone notes**:
+
+- **M5.1 and M5.2 verdicts at chat_stream/c=1 should be treated as `unverified by M6`.** The M5.2 winner delta there (~1 ms) is below real-engine TTFT cost (~46 ms) — neither M5.1 nor M5.2 can be confirmed or refuted there from M6's data alone.
+- **The topology framing for M5.1/M5.2 still applies.** M6 is a vertical correction along the engine-cost axis, not a topology change — same-fabric vs managed-edge reads remain valid lenses; M6 says that for this model at h=4096, gRPC wins both the c=1 case (where M5.2 already had it) and the c≥4 cases (where M5.2 had REST winning under MockEngine).
+- **M5 channel tuning conclusion holds.** Tuned-gRPC never worse than default-gRPC on real engine for this subset.
+- **MockEngine caveat from M5.1/M5.2 reports is partially closed by M6.** Real-engine cost on Qwen3-8B at h=4096 is now measured; multi-model and real-prompt-embeddings dimensions remain open (M6.1, M8).
 
 ---
 
@@ -208,4 +241,6 @@ The M5.1 and M5.2 findings are not redundant and neither supersedes the other. T
 **Two practical reads of the same matrix:**
 
 - The same-fabric reader looks at M5.1: gRPC wins embed broadly; REST wins chat_stream at c≥4. M5's channel tuning is in the noise on this path. (Pick gRPC for embed-heavy workloads; pick REST for chat_stream above c=1.)
-- The managed-edge reader looks at M5.2: gRPC still wins embed at c=1 (and decisively as hidden_size grows); the HTTPS-edge REST baseline wins everything at c=4 / c=8. (Pick gRPC if you serve embeddings at low concurrency; otherwise the HTTPS-edge REST baseline is the operationally simpler choice.)
+- The managed-edge reader looks at M5.2: gRPC still wins embed at c=1 (and decisively as hidden_size grows); the HTTPS-edge REST baseline wins everything at c=4 / c=8 **under MockEngine**. **M6 corrects this read under real engine cost** — for Qwen3-8B at h=4096 on A10G, gRPC reclaims all four c≥4 cells M5.2 awarded to REST. Managed-edge tenants serving real models at this scale should tilt back toward gRPC; the operational-simplicity argument for HTTPS-edge REST stands but is no longer backed by a real-engine latency win on this model.
+
+**Engine-cost axis (added by M6):** the M5.1 / M5.2 verdicts reflect protocol cost with engine cost held neutral. M6 establishes that real-engine cost reshapes the protocol verdict at c≥4 for one (model, hidden_size) point; readers serving a different model family or hidden_size should treat M5.1 / M5.2 verdicts at c≥4 as a transport-only ranking and consult M6's per-cohort engine_cost numbers in `docs/benchmarks/m6-real-engine-mini-validation.md` before generalising.
