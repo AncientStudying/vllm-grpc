@@ -96,7 +96,7 @@ M5.1 surfaced two questions it could not answer with n=100 and a single (plain-T
 
 Out of scope: real vLLM (narrow focused validation deferred to M6; full multi-model expansion deferred to M8), corpus diversity (deferred to M7), additional gRPC channel-config axes beyond what M5 already winnowed, HTTPS-edge transport for gRPC (Modal's edge does not natively expose HTTP/2 plaintext + gRPC, so plain-TCP remains the only credible gRPC transport for this milestone; if Modal adds a TLS-terminated gRPC edge later, that becomes a follow-up).
 
-### M6 — Real-Engine Mini-Validation (upcoming)
+### M6 — Real-Engine Mini-Validation (delivered 2026-05-15)
 
 Run a focused, narrow re-measurement of the M5.2 transport × tuning matrix with the MockEngine replaced by real Qwen3-8B inference on Modal A10G. M5.1 and M5.2 both deferred real-engine validation, and that deferral is the loudest open caveat in both reports. M6 closes the caveat with the minimum compute commitment so M7 (corpus expansion) can be designed against the actual residual transport/protocol signal that real inference leaves behind, rather than against MockEngine assumptions.
 
