@@ -1757,6 +1757,31 @@ async def _run_m6_smoke_async(args: argparse.Namespace, baseline: dict[str, Any]
     return smoke_exit_code(result)
 
 
+def _read_pinned_vllm_version() -> str:
+    """Read the pinned vllm version from ``pyproject.toml``.
+
+    Used by M6 RunMeta when ``import vllm`` fails (operator's macOS box
+    intentionally doesn't have vllm installed — it's CUDA-only). The
+    pyproject pin is the version the Modal image actually pip-installs,
+    so it's accurate provenance for the server-side engine.
+
+    Returns ``"unknown"`` on parse failure rather than an empty string so
+    the published RunMeta carries a meaningful value.
+    """
+    import re as _re
+    from pathlib import Path as _Path
+
+    project_root = _Path(__file__).resolve().parents[4]
+    pyproject = project_root / "pyproject.toml"
+    if not pyproject.exists():
+        return "unknown"
+    text = pyproject.read_text()
+    match = _re.search(r'"vllm==([0-9][^";\s]*)', text)
+    if match is None:
+        return "unknown"
+    return match.group(1)
+
+
 async def _run_m6_full_sweep_async(args: argparse.Namespace, baseline: dict[str, Any]) -> int:
     """Execute the M6 full sweep end-to-end (T044) against live Modal.
 
@@ -1821,12 +1846,18 @@ async def _run_m6_full_sweep_async(args: argparse.Namespace, baseline: dict[str,
     except (subprocess.CalledProcessError, FileNotFoundError):
         git_sha = "unknown"
 
+    # The vllm version that runs INSIDE the Modal container — not the
+    # operator's macOS box (where vllm is intentionally not installed
+    # because it's CUDA-only). Try the local import first for the rare
+    # case where the operator runs M6 from a Linux machine with vllm
+    # installed; otherwise fall back to the pinned version from
+    # pyproject.toml (which IS the version the Modal image pip-installs).
     try:
         import vllm
 
         engine_version = getattr(vllm, "__version__", "unknown")
     except ImportError:
-        engine_version = "unknown"
+        engine_version = _read_pinned_vllm_version()
 
     run_id = args.m6_run_id or f"{started_at.strftime('%Y-%m-%dT%H:%M:%SZ')}-{git_sha[:7]}"
     meta = M6RunMeta(

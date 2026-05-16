@@ -83,10 +83,16 @@ async def test_complete_with_prompt_embeds() -> None:
     servicer = CompletionsServicer(engine)
     context = AsyncMock()
 
+    # ``CompletionsServicer._resolve_prompt_embeds_input`` skips the
+    # ``decode_embeds`` call when the bytes don't start with the
+    # ``torch.save`` ZIP magic (b"PK\x03\x04"). Prefix the test payload
+    # so the decode path is exercised; the rest of the bytes after the
+    # magic are immaterial because ``decode_embeds`` is patched to
+    # return ``fake_tensor`` regardless.
     req = completions_pb2.CompletionRequest(
         model="test",
         max_tokens=16,
-        prompt_embeds=b"fakeBytes",
+        prompt_embeds=b"PK\x03\x04fakeBytes",
     )
 
     with patch("vllm_grpc_frontend.completions.decode_embeds", return_value=fake_tensor):
@@ -94,6 +100,44 @@ async def test_complete_with_prompt_embeds() -> None:
 
     assert captured_input == [{"prompt_embeds": fake_tensor}]
     assert resp.generated_text == "embedded output"
+
+
+@pytest.mark.asyncio
+async def test_complete_with_raw_prompt_embeds_bytes_hashes_to_text() -> None:
+    """M5.x / M6 harness path: opaque raw bytes (no torch.save ZIP magic)
+    skip ``decode_embeds`` entirely and hash to a text-digest prompt. The
+    fast prefix check eliminates the warning-emitting ``torch.load``
+    attempt that would otherwise scroll thousands of lines through the
+    Modal log during a full sweep.
+    """
+    output = _make_output(text="embedded output")
+    captured_input: list[object] = []
+
+    async def _gen(inp: object, params: object, *, request_id: str):  # type: ignore[no-untyped-def]
+        captured_input.append(inp)
+        yield output
+
+    engine = MagicMock()
+    engine.generate = _gen
+    servicer = CompletionsServicer(engine)
+    context = AsyncMock()
+
+    # 64 KB of raw "float32-like" bytes — exactly the wire shape M6's
+    # harness sends. The first byte (0x84) is what triggered the
+    # "pickle protocol 132" warning before the prefix check landed.
+    raw = b"\x84" + b"\x00" * (1024 * 64)
+
+    # Patch decode_embeds so we'd notice if it accidentally got called —
+    # any invocation would short-circuit the assertion below.
+    with patch("vllm_grpc_frontend.completions.decode_embeds") as mock_decode:
+        req = completions_pb2.CompletionRequest(model="test", max_tokens=16, prompt_embeds=raw)
+        await servicer.Complete(req, context)
+
+    mock_decode.assert_not_called()
+    assert len(captured_input) == 1
+    engine_input = captured_input[0]
+    assert isinstance(engine_input, str)
+    assert engine_input.startswith("embeds:")
 
 
 @pytest.mark.asyncio

@@ -35,15 +35,28 @@ def _prompt_embeds_to_text_digest(raw_bytes: bytes) -> str:
     return f"embeds:{digest}"
 
 
+# ``torch.save`` produces a ZIP archive starting with the standard ZIP
+# magic; raw float32 bytes (M5.x / M6 harness wire format) start with a
+# random byte. Use the prefix as a cheap pre-filter so we don't invoke
+# ``torch.load`` on non-pickle bytes — that invocation emits a
+# UserWarning ("Detected pickle protocol N in the checkpoint...") that
+# scrolls thousands of lines through the Modal log during a full sweep
+# without affecting correctness. Checking the prefix first eliminates
+# the warning AND saves the cost of torch's pickle attempt.
+_TORCH_SAVE_MAGIC: bytes = b"PK\x03\x04"
+
+
 def _resolve_prompt_embeds_input(raw_bytes: bytes) -> Any:
     """Return the engine input for a ``prompt_embeds`` request.
 
-    Tries :func:`decode_embeds` first (real prompt-embeddings path);
-    falls back to a text digest if the bytes aren't a torch.save pickle
-    (M6 / M5.x harness path — opaque bytes used as a payload-size knob
-    for transport-cost measurement, with engine work matching the REST
-    cohort's text-prompt path).
+    Tries :func:`decode_embeds` first (real prompt-embeddings path) ONLY
+    when the bytes start with the ``torch.save`` ZIP magic; otherwise
+    skips straight to a text digest (M6 / M5.x harness path — opaque
+    bytes used as a payload-size knob for transport-cost measurement,
+    with engine work matching the REST cohort's text-prompt path).
     """
+    if raw_bytes[:4] != _TORCH_SAVE_MAGIC:
+        return _prompt_embeds_to_text_digest(raw_bytes)
     try:
         tensor = decode_embeds(raw_bytes)
     except ValueError:
