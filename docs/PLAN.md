@@ -13,9 +13,9 @@ When working with Claude Code on this project, point it at this file plus the ac
 
 ---
 
-## Milestone Roadmap (canonical, M1–M8, with M6.1 / M6.1.1 / M6.2 follow-ups)
+## Milestone Roadmap (canonical, M1–M8, with M6.1 / M6.1.1 / M6.0a / M6.2 follow-ups)
 
-This section mirrors the milestone framing in [`README.md`](../README.md). M1 through M5.2 are delivered; M6 through M8 are upcoming research directions. As of Draft v7, the focused real-engine mini-validation (formerly a single line in M5.1/M5.2 caveats as "deferred to M7") is promoted to a canonical M6 milestone; what was previously M6 (Corpus Expansion) becomes M7 and what was previously M7 (Model Expansion) becomes M8. M6 has three narrow follow-ups: **M6.1** (real-prompt-embeds engine path — exactly one variable change vs M6), **M6.1.1** (engine-cost instrumentation diagnosis + symmetrisation — closes a measurement gap M6.1 surfaced before M6.2 builds on top), and **M6.2** (token-budget characterization — `max_tokens` axis across the realistic-generation regime). The Phase 1–7 plan below this section is preserved as completed-work history (see the boundary heading further down) — it captures decisions and trade-offs that still inform future work, but the milestones above are the canonical forward view.
+This section mirrors the milestone framing in [`README.md`](../README.md). M1 through M5.2 are delivered; M6 through M8 are upcoming research directions. As of Draft v7, the focused real-engine mini-validation (formerly a single line in M5.1/M5.2 caveats as "deferred to M7") is promoted to a canonical M6 milestone; what was previously M6 (Corpus Expansion) becomes M7 and what was previously M7 (Model Expansion) becomes M8. M6 has four narrow follow-ups: **M6.1** (real-prompt-embeds engine path — exactly one variable change vs M6), **M6.1.1** (engine-cost instrumentation diagnosis + symmetrisation — closes a measurement gap M6.1 surfaced before M6.2 builds on top), **M6.0a** (concurrent-dispatch restoration — corrective methodology fix discovered during M6.1.1's first live run; blocks M6.1.1's Phase 2 closure), and **M6.2** (token-budget characterization — `max_tokens` axis across the realistic-generation regime). The Phase 1–7 plan below this section is preserved as completed-work history (see the boundary heading further down) — it captures decisions and trade-offs that still inform future work, but the milestones above are the canonical forward view.
 
 ### M1 — Foundation (delivered)
 
@@ -184,6 +184,47 @@ Drive with `python -m vllm_grpc_bench --m6_1_1-diagnose --m6_1_1-modal-region=eu
 **Speckit cycle.** Run `/speckit-specify` → `/speckit-clarify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement` against this section after M6.1 publishes. M6.1's published JSON is M6.1.1's input data (the multi-point sweep compares against M6.1's per-cohort engine_ttft means and CIs).
 
 Out of scope: token-budget axis (deferred to M6.2 — Phase Discipline), real engine path changes (M6.1's prompt-embeds path is unchanged; M6.1.1 only adds instrumentation), corpus diversity (M7), multi-model (M8), changes to how `engine_forward_ms` (embed) is measured (the drift warning fired on chat_stream only; embed cells are unaffected and out of scope for this milestone).
+
+### M6.0a — Concurrent Dispatch Restoration (planned, blocks M6.1.1 closure)
+
+Methodology correction surfaced during M6.1.1's first live Phase 1 run (2026-05-16). The M6 harness silently dropped `asyncio.gather`-based concurrent dispatch when it inherited the M5.x cell-cohort matrix. M5.1 / M5.2's REST + gRPC cohort runners spawn `c` concurrent worker coroutines per cell (`asyncio.gather(*(_channel_worker(i) for i in range(concurrency)))` — see `m5_1_grpc_cohort.py:387` and `rest_cohort.py:484`); M6 / M6.1 / M6.1.1 replaced this with sequential `for idx in batch_indices: await driver(...)` loops in `m6_sweep._run_measurement_m6` (and inheritors). The cell's `concurrency` field became a metadata tag controlling round-robin batch indexing, not actual in-flight parallelism.
+
+**Why this matters.** M6.1.1's primary classifier (FR-010 magnitude-equivalence across `seg_ab` / `seg_bc` / `seg_cd`) presupposes that `channel_dependent_batching` is mechanistically possible — i.e., that the engine sees multiple in-flight requests from different cohorts and its continuous-batching scheduler exhibits per-cohort variation. Under sequential dispatch, the engine sees exactly one request at a time, fresh KV cache per RPC, and any per-cohort `seg_bc` spread can only come from chronological state drift (which is real but mislabelled by the classifier as "channel-dependent batching"). The first M6.1.1 live run (2026-05-16) returned mixed `channel_dependent_batching` + `drift_not_reproduced` classifications under sequential dispatch — interpretable as state-drift artifacts rather than a real channel-dependency signal. M6.1.1 cannot publish a trustworthy verdict without correcting this.
+
+**What's invalidated vs robust.** Most M6 / M6.1 conclusions survive the dispatch-mode bug because they don't lean on the concurrency axis:
+
+| Finding | Dispatch-mode sensitivity |
+|---|---|
+| M6 main: "engine cost dominates protocol cost at realistic workloads" | **Robust** — the ~50 ms engine TTFT vs ~5 ms protocol overhead conclusion holds regardless of dispatch mode |
+| M6.1 main: "real-prompt-embeds engine path equivalent to text-prompt path" | **Robust** — about engine-path equivalence, not concurrency |
+| M6 / M6.1 per-cohort `engine_ttft_ms` drift (chat_stream cells) | **Sensitive** — sequential dispatch artificially isolates cohorts; no batching cross-pollination across cohorts |
+| M6.1.1 Phase 1 classifications | **Critically sensitive** — `channel_dependent_batching` label presupposes batched concurrent requests; under sequential dispatch it can fire on chronological state drift |
+
+So M6 and M6.1's main verdict tables stand. The 14-17% per-cohort drift M6.1 reported (and that M6.1.1 was created to investigate) is the data point most likely to change under corrected dispatch.
+
+**Approach.** Single narrow code fix to the M6 harness, no Modal compute:
+
+1. Restore `asyncio.gather`-based concurrent dispatch in `m6_sweep._run_measurement_m6` (and have M6.1 / M6.1.1 inherit unchanged). The pattern is already in `m5_1_grpc_cohort.run_grpc_cohort` and `rest_cohort.run_rest_cohort` — port the `_channel_worker` / queue-drain pattern to M6's measurement loop.
+2. Preserve M6's existing round-robin per-c-batch sequencing for index allocation (don't disturb `compute_rpc_seed` determinism); only the *dispatch* step within a batch changes from `for idx in batch: await ...` to `await asyncio.gather(*(driver_for(idx) for idx in batch))`.
+3. Add regression tests asserting that at c=4 / c=8 cells, the bench client has the expected in-flight RPC count (e.g., via a `Semaphore`-wrapping fake driver that counts concurrent enters).
+4. Update the `concurrency` field's documented semantics in `m6_types.py` / `m6_1_types.py` to confirm it now controls real in-flight parallelism (reverting it from "metadata-only" back to its M5.x semantics).
+
+**Then re-run M6.1.1's Phase 1** (`--m6_1_1-diagnose`) under corrected dispatch. This single re-run directly answers the central M6.1.1 question:
+
+- If chat_stream per-cohort `engine_ttft_ms` spread drops below 5% → M6.1's reported drift was a sequential-dispatch state-drift artifact (not a channel-dependent engine effect). M6.1's published per-cohort numbers would need a methodology-supersedence annotation pointing at M6.0a as the corrective baseline. **Phase 2(a) (symmetrisation code change) is not needed.**
+- If the spread stays ≥10% under concurrent dispatch → M6.1's drift was real channel-dependent behaviour. **Phase 2(a) or 2(b) applies** per the M6.1.1 contract.
+
+**Output shape.** No published benchmark artifact — this is a harness correction. Deliverable is:
+
+1. Code: `m6_sweep._run_measurement_m6` restored to concurrent dispatch + `Semaphore`-counting test fixture.
+2. Documentation: short `docs/benchmarks/m6_0a-dispatch-correction.md` documenting the bug, the fix, and the before/after of M6.1.1's chat_stream per-cohort spread. Saves the sequential-dispatch M6.1.1 run as the "before" data set; the corrected run as "after."
+3. PR comments on M6.1.1's PR #27 cross-linked: this fix is a precondition to closing M6.1.1.
+
+Drive: `git pull` (after M6.0a code change lands) then re-run `python -m vllm_grpc_bench --m6_1_1-diagnose --m6_1_1-modal-region=eu-west-1`. Total Modal compute: ~$0.50 (one ~30 min Phase 1 sweep). No new sweep needed for M6 / M6.1 themselves — their main conclusions are dispatch-robust.
+
+**Speckit cycle.** Run `/speckit-specify` → `/speckit-clarify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement` against this section. M6.1.1's PR #27 stays open during this fix; M6.1.1's Phase 2 dispatch happens after M6.0a's re-run produces a real classification.
+
+Out of scope: re-running M6 (its main verdict is dispatch-robust), re-running M6.1's full verdict-supersedes table (also dispatch-robust; the per-cohort drift sub-finding may be annotated with a methodology-supersedence note after M6.0a but the verdict table itself stands), real engine code changes (M6.0a is harness-only), corpus diversity (M7), multi-model (M8).
 
 ### M6.2 — Token-Budget Characterization (planned)
 
