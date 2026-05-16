@@ -441,6 +441,7 @@ def test_orchestrator_append_on_re_read_accumulates_runs(tmp_path: Path) -> None
                 "drift_not_reproduced", "drift_not_reproduced", "drift_not_reproduced"
             ),
             write_report=write_report,
+            supersedence_hook=lambda **_: None,
         )
     )
     assert rc1 == 3  # single-run drift_not_reproduced needs a confirming re-run.
@@ -454,6 +455,7 @@ def test_orchestrator_append_on_re_read_accumulates_runs(tmp_path: Path) -> None
                 "drift_not_reproduced", "drift_not_reproduced", "drift_not_reproduced"
             ),
             write_report=write_report,
+            supersedence_hook=lambda **_: None,
         )
     )
     assert rc2 == 0

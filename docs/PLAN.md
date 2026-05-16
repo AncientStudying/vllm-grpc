@@ -160,7 +160,7 @@ Re-run M6's narrow 6-cell × 3-cohort slice with the embed cohort wired to vLLM'
 
 Out of scope: prompt-length variation in the embeddings (deferred to M7), additional models (deferred to M8), real-engine re-validation of M3/M4 channel-tuning under the embeddings path (defer until M6.1 produces a verdict — if M6.1 says `verdict_buried_by_engine` everywhere, channel-tuning re-validation is moot).
 
-### M6.1.1 — Engine-Cost Instrumentation Diagnosis & Symmetrisation (planned, post-M6.1)
+### M6.1.1 — Engine-Cost Instrumentation Diagnosis & Symmetrisation (code landed 2026-05-16; awaiting Modal end-to-end run)
 
 Close a measurement gap M6.1's data surfaced before M6.2's token-budget axis builds on top. M6.1 fired `engine_cost_drift_warning` on **all 3 chat_stream cells** with a consistent ~14-17% per-cohort spread on `engine_ttft_ms` (rest_https_edge ~43.5 ms / default_grpc ~47.5 ms / tuned_grpc_multiplexed ~41.5 ms; see [§ M6.1 in ANALYSIS.md](../ANALYSIS.md#m61--real-prompt-embeds-engine-path)). The engine itself shouldn't see different first-token latencies based on which channel served the request, so the gap is most likely **measurement-window asymmetry**: REST's `engine_ttft_ms` is captured inside the FastAPI shim (`engine_start = perf_counter()` → first SSE chunk) while gRPC's is read from server-side trailing metadata. The two clocks may straddle slightly different windows. But there is a competing real-world hypothesis: **vLLM's continuous batching may see REST and gRPC arrival patterns differently** (HTTPS edge buffers requests with different jitter than raw TCP, so the engine batches them differently), making the gap a real channel-dependent batching effect rather than a measurement artifact. M6.1.1 distinguishes the two and acts accordingly.
 
@@ -185,7 +185,7 @@ Drive with `python -m vllm_grpc_bench --m6_1_1-diagnose --m6_1_1-modal-region=eu
 
 Out of scope: token-budget axis (deferred to M6.2 — Phase Discipline), real engine path changes (M6.1's prompt-embeds path is unchanged; M6.1.1 only adds instrumentation), corpus diversity (M7), multi-model (M8), changes to how `engine_forward_ms` (embed) is measured (the drift warning fired on chat_stream only; embed cells are unaffected and out of scope for this milestone).
 
-### M6.2 — Token-Budget Characterization (planned, post-M6.1.1)
+### M6.2 — Token-Budget Characterization (planned)
 
 Re-run M6.1's narrow 6-cell × 3-cohort slice with **`max_tokens` lifted from a fixed cap to a 6-point measurement axis** (`10 / 50 / 256 / 512 / 1024 / 2048`) so the published latency budget covers the realistic production response-length regime, not just M5.x / M6 / M6.1's protocol-isolation regime. Same hardware (Modal A10G eu-west-1), same model (Qwen3-8B fp16, real prompt-embeds engine path from M6.1), same `max_model_len=2048` ceiling — `max_tokens` is the *only* variable that moves vs M6.1.1.
 

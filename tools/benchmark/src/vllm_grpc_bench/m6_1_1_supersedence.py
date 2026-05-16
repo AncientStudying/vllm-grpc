@@ -170,7 +170,85 @@ def write_per_row_supersedence_notes(
     p.write_text("".join(new_lines), encoding="utf-8")
 
 
+def apply_supersedence(
+    *,
+    phase_2_path: str,
+    summary: str,
+    m6_1_1_md_path: str,
+    m6_1_md_path: str | Path,
+    m6_1_json_path: str | Path,
+    date_yyyy_mm_dd: str,
+    affected_rows: list[tuple[str, str]] | None = None,
+    delta_pct_per_row: dict[tuple[str, str], float] | None = None,
+) -> None:
+    """Apply the M6.1 supersedence annotations at an M6.1.1 close (FR-023 / FR-024).
+
+    Called by the Phase 1 diagnose orchestrator at the
+    ``drift_not_reproduced_confirmed`` close and by the Phase 2 orchestrator
+    at the ``phase_2a_verified`` and ``phase_2b_documented`` closes.
+
+    Under ``split_required`` (round-2 Q4) this is a no-op — M6.1's files
+    are NOT modified; the annotation is deferred to the successor
+    sub-milestones (M6.1.1a / M6.1.1b) per the spec.
+
+    Under ``embed_regression_acknowledged == True`` with non-empty
+    ``affected_rows``, additionally appends per-row supersedence notes to
+    M6.1's ``supersedes_m6_under_enable_prompt_embeds`` table (FR-015c).
+    """
+    if phase_2_path == "split_required":
+        return
+    if phase_2_path == "phase_2_pending":
+        # Phase 1 hasn't terminated yet; nothing to annotate.
+        return
+    write_methodology_supersedence_json(
+        m6_1_path=m6_1_json_path,
+        m6_1_1_report_path=m6_1_1_md_path,
+        phase_2_path=phase_2_path,
+        summary=summary,
+    )
+    write_methodology_supersedence_markdown(
+        m6_1_md_path=m6_1_md_path,
+        m6_1_1_md_path=m6_1_1_md_path,
+        date_yyyy_mm_dd=date_yyyy_mm_dd,
+    )
+    if affected_rows:
+        anchor = f"{m6_1_1_md_path}#embed_baseline_post_symmetrisation"
+        write_per_row_supersedence_notes(
+            m6_1_md_path=m6_1_md_path,
+            affected_rows=affected_rows,
+            m6_1_1_baseline_section_anchor=anchor,
+            delta_pct_per_row=delta_pct_per_row,
+        )
+
+
+def default_summary_for(phase_2_path: str) -> str:
+    """Canonical one-line summary text written to M6.1's JSON annotation."""
+    summaries = {
+        "phase_2a_verified": (
+            "Engine_cost_drift_warning on chat_stream cells was attributed to "
+            "measurement-window asymmetry (instrumentation_artifact); Phase 2(a) "
+            "symmetrisation cleared the drift. Fresh chat_stream + embed "
+            "baselines published in M6.1.1."
+        ),
+        "phase_2b_documented": (
+            "Engine_cost_drift_warning on chat_stream cells was attributed to "
+            "channel-dependent batching (channel_dependent_batching); documented "
+            "in `contracts/instrumentation.md` § 'M6.1.1: Channel-Dependent "
+            "Batching Effect'. M6.1's per-cohort numbers preserved as published."
+        ),
+        "drift_not_reproduced_confirmed": (
+            "Engine_cost_drift_warning on chat_stream cells was not reproduced "
+            "in two independent n=50 Phase 1 mini-sweeps. M6.1's "
+            "engine_cost_drift_warning preserved as published; "
+            "methodology_supersedence records the non-reproduction."
+        ),
+    }
+    return summaries.get(phase_2_path, "")
+
+
 __all__ = [
+    "apply_supersedence",
+    "default_summary_for",
     "write_methodology_supersedence_json",
     "write_methodology_supersedence_markdown",
     "write_per_row_supersedence_notes",

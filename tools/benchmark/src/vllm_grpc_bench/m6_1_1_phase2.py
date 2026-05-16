@@ -24,6 +24,8 @@ import argparse
 import json
 import sys
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,10 @@ from vllm_grpc_bench.m6_1_1_diagnose import (
     M6_1_1BaselineError,
     check_engine_version,
     load_m6_1_baseline,
+)
+from vllm_grpc_bench.m6_1_1_supersedence import (
+    apply_supersedence,
+    default_summary_for,
 )
 from vllm_grpc_bench.m6_1_1_types import (
     BaselineCellEntry,
@@ -59,11 +65,12 @@ Phase2aSweepHook = Callable[[argparse.Namespace, dict[str, Any]], Phase2aSweepRe
 
 ReportWriter = Callable[[argparse.Namespace, "Phase2OutcomeBundle"], None]
 
+# Supersedence hook: applies M6.1 supersedence annotations at terminal close.
+# Tests intercept by passing a no-op or capture-list lambda.
+SupersedenceHook = Callable[..., None]
+
 
 # --- Outcome bundle (passed to reporter writer) ----------------------------
-
-
-from dataclasses import dataclass  # noqa: E402
 
 
 @dataclass
@@ -151,6 +158,8 @@ async def run_m6_1_1_phase_2(  # noqa: PLR0911 — branch logic has many distinc
     deployed_engine_version: str | None = None,
     contracts_path: str | Path = "contracts/instrumentation.md",
     phase_2_choice: Phase2Choice | None = None,
+    supersedence_hook: SupersedenceHook | None = None,
+    date_yyyy_mm_dd: str | None = None,
 ) -> int:
     """Phase 2 orchestrator. Returns the M6.1.1 exit code."""
     # Pre-check 1: M6.1 baseline exists + parseable (FR-001).
@@ -182,6 +191,11 @@ async def run_m6_1_1_phase_2(  # noqa: PLR0911 — branch logic has many distinc
         return 1
 
     uniform_label = _uniform_chat_stream_label(classifications)
+    # Default supersedence hook + date (tests can override).
+    if supersedence_hook is None:
+        supersedence_hook = apply_supersedence
+    if date_yyyy_mm_dd is None:
+        date_yyyy_mm_dd = datetime.now(UTC).strftime("%Y-%m-%d")
 
     # Round-3 Q2 dispatch.
     if uniform_label == "instrumentation_artifact":
@@ -191,12 +205,16 @@ async def run_m6_1_1_phase_2(  # noqa: PLR0911 — branch logic has many distinc
             sweep_hook=sweep_hook,
             write_report=write_report,
             phase_2_choice=phase_2_choice,
+            supersedence_hook=supersedence_hook,
+            date_yyyy_mm_dd=date_yyyy_mm_dd,
         )
     if uniform_label == "channel_dependent_batching":
         return _dispatch_phase_2b(
             args,
             write_report=write_report,
             contracts_path=contracts_path,
+            supersedence_hook=supersedence_hook,
+            date_yyyy_mm_dd=date_yyyy_mm_dd,
         )
     if uniform_label == "drift_not_reproduced":
         print(
@@ -230,6 +248,8 @@ def _dispatch_phase_2a(
     sweep_hook: Phase2aSweepHook | None,
     write_report: ReportWriter | None,
     phase_2_choice: Phase2Choice | None,
+    supersedence_hook: SupersedenceHook,
+    date_yyyy_mm_dd: str,
 ) -> int:
     """Phase 2(a) dispatch: n=100 verification sweep + fresh baselines."""
     hook = sweep_hook or _run_phase_2a_sweep
@@ -283,6 +303,15 @@ def _dispatch_phase_2a(
     )
     if write_report is not None:
         write_report(args, bundle)
+    # T032: write M6.1 supersedence annotations on the same PR (FR-023 / FR-024).
+    _write_supersedence_at_close(
+        args,
+        supersedence_hook=supersedence_hook,
+        phase_2_path="phase_2a_verified",
+        date_yyyy_mm_dd=date_yyyy_mm_dd,
+        embed_regression_check=embed_regression_check,
+        phase_2_choice=phase_2_choice,
+    )
     return 0
 
 
@@ -291,6 +320,8 @@ def _dispatch_phase_2b(
     *,
     write_report: ReportWriter | None,
     contracts_path: str | Path,
+    supersedence_hook: SupersedenceHook,
+    date_yyyy_mm_dd: str,
 ) -> int:
     """Phase 2(b) dispatch: validate the contracts heading; no Modal sweep."""
     match = validate_contracts_heading(contracts_path)
@@ -325,7 +356,63 @@ def _dispatch_phase_2b(
     )
     if write_report is not None:
         write_report(args, bundle)
+    # T032: write M6.1 supersedence annotations on the same PR (FR-023 / FR-024).
+    _write_supersedence_at_close(
+        args,
+        supersedence_hook=supersedence_hook,
+        phase_2_path="phase_2b_documented",
+        date_yyyy_mm_dd=date_yyyy_mm_dd,
+        embed_regression_check=None,
+        phase_2_choice=None,
+    )
     return 0
+
+
+def _write_supersedence_at_close(
+    args: argparse.Namespace,
+    *,
+    supersedence_hook: SupersedenceHook,
+    phase_2_path: str,
+    date_yyyy_mm_dd: str,
+    embed_regression_check: EmbedRegressionCheckResult | None,
+    phase_2_choice: Phase2Choice | None,
+) -> None:
+    """Invoke the supersedence writer at a terminal close.
+
+    Derives M6.1's markdown path from the JSON baseline path (same stem,
+    ``.md`` suffix) and points the annotation at the M6.1.1 report.
+    """
+    m6_1_json_path = Path(args.m6_1_1_m6_1_baseline)
+    m6_1_md_path = m6_1_json_path.with_suffix(".md")
+    m6_1_1_md_path = str(Path(args.m6_1_1_report_json_out).with_suffix(".md"))
+
+    affected_rows: list[tuple[str, str]] | None = None
+    delta_pct_per_row: dict[tuple[str, str], float] | None = None
+    if (
+        embed_regression_check is not None
+        and phase_2_choice is not None
+        and phase_2_choice.embed_regression_acknowledged
+    ):
+        affected_rows = []
+        delta_pct_per_row = {}
+        for entry in embed_regression_check.per_entry:
+            if not entry.embed_regression_warning:
+                continue
+            cell_str = f"{entry.cell.path}_c{entry.cell.concurrency}_h{entry.cell.hidden_size}"
+            key = (cell_str, entry.cohort)
+            affected_rows.append(key)
+            delta_pct_per_row[key] = entry.delta_pct
+
+    supersedence_hook(
+        phase_2_path=phase_2_path,
+        summary=default_summary_for(phase_2_path),
+        m6_1_1_md_path=m6_1_1_md_path,
+        m6_1_md_path=m6_1_md_path,
+        m6_1_json_path=m6_1_json_path,
+        date_yyyy_mm_dd=date_yyyy_mm_dd,
+        affected_rows=affected_rows,
+        delta_pct_per_row=delta_pct_per_row,
+    )
 
 
 __all__ = [

@@ -236,6 +236,7 @@ def test_uniform_instrumentation_artifact_runs_phase_2a_sweep(tmp_path: Path) ->
             args,
             sweep_hook=lambda a, b: _verified_sweep_result(),
             write_report=lambda a, bundle: captured.append(bundle),
+            supersedence_hook=lambda **_: None,
         )
     )
     assert rc == 0
@@ -293,6 +294,7 @@ def test_phase_2a_embed_regression_warning_proceeds_with_ack(tmp_path: Path) -> 
                 embed_regression_acknowledged=True,
                 embed_regression_justification="confirmed reduction",
             ),
+            supersedence_hook=lambda **_: None,
         )
     )
     assert rc == 0
@@ -323,6 +325,7 @@ def test_uniform_channel_dependent_batching_with_heading_returns_exit_0(
             args,
             write_report=lambda a, bundle: captured.append(bundle),
             contracts_path=contracts_md,
+            supersedence_hook=lambda **_: None,
         )
     )
     assert rc == 0

@@ -396,6 +396,28 @@ def _phase_1_run_to_dict(prun: Phase1RunRecord) -> dict[str, Any]:
 # --- Public entry point -----------------------------------------------------
 
 
+def write_sidecar_events(
+    sidecar_path: Path,
+    *,
+    run_id: str,
+    events: list[dict[str, Any]],
+) -> None:
+    """Append a Phase 1 / Phase 2 run's per-RPC events to the sidecar JSONL.
+
+    Each invocation prepends a separator line of the form
+    ``{"_run_separator": true, "run_id": "..."}`` so consumers can split
+    by run, then appends each event as one JSONL line. The sidecar is
+    append-only across all ``--m6_1_1-diagnose`` and ``--m6_1_1`` runs
+    (round-3 Q1: phase_1_runs[] preservation extends to per-RPC events).
+    """
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    separator = {"_run_separator": True, "run_id": run_id}
+    with sidecar_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(separator, ensure_ascii=False) + "\n")
+        for event in events:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
 def write_m6_1_1_report(run: M6_1_1Run, md_path: Path, json_path: Path) -> None:
     """Write the markdown report + JSON companion atomically.
 
@@ -419,6 +441,7 @@ __all__ = [
     "render_json",
     "render_markdown",
     "write_m6_1_1_report",
+    "write_sidecar_events",
 ]
 
 

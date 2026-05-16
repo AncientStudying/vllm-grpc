@@ -17,6 +17,7 @@ import argparse
 import json
 import sys
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -248,6 +249,8 @@ async def run_m6_1_1_diagnose(
     write_report: Callable[[argparse.Namespace, list[Phase1RunRecord], str | None], None]
     | None = None,
     deployed_engine_version: str | None = None,
+    supersedence_hook: Callable[..., None] | None = None,
+    date_yyyy_mm_dd: str | None = None,
 ) -> int:
     """Phase 1 mini-sweep orchestrator. Returns the M6.1.1 exit code.
 
@@ -303,7 +306,47 @@ async def run_m6_1_1_diagnose(
     # Step 7: write the report (T025 reporter wires here).
     if write_report is not None:
         write_report(args, accumulated_records, gate_message)
+
+    # T032: at the drift_not_reproduced_confirmed close, write M6.1
+    # supersedence annotations on the SAME PR (FR-023 / FR-024).
+    if gate_message == "drift_not_reproduced_confirmed":
+        _write_drift_not_reproduced_supersedence(
+            args,
+            supersedence_hook=supersedence_hook,
+            date_yyyy_mm_dd=date_yyyy_mm_dd,
+        )
     return exit_code
+
+
+def _write_drift_not_reproduced_supersedence(
+    args: argparse.Namespace,
+    *,
+    supersedence_hook: Callable[..., None] | None,
+    date_yyyy_mm_dd: str | None,
+) -> None:
+    """Apply M6.1 supersedence at the drift_not_reproduced_confirmed close."""
+    from vllm_grpc_bench.m6_1_1_supersedence import (
+        apply_supersedence,
+        default_summary_for,
+    )
+
+    if supersedence_hook is None:
+        supersedence_hook = apply_supersedence
+    if date_yyyy_mm_dd is None:
+        date_yyyy_mm_dd = datetime.now(UTC).strftime("%Y-%m-%d")
+
+    m6_1_json_path = Path(args.m6_1_1_m6_1_baseline)
+    m6_1_md_path = m6_1_json_path.with_suffix(".md")
+    m6_1_1_md_path = str(Path(args.m6_1_1_report_json_out).with_suffix(".md"))
+
+    supersedence_hook(
+        phase_2_path="drift_not_reproduced_confirmed",
+        summary=default_summary_for("drift_not_reproduced_confirmed"),
+        m6_1_1_md_path=m6_1_1_md_path,
+        m6_1_md_path=m6_1_md_path,
+        m6_1_json_path=m6_1_json_path,
+        date_yyyy_mm_dd=date_yyyy_mm_dd,
+    )
 
 
 def _replace_audit(run: Phase1RunRecord, audit: Any) -> Phase1RunRecord:
