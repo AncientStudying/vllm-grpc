@@ -21,8 +21,11 @@ from pathlib import Path
 from typing import Any
 
 from vllm_grpc_bench.m6_1_1_types import (
+    BaselineCellEntry,
     BaselineSentinel,
     DriftNotReproducedConfirmedOutcome,
+    M6_1_1Cell,
+    M6_1_1Cohort,
     M6_1_1Run,
     MultiPointTimings,
     Phase1RunRecord,
@@ -70,6 +73,91 @@ def build_sentinel(phase_2_path: Phase2Path, *, is_embed: bool = False) -> Basel
         baseline_source="not_applicable",
         pointer=None,
         cells=None,
+    )
+
+
+# --- Phase 2(a) baseline builders (FR-015a / FR-015c, T031) -----------------
+
+
+def _baseline_cell_entry_chat_stream(
+    cell: M6_1_1Cell,
+    cohort: M6_1_1Cohort,
+    *,
+    engine_ttft_ms_mean: float,
+    engine_ttft_ms_ci_half_width: float,
+    engine_tpot_ms_mean: float,
+    engine_tpot_ms_ci_half_width: float,
+    n_successes: int,
+) -> BaselineCellEntry:
+    """Build a chat_stream cell entry. ``engine_forward_*`` fields are None
+    (chat_stream cells don't carry a forward-pass time)."""
+    return BaselineCellEntry(
+        cell=cell,
+        cohort=cohort,
+        engine_ttft_ms_mean=engine_ttft_ms_mean,
+        engine_ttft_ms_ci_half_width=engine_ttft_ms_ci_half_width,
+        engine_tpot_ms_mean=engine_tpot_ms_mean,
+        engine_tpot_ms_ci_half_width=engine_tpot_ms_ci_half_width,
+        engine_forward_ms_mean=None,
+        engine_forward_ms_ci_half_width=None,
+        n_successes=n_successes,
+        regression_warning=None,
+    )
+
+
+def _baseline_cell_entry_embed(
+    cell: M6_1_1Cell,
+    cohort: M6_1_1Cohort,
+    *,
+    engine_forward_ms_mean: float,
+    engine_forward_ms_ci_half_width: float,
+    n_successes: int,
+    regression_warning: bool | None,
+) -> BaselineCellEntry:
+    """Build an embed cell entry. ``engine_ttft_*`` and ``engine_tpot_*``
+    fields are None (embed RPCs don't have a streaming time-to-first-token)."""
+    return BaselineCellEntry(
+        cell=cell,
+        cohort=cohort,
+        engine_ttft_ms_mean=None,
+        engine_ttft_ms_ci_half_width=None,
+        engine_tpot_ms_mean=None,
+        engine_tpot_ms_ci_half_width=None,
+        engine_forward_ms_mean=engine_forward_ms_mean,
+        engine_forward_ms_ci_half_width=engine_forward_ms_ci_half_width,
+        n_successes=n_successes,
+        regression_warning=regression_warning,
+    )
+
+
+def build_chat_stream_baseline(
+    cells: list[BaselineCellEntry],
+) -> BaselineSentinel:
+    """Build a populated ``chat_stream_baseline_post_symmetrisation`` sentinel
+    under Phase 2(a) (round-2 Q1). The 9 entries (3 chat_stream cells × 3
+    cohorts) are supplied by the Phase 2 orchestrator from the verification
+    sweep's aggregates.
+    """
+    return BaselineSentinel(
+        phase_2_path="phase_2a_verified",
+        baseline_source="m6_1_1",
+        pointer="docs/benchmarks/m6_1_1-engine-cost-instrumentation.json",
+        cells=cells,
+    )
+
+
+def build_embed_baseline(
+    cells: list[BaselineCellEntry],
+) -> BaselineSentinel:
+    """Build a populated ``embed_baseline_post_symmetrisation`` sentinel
+    under Phase 2(a) (round-2 Q2, FR-015c). The 9 entries (3 embed cells × 3
+    cohorts) carry ``regression_warning`` flags from FR-015b.
+    """
+    return BaselineSentinel(
+        phase_2_path="phase_2a_verified",
+        baseline_source="m6_1_1",
+        pointer="docs/benchmarks/m6_1_1-engine-cost-instrumentation.json",
+        cells=cells,
     )
 
 
@@ -325,6 +413,8 @@ def write_m6_1_1_report(run: M6_1_1Run, md_path: Path, json_path: Path) -> None:
 
 
 __all__ = [
+    "build_chat_stream_baseline",
+    "build_embed_baseline",
     "build_sentinel",
     "render_json",
     "render_markdown",
