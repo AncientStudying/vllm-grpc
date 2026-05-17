@@ -119,19 +119,13 @@ class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # t
                 # M6.1.2 — snapshot engine RequestStateStats at first chunk.
                 if output.metrics is not None:
                     engine_arrival_ns = (
-                        int(output.metrics.arrival_time * 1e9)
-                        if output.metrics.arrival_time
-                        else 0
+                        int(output.metrics.arrival_time * 1e9) if output.metrics.arrival_time else 0
                     )
                     engine_queued_ns = (
-                        int(output.metrics.queued_ts * 1e9)
-                        if output.metrics.queued_ts
-                        else 0
+                        int(output.metrics.queued_ts * 1e9) if output.metrics.queued_ts else 0
                     )
                     engine_scheduled_ns = (
-                        int(output.metrics.scheduled_ts * 1e9)
-                        if output.metrics.scheduled_ts
-                        else 0
+                        int(output.metrics.scheduled_ts * 1e9) if output.metrics.scheduled_ts else 0
                     )
                     engine_first_token_ns = (
                         int(output.metrics.first_token_ts * 1e9)

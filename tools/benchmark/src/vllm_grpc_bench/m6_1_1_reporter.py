@@ -373,9 +373,7 @@ def _render_methodology_supersedence(run: M6_1_1Run) -> str:
         out.append("\nForward pointer written into M6.1's published markdown:")
         out.append(f"\n> {pointer}")
     else:
-        out.append(
-            "\n_N/A — this artifact does not supersede an earlier published verdict._"
-        )
+        out.append("\n_N/A — this artifact does not supersede an earlier published verdict._")
     return "\n".join(out)
 
 

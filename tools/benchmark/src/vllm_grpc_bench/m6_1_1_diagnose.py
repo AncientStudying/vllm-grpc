@@ -347,8 +347,10 @@ def _default_write_report(
     """
     from vllm_grpc_bench.m6_1_1_reporter import build_sentinel, write_m6_1_1_report
     from vllm_grpc_bench.m6_1_1_types import (
+        DriftNotReproducedConfirmedOutcome,
         M6_1_1Run,
         M6_1_1RunMeta,
+        Phase2Outcome,
         Phase2Path,
     )
 
@@ -358,6 +360,22 @@ def _default_write_report(
         if gate_message == "drift_not_reproduced_confirmed"
         else "phase_2_pending"
     )
+
+    # M6_1_1Run.__post_init__ requires phase_2_outcome's concrete type to
+    # match run_meta.phase_2_path. For ``drift_not_reproduced_confirmed`` we
+    # construct the outcome from the two confirming runs (gate fires when
+    # both the latest and prior runs returned uniform drift_not_reproduced —
+    # see evaluate_phase_1_gates). ``phase_2_pending`` keeps outcome=None.
+    phase_2_outcome: Phase2Outcome = None
+    if phase_2_path == "drift_not_reproduced_confirmed" and len(accumulated_records) >= 2:
+        prior = accumulated_records[-2]
+        phase_2_outcome = DriftNotReproducedConfirmedOutcome(
+            note=(
+                "uniform drift_not_reproduced reproduced across two independent "
+                "Phase 1 runs; M6.1 engine_cost_drift_warning preserved as published"
+            ),
+            confirming_run_ids=(prior.run_id, latest.run_id),
+        )
 
     meta = M6_1_1RunMeta(
         git_sha=_git_sha(),
@@ -390,7 +408,7 @@ def _default_write_report(
         phase_1_classifications=latest.phase_1_classifications,
         phase_1_runs=accumulated_records,
         multi_point_timings=latest.multi_point_timings,
-        phase_2_outcome=None,
+        phase_2_outcome=phase_2_outcome,
         phase_2_choice=None,
         chat_stream_baseline_post_symmetrisation=build_sentinel(phase_2_path),
         embed_baseline_post_symmetrisation=build_sentinel(phase_2_path, is_embed=True),
