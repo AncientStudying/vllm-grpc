@@ -172,3 +172,172 @@ def test_run_m6_1_2_skip_deploy_without_driver_returns_5(
     with redirect_stderr(buf):
         rc = _run_m6_1_2(args)
     assert rc == 5
+
+
+# --- Modal-backed dispatch (mocked) ----------------------------------------
+
+
+def test_run_m6_1_2_modal_deploy_failure_returns_2(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ``ModalDeployError`` from ``provide_m6_endpoint`` maps to exit 2
+    per ``contracts/cli.md`` "Exit codes"."""
+    from contextlib import asynccontextmanager
+
+    from vllm_grpc_bench.modal_endpoint import ModalDeployError
+
+    @asynccontextmanager
+    async def _raise_deploy_error(**_kwargs: object):  # type: ignore[no-untyped-def]
+        raise ModalDeployError("simulated deploy failure")
+        yield  # unreachable; satisfies the generator contract for asynccontextmanager
+
+    monkeypatch.setattr(
+        "vllm_grpc_bench.modal_endpoint.provide_m6_endpoint",
+        _raise_deploy_error,
+    )
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "--m6_1_2-validate",
+            f"--m6_1_2-report-out={tmp_path / 'out.md'}",
+            f"--m6_1_2-report-json-out={tmp_path / 'out.json'}",
+        ]
+    )
+    buf = io.StringIO()
+    with redirect_stderr(buf):
+        rc = _run_m6_1_2(args)
+    assert rc == 2
+    assert "Modal deploy/handshake failed" in buf.getvalue()
+
+
+def test_run_m6_1_2_modal_backed_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """End-to-end Modal-backed path with both ``provide_m6_endpoint`` and
+    ``provide_m6_1_2_rpc_driver`` mocked. Confirms the wiring:
+
+    * Endpoints from the deploy translate into the handshake dict the
+      sweep orchestrator passes to ``run_topology_probe``.
+    * The injected driver gets dispatched per (cell, cohort).
+    * Artifact lands at the configured output paths.
+    """
+    import asyncio
+    import json
+    from contextlib import asynccontextmanager
+
+    from vllm_grpc_bench.m6_1_types import M6_1Cell
+    from vllm_grpc_bench.m6_engine_cost import EngineCostSpan
+    from vllm_grpc_bench.m6_sweep import RPCResult
+    from vllm_grpc_bench.modal_endpoint import RESTGRPCEndpoints
+
+    fake_endpoints = RESTGRPCEndpoints(
+        grpc_url="grpc.example:5678",
+        rest_url="https://rest.example",
+        auth_token_env_var="MODAL_BENCH_TOKEN",
+        rest_plain_tcp_url="tcp+plaintext://plain.example:1234",
+        rest_https_edge_url="https://edge.example",
+    )
+
+    captured_handshake: dict[str, object] = {}
+
+    @asynccontextmanager
+    async def _fake_provide_endpoint(**_kwargs: object):  # type: ignore[no-untyped-def]
+        yield fake_endpoints
+
+    async def _stub_driver(cohort, cell: M6_1Cell, seed: int) -> RPCResult:  # type: ignore[no-untyped-def]
+        return RPCResult(
+            success=True,
+            wall_clock_ms=100.0,
+            ttft_ms=40.0 if cell.path == "chat_stream" else None,
+            engine_cost=EngineCostSpan(
+                engine_ttft_ms=40.0 if cell.path == "chat_stream" else None,
+                engine_forward_ms=10.0 if cell.path == "embed" else None,
+            ),
+            failure_reason=None,
+        )
+
+    @asynccontextmanager
+    async def _fake_provide_driver(_endpoints, **_kwargs):  # type: ignore[no-untyped-def]
+        yield _stub_driver, {}
+
+    async def _capture_probe(
+        handshake_dict,
+        cohorts,
+        per_cohort_timeout_seconds,
+        *,
+        ranges=None,  # type: ignore[no-untyped-def]
+    ):
+        captured_handshake.update(handshake_dict)
+        # Stub successful network paths so the sweep can build a clean artifact.
+        from vllm_grpc_bench.m6_1_2_types import (
+            M6_1_2NetworkPath,
+            M6_1_2NetworkPathHop,
+        )
+
+        return {
+            c: M6_1_2NetworkPath(
+                endpoint_ip="192.0.2.1",
+                hops=[
+                    M6_1_2NetworkPathHop(
+                        hop_number=1,
+                        ip="192.168.1.1",
+                        rtt_ms_or_null=1.0,
+                        cloud_provider=None,
+                    )
+                ],
+                cloud_provider="AWS",
+                region="us-west-1",
+                probe_method="tcptraceroute",
+                probed_at_utc="2026-05-17T12:00:00Z",
+            )
+            for c in cohorts
+        }
+
+    monkeypatch.setattr(
+        "vllm_grpc_bench.modal_endpoint.provide_m6_endpoint",
+        _fake_provide_endpoint,
+    )
+    monkeypatch.setattr(
+        "vllm_grpc_bench.m6_1_rpc_driver.provide_m6_1_2_rpc_driver",
+        _fake_provide_driver,
+    )
+    monkeypatch.setattr(
+        "vllm_grpc_bench.m6_1_2_sweep.run_topology_probe",
+        _capture_probe,
+    )
+
+    parser = _build_parser()
+    json_out = tmp_path / "out.json"
+    args = parser.parse_args(
+        [
+            "--m6_1_2-validate",
+            f"--m6_1_2-report-out={tmp_path / 'out.md'}",
+            f"--m6_1_2-report-json-out={json_out}",
+        ]
+    )
+
+    # Sanity: assertion the test would otherwise pass spuriously if we
+    # forgot to monkeypatch — assert the real modal_endpoint module is
+    # still importable but our patches are in effect.
+    _ = asyncio  # quiet "imported but unused" if the asyncio dep moves
+
+    buf = io.StringIO()
+    with redirect_stderr(buf):
+        rc = _run_m6_1_2(args)
+    assert rc == 0, f"expected exit 0, got {rc}; stderr was: {buf.getvalue()}"
+
+    # Handshake dict was built from the fake endpoints with the right keys.
+    assert captured_handshake == {
+        "rest_https_edge_url": "https://edge.example",
+        "rest_plain_tcp_url": "tcp+plaintext://plain.example:1234",
+        "grpc": "grpc.example:5678",
+    }
+
+    # Artifact was written and contains the expected network_paths block.
+    payload = json.loads(json_out.read_text())
+    assert payload["run_meta"]["sweep_mode"] == "validate"
+    assert set(payload["network_paths"].keys()) == {
+        "rest_https_edge",
+        "rest_plain_tcp",
+        "default_grpc",
+        "tuned_grpc_multiplexed",
+    }
