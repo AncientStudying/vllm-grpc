@@ -24,7 +24,39 @@ sudo dnf install tcptraceroute
 tcptraceroute --version
 ```
 
-If `tcptraceroute` is absent, the M6.1.2 sweep still completes (FR-005's error-block-and-continue behavior fires per cohort) but the `network_paths` block records error entries for every cohort and FR-005a's loud stderr warning surfaces — topology evidence is unavailable for that sweep. SC-002 / SC-004 / SC-010 are not satisfied. The PR-validation sweep MUST be run from an environment with `tcptraceroute` installed.
+#### macOS: one-time setuid fixup (Homebrew install only)
+
+`tcptraceroute` needs raw socket access to send SYNs, which on macOS requires
+root. The system `/usr/sbin/traceroute` ships setuid-root and "just works"
+without `sudo`, but Homebrew installs as the user so it can't apply the
+setuid bit — you'll see `Got root?` when you run `tcptraceroute <host> <port>`
+unprivileged.
+
+Mirror the system `traceroute` model with a one-time post-install fixup so
+the M6.1.2 sweep can invoke the probe without escalating the entire Python
+process:
+
+```sh
+sudo chown root:wheel $(brew --prefix)/bin/tcptraceroute
+sudo chmod u+s        $(brew --prefix)/bin/tcptraceroute
+
+# Sanity check — should now print hops as your normal user, no sudo:
+tcptraceroute -n -w 2 -q 1 -m 8 1.1.1.1 443 | head -5
+```
+
+(Linux package installs from `apt` / `dnf` typically handle this for you
+via the package's post-install hooks — only macOS Homebrew needs this
+manual step.)
+
+If `tcptraceroute` is absent — or installed but not setuid-root and the
+sweep wasn't launched with `sudo` — the M6.1.2 sweep still completes
+(FR-005's error-block-and-continue behavior fires per cohort) but the
+`network_paths` block records error entries for every cohort and FR-005a's
+loud stderr warning surfaces — topology evidence is unavailable for that
+sweep. SC-002 / SC-004 / SC-010 are not satisfied. The PR-validation sweep
+MUST be run from an environment where the probe binary can dispatch raw
+SYNs unprivileged (or the operator must `sudo` the sweep, which runs the
+entire Python process as root — not recommended).
 
 ### Switch to the M6.1.2 branch
 
@@ -214,6 +246,17 @@ PR description should reference:
 ### Probe fails with `tcptraceroute_unavailable` for every cohort
 
 The binary isn't on PATH. Install it (Phase 0). Re-run the sweep. The previous artifact's `network_paths` error blocks are overwritten.
+
+### Probe fails with `subprocess_error` / "Got root?" for every cohort (macOS Homebrew)
+
+`tcptraceroute` is on PATH but isn't setuid-root, so it can't open the raw socket as an unprivileged user. Apply the one-time setuid fixup from Phase 0:
+
+```sh
+sudo chown root:wheel $(brew --prefix)/bin/tcptraceroute
+sudo chmod u+s        $(brew --prefix)/bin/tcptraceroute
+```
+
+Re-run the sweep. (Running the whole sweep with `sudo` also works but escalates the entire Python process — Modal client, httpx, etc. — to root, which is not recommended.)
 
 ### Probe times out for one or more cohorts
 
