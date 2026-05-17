@@ -92,3 +92,38 @@ def test_smoke_seed_builds_valid_payload() -> None:
     # If the clamp is missing this raises ValueError("rpc_index must be >= 0").
     raw = build_torch_save_bytes(seq_len=8, hidden_size=4096, rpc_index=rpc_index, base_seed=42)
     assert raw[:4] == b"PK\x03\x04"
+
+
+# --- M6.1.2: REST URL scheme normalization for httpx ------------------------
+
+
+def test_normalize_rest_url_for_httpx_rewrites_tcp_plaintext() -> None:
+    """Modal publishes plain-TCP tunnels as ``tcp+plaintext://host:port``;
+    httpx only speaks HTTP/HTTPS, so the driver must rewrite the scheme to
+    ``http://``. M5.2 documents the same transform at
+    m5_2_sweep.py:1280-1283; M6.1.2's provide_m6_1_2_rpc_driver applies it
+    inline via _normalize_rest_url_for_httpx. Regression: a live Modal
+    sweep failed with UnsupportedProtocol("tcp+plaintext://") because the
+    raw URL was being passed straight to httpx.
+    """
+    from vllm_grpc_bench.m6_1_rpc_driver import _normalize_rest_url_for_httpx
+
+    assert (
+        _normalize_rest_url_for_httpx("tcp+plaintext://r439.modal.host:43209")
+        == "http://r439.modal.host:43209"
+    )
+
+
+def test_normalize_rest_url_for_httpx_passes_https_unchanged() -> None:
+    """HTTPS edge URLs are httpx-compatible already; no rewrite."""
+    from vllm_grpc_bench.m6_1_rpc_driver import _normalize_rest_url_for_httpx
+
+    url = "https://ta-01krv2x8qxtbbrr9zc28t0mk2x.w.modal.host"
+    assert _normalize_rest_url_for_httpx(url) == url
+
+
+def test_normalize_rest_url_for_httpx_prepends_http_to_bare_host_port() -> None:
+    """Bare ``host:port`` → assume plain HTTP. Matches the M5.2 fallback."""
+    from vllm_grpc_bench.m6_1_rpc_driver import _normalize_rest_url_for_httpx
+
+    assert _normalize_rest_url_for_httpx("r439.modal.host:43209") == "http://r439.modal.host:43209"

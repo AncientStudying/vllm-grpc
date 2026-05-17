@@ -60,6 +60,26 @@ from vllm_grpc_bench.rtt_probe import measure_rtt
 _DEFAULT_RTT_PROBE_N: int = 32
 
 
+def _normalize_rest_url_for_httpx(url: str) -> str:
+    """Convert Modal's published REST URLs into an httpx-compatible scheme.
+
+    Modal's ``modal.forward(unencrypted=True)`` publishes plain-TCP
+    tunnels as ``tcp+plaintext://host:port``; httpx only accepts HTTP or
+    HTTPS, so rewrite the scheme to ``http://`` (plain TCP without TLS
+    *is* plain HTTP from the client's perspective). HTTPS edge URLs and
+    bare ``host:port`` forms pass through unchanged or get an ``http://``
+    prefix respectively.
+
+    M5.2 documents the same transform at ``m5_2_sweep.py:1280-1283``.
+    """
+    if url.startswith("tcp+plaintext://"):
+        return "http://" + url[len("tcp+plaintext://") :]
+    if url.startswith(("http://", "https://")):
+        return url
+    # Bare host:port — assume plain HTTP. Matches the M5.2 fallback.
+    return "http://" + url
+
+
 def _resolve_rpc_index(seed: int, base_seed: int) -> int:
     """Convert a per-RPC sampling seed into a non-negative ``rpc_index``.
 
@@ -419,8 +439,12 @@ async def provide_m6_1_2_rpc_driver(
             "M6.1.2 RPC driver requires endpoints.rest_plain_tcp_url; "
             "the Modal deploy must be launched with with_rest_plain_tcp=True"
         )
-    rest_https_edge_base = endpoints.rest_https_edge_url
-    rest_plain_tcp_base = endpoints.rest_plain_tcp_url
+    rest_https_edge_base = _normalize_rest_url_for_httpx(endpoints.rest_https_edge_url)
+    # Modal publishes the plain-TCP tunnel as ``tcp+plaintext://host:port``
+    # (raw ``modal.forward(unencrypted=True)`` form); httpx only speaks
+    # HTTP/HTTPS, so rewrite the scheme to ``http://``. M5.2 documents
+    # the same transform at m5_2_sweep.py:1280-1283.
+    rest_plain_tcp_base = _normalize_rest_url_for_httpx(endpoints.rest_plain_tcp_url)
 
     default_channel = _open_grpc_channel(endpoints.grpc_url, M1_BASELINE)
     tuned_channel = _open_grpc_channel(endpoints.grpc_url, MAX_MSG_16MIB)
