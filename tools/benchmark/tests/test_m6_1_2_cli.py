@@ -341,3 +341,25 @@ def test_run_m6_1_2_modal_backed_success(monkeypatch: pytest.MonkeyPatch, tmp_pa
         "default_grpc",
         "tuned_grpc_multiplexed",
     }
+
+    # The Modal-backed path pins seq_len via pin_seq_len_at_sweep_start so
+    # the embed payload fits under the gRPC server's default 4 MiB receive
+    # limit. For Qwen/Qwen3-8B this is 19 tokens (~157 KB embed payload).
+    # Regression: an earlier version used config.seq_len=512 directly, which
+    # built a 4 MiB embed payload and tripped RESOURCE_EXHAUSTED on every
+    # default_grpc embed RPC.
+    assert payload["run_meta"]["seq_len"] == 19, (
+        f"expected pinned seq_len=19 for Qwen3-8B; got {payload['run_meta']['seq_len']}. "
+        "If this fails, the embed cells will fail RESOURCE_EXHAUSTED on the live "
+        "Modal sweep."
+    )
+
+
+def test_pin_seq_len_returns_19_for_qwen3_8b() -> None:
+    """Direct unit assertion on the pinned seq_len. The whole 4 MiB
+    RESOURCE_EXHAUSTED issue stems from sending seq_len=512 instead of 19;
+    this test pins the expectation so future planners can't accidentally
+    raise the default."""
+    from vllm_grpc_bench.m6_1_seq_len import pin_seq_len_at_sweep_start
+
+    assert pin_seq_len_at_sweep_start("Qwen/Qwen3-8B") == 19

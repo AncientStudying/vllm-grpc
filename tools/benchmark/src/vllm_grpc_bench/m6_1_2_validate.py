@@ -130,11 +130,34 @@ async def _modal_backed_sweep(args: argparse.Namespace, config: M6_1_2SweepConfi
 
     Split out of :func:`_run_modal_backed` so the synchronous wrapper can
     map exceptions to exit codes uniformly.
+
+    Pins ``seq_len`` via :func:`pin_seq_len_at_sweep_start` BEFORE opening
+    the driver. The embed-cell payload size is determined by
+    ``seq_len × hidden_size × 2`` (fp16); at hidden_size=4096 + fp16, any
+    seq_len > ~511 yields a payload over the gRPC server's default 4 MiB
+    receive limit and embed RPCs fail RESOURCE_EXHAUSTED. M6.1.1 pins to
+    the tokenized length of the canonical M6 text digest sample (~19 tokens
+    for Qwen3-8B, ~157 KB payload — well under the limit). M6.1.2 mirrors
+    this so cell-by-cell comparability with M6.1.1's published baseline
+    holds (FR-024).
     """
+    from dataclasses import replace
+
     from vllm_grpc_bench.m6_1_rpc_driver import provide_m6_1_2_rpc_driver
+    from vllm_grpc_bench.m6_1_seq_len import pin_seq_len_at_sweep_start
     from vllm_grpc_bench.modal_endpoint import provide_m6_endpoint
 
     token_env = str(getattr(args, "m6_1_2_modal_token_env", "MODAL_BENCH_TOKEN"))
+
+    pinned_seq_len = pin_seq_len_at_sweep_start(config.model_identifier)
+    print(
+        f"[m6_1_2] pinned seq_len={pinned_seq_len} for model={config.model_identifier} "
+        f"(was config default {config.seq_len}; embed payload size = "
+        f"seq_len × hidden_size × 2 bytes)",
+        file=sys.stderr,
+        flush=True,
+    )
+    config = replace(config, seq_len=pinned_seq_len)
 
     async with (
         provide_m6_endpoint(
