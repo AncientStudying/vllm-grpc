@@ -29,6 +29,10 @@ from vllm_grpc_bench.m6_types import (
 
 # --- M6.1.1 aliases (preserve M6.1 / M6 shapes verbatim) --------------------
 
+# ``M6_1_1Cell`` is an alias for :class:`M6_1Cell` (itself an alias for
+# :class:`M6Cell`). The ``concurrency`` field carries the M6.0a semantics
+# (FR-006): actual in-flight parallelism (peak concurrent RPCs per cohort
+# within a c-batch). See :class:`M6Cell` for the full docstring.
 M6_1_1Cell = M6_1Cell
 M6_1_1Cohort = M6_1CohortKind
 

@@ -212,6 +212,7 @@ def _render_methodology(run: M6_1_1Run) -> str:
         f"- **Model**: `{meta.model_identifier}`, hidden_size={meta.hidden_size}\n"
         f"- **Engine**: vllm=={meta.engine_version} "
         f"(M6.1 baseline recorded: {meta.m6_1_baseline_engine_version})\n"
+        "- **Dispatch mode**: concurrent (peak in-flight = c, per M6.0a)\n"
         f"- **Hardware**: {meta.gpu_type} on Modal `{meta.modal_region}`\n"
         f"- **Torch pin**: {meta.torch_version} (FR-003)\n"
         f"- **Phase 1 sample size**: n={meta.phase_1_n} per cohort per cell\n"
@@ -384,6 +385,13 @@ def render_json(run: M6_1_1Run) -> dict[str, Any]:
     """
     payload = {
         "schema_version": run.schema_version,
+        # M6.0a (FR-007 strict-superset): every manifest emitted by the
+        # corrected harness carries ``dispatch_mode: "concurrent"``. Absent
+        # ``dispatch_mode`` retroactively means ``"sequential"`` so
+        # pre-M6.0a manifests (e.g., the 2026-05-16 audit baseline) parse
+        # unchanged. ``schema_version`` is NOT bumped — the addition is
+        # purely additive at the top level.
+        "dispatch_mode": "concurrent",
         "run_id": run.run_id,
         "run_started_at": run.run_started_at,
         "run_completed_at": run.run_completed_at,

@@ -24,6 +24,7 @@ chat_stream + embed baseline sentinels, and returns the
 from __future__ import annotations
 
 import argparse
+import asyncio
 import math
 import socket
 import subprocess
@@ -252,22 +253,35 @@ async def _measure_cell(
     # Cast M6.1.1 cell ↔ M6.1 cell (they're aliases — same shape).
     m6_1_cell = M6_1Cell(path=cell.path, hidden_size=cell.hidden_size, concurrency=cell.concurrency)
 
-    # Warmup — seed=0 per project convention (smoke/warmup uses base_seed-0
-    # mapping; see feedback_smoke_warmup_seed_zero memory).
+    # M6.0a (FR-001 / FR-005a): warmup dispatches concurrently per cohort
+    # via asyncio.gather. seed=0 per the smoke/warmup convention
+    # (feedback_smoke_warmup_seed_zero memory).
     for cohort in M6_1_COHORTS:
-        for _ in range(n_warmup):
-            await driver(cohort, m6_1_cell, 0)
+        if n_warmup > 0:
+            await asyncio.gather(*(driver(cohort, m6_1_cell, 0) for _ in range(n_warmup)))
 
-    # Measurement — per-cohort to give the operator timely progress lines.
+    # M6.0a (FR-001 / FR-002): measurement dispatches under an
+    # asyncio.Semaphore(c)-bounded gather so the engine sees a steady
+    # c-in-flight stream. Cohort iteration stays sequential per FR-005.
+    # ``seed = base_seed + i`` is a pure function of ``i`` so the SET of
+    # ``(cohort, seed)`` records is bit-identical to the pre-fix harness.
     per_cohort: dict[M6_1_1Cohort, list[RPCResult]] = {k: [] for k in M6_1_COHORTS}
     for cohort in M6_1_COHORTS:
         cohort_start = time.monotonic()
-        for i in range(n_measurement):
-            seed = base_seed + i
-            result = await driver(cohort, m6_1_cell, seed)
-            per_cohort[cohort].append(result)
+        sem = asyncio.Semaphore(cell.concurrency)
+
+        async def _one(
+            i: int,
+            cohort_ref: M6_1_1Cohort = cohort,
+            sem_ref: asyncio.Semaphore = sem,
+        ) -> RPCResult:
+            async with sem_ref:
+                return await driver(cohort_ref, m6_1_cell, base_seed + i)
+
+        results = await asyncio.gather(*(_one(i) for i in range(n_measurement)))
+        per_cohort[cohort].extend(results)
         if reporter is not None:
-            successes = sum(1 for r in per_cohort[cohort] if r.success)
+            successes = sum(1 for r in results if r.success)
             reporter.emit_cell_cohort(cell, cohort, successes, time.monotonic() - cohort_start)
     return per_cohort
 
