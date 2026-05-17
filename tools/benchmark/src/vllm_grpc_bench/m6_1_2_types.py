@@ -121,14 +121,27 @@ def cohorts_at_concurrency(c: int) -> tuple[M6_1_2CohortKind, ...]:
 
     Per FR-011 (M5.2-inherited tuned-pair collapse rule, ``m5_2_sweep.py:228-237``):
 
-    * At ``c == 1``: ``("rest_https_edge", "rest_plain_tcp", "default_grpc")``
+    * At ``c == 1``: ``("default_grpc", "rest_https_edge", "rest_plain_tcp")``
       — ``default_grpc`` and ``tuned_grpc_multiplexed`` collapse to a single
       gRPC cohort whose ``cohort_kind`` is ``"default_grpc"``.
-    * At ``c >= 2``: the full 4-element :data:`M6_1_2_COHORTS`.
+    * At ``c >= 2``: ``("default_grpc", "tuned_grpc_multiplexed",
+      "rest_https_edge", "rest_plain_tcp")`` — all 4 cohorts.
+
+    **Iteration order**: gRPC cohorts dispatch FIRST within each cell so the
+    Modal plain-TCP gRPC tunnel sees traffic before the REST-cohort phases
+    extend the idle window. The first live-Modal sweep hit
+    ``embed × c=1 / default_grpc → 0/50 succ`` because the gRPC tunnel had
+    been idle for ~15 min while the two REST cohorts ran. Keepalive
+    (``M1_BASELINE_KEEPALIVE``) is the primary defense; this iteration
+    order is belt-and-suspenders.
+
+    Note that the wire-format ``cohort_set`` field is sorted alphabetically
+    (see :func:`build_cohort_set_and_omissions`); iteration order doesn't
+    leak into the published artifact.
     """
     if c == 1:
-        return ("rest_https_edge", "rest_plain_tcp", "default_grpc")
-    return M6_1_2_COHORTS
+        return ("default_grpc", "rest_https_edge", "rest_plain_tcp")
+    return ("default_grpc", "tuned_grpc_multiplexed", "rest_https_edge", "rest_plain_tcp")
 
 
 def build_cohort_set_and_omissions(

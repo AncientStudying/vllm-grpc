@@ -37,7 +37,16 @@ from vllm_grpc_bench.m6_1_2_types import (
 
 @dataclass(frozen=True)
 class M6_1_2CellMeasurement:
-    """Per-(cell, cohort) measurement summary written into the artifact."""
+    """Per-(cell, cohort) measurement summary written into the artifact.
+
+    ``top_failure_reasons`` is a frequency map of distinct ``RPCResult.
+    failure_reason`` strings → count, capped at the top 5 entries by
+    count. Empty dict when every RPC succeeded. Lets downstream readers
+    diagnose a cohort that produced 0/N successes from the published
+    artifact alone (regression: the first live Modal sweep failed
+    ``embed × c=1 / default_grpc`` 0/50 and we couldn't tell whether the
+    cause was network, message size, or auth without re-running).
+    """
 
     path: str  # "embed" | "chat_stream"
     concurrency: int
@@ -46,6 +55,7 @@ class M6_1_2CellMeasurement:
     n_successes: int
     wall_clock_ms_mean: float | None
     engine_ttft_ms_mean: float | None
+    top_failure_reasons: dict[str, int]
 
 
 @dataclass(frozen=True)

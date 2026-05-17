@@ -155,6 +155,8 @@ def test_validate_sweep_end_to_end(tmp_path: Path) -> None:
     for m in measurements:
         assert m["n_attempts"] == 3
         assert m["n_successes"] == 3
+        # Empty top_failure_reasons when every RPC succeeded.
+        assert m["top_failure_reasons"] == {}
 
     # Markdown sidecar exists and contains the cohort set heading.
     md = config.md_out.read_text()
@@ -248,3 +250,89 @@ def test_measurement_dispatch_respects_cell_concurrency(tmp_path: Path) -> None:
     assert max_in_flight_by_c.get(8, 0) >= 2, (
         "c=8 never saw >= 2 in-flight — semaphore may be serializing"
     )
+
+
+# --- Failure-reason capture in the artifact --------------------------------
+
+
+def test_artifact_captures_top_failure_reasons_for_failing_cohort(
+    tmp_path: Path,
+) -> None:
+    """When a cohort produces 0/N successes, the artifact MUST record the
+    distinct failure_reasons so the operator can diagnose without re-running.
+
+    Regression: the first live Modal sweep failed
+    ``embed × c=1 / default_grpc`` 0/50 and we couldn't tell whether the
+    cause was network, message size, or auth without reading container
+    logs. Now top_failure_reasons → {failure_str: count} is in the JSON.
+    """
+
+    async def failing_grpc_driver(cohort: M6_1_2CohortKind, cell: M6_1Cell, seed: int) -> RPCResult:
+        # Stub failure pattern that mirrors the live Modal sweep: gRPC
+        # cohorts fail with UNAVAILABLE, REST cohorts succeed.
+        if cohort in ("default_grpc", "tuned_grpc_multiplexed"):
+            return RPCResult(
+                success=False,
+                wall_clock_ms=None,
+                ttft_ms=None,
+                engine_cost=None,
+                failure_reason="grpc embed: StatusCode.UNAVAILABLE channel closed",
+            )
+        return RPCResult(
+            success=True,
+            wall_clock_ms=100.0,
+            ttft_ms=None,
+            engine_cost=None,
+            failure_reason=None,
+        )
+
+    config = M6_1_2SweepConfig(
+        sweep_mode="validate",
+        modal_region="eu-west-1",
+        base_seed=42,
+        model_identifier="Qwen/Qwen3-8B",
+        m6_1_1_baseline_pointer="docs/benchmarks/m6_1_1-engine-cost-instrumentation.json",
+        md_out=tmp_path / "m6_1_2.md",
+        json_out=tmp_path / "m6_1_2.json",
+        measurement_n=5,
+        warmup_n=0,
+        skip_deploy=True,
+    )
+
+    artifact = asyncio.run(
+        run_m6_1_2_sweep(
+            config,
+            driver=failing_grpc_driver,
+            handshake_dict=None,
+            network_probe_results=_canned_network_paths(),
+        )
+    )
+    write_sweep_artifact(artifact, config.md_out, config.json_out)
+
+    payload = json.loads(config.json_out.read_text())
+
+    # gRPC pairs all failed; top_failure_reasons populated.
+    grpc_pairs = [
+        m
+        for m in payload["measurements"]
+        if m["cohort"] in ("default_grpc", "tuned_grpc_multiplexed")
+    ]
+    assert len(grpc_pairs) > 0
+    for m in grpc_pairs:
+        assert m["n_successes"] == 0
+        assert m["top_failure_reasons"], (
+            f"expected non-empty top_failure_reasons for failed cohort {m['cohort']}; "
+            f"got {m['top_failure_reasons']}"
+        )
+        assert "UNAVAILABLE" in next(iter(m["top_failure_reasons"])) or "channel closed" in next(
+            iter(m["top_failure_reasons"])
+        )
+        # Counts sum to n_attempts - n_successes.
+        assert sum(m["top_failure_reasons"].values()) == m["n_attempts"] - m["n_successes"]
+
+    # REST pairs all succeeded; top_failure_reasons empty.
+    rest_pairs = [
+        m for m in payload["measurements"] if m["cohort"] in ("rest_https_edge", "rest_plain_tcp")
+    ]
+    for m in rest_pairs:
+        assert m["top_failure_reasons"] == {}

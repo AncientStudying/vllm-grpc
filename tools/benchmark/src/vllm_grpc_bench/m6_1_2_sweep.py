@@ -118,6 +118,9 @@ def _iter_cells_cohorts() -> list[tuple[M6_1Path, int, M6_1_2CohortKind]]:
 # --- Aggregate measurement results ------------------------------------------
 
 
+_MAX_TOP_FAILURE_REASONS: int = 5
+
+
 def _summarize_cell(
     path: M6_1Path,
     concurrency: int,
@@ -133,6 +136,22 @@ def _summarize_cell(
         ttft = getattr(cost, "engine_ttft_ms", None)
         if ttft is not None:
             ttfts.append(float(ttft))
+
+    # Failure-reason histogram (top-N by count). Empty when every RPC
+    # succeeded. Lets downstream readers diagnose 0/N-success cohorts from
+    # the published artifact alone.
+    failure_counter: dict[str, int] = {}
+    for r in results:
+        if r.success:
+            continue
+        reason = r.failure_reason or "<unknown>"
+        failure_counter[reason] = failure_counter.get(reason, 0) + 1
+    top_failures = dict(
+        sorted(failure_counter.items(), key=lambda kv: kv[1], reverse=True)[
+            :_MAX_TOP_FAILURE_REASONS
+        ]
+    )
+
     return M6_1_2CellMeasurement(
         path=path,
         concurrency=concurrency,
@@ -141,6 +160,7 @@ def _summarize_cell(
         n_successes=sum(1 for r in results if r.success),
         wall_clock_ms_mean=statistics.fmean(wall_clocks) if wall_clocks else None,
         engine_ttft_ms_mean=statistics.fmean(ttfts) if ttfts else None,
+        top_failure_reasons=top_failures,
     )
 
 

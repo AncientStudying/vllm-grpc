@@ -256,3 +256,42 @@ def test_cohorts_at_concurrency_c_ge_2_returns_all_4() -> None:
     """At c >= 2, all 4 cohorts iterate."""
     for c in (2, 4, 8):
         assert set(cohorts_at_concurrency(c)) == CANONICAL
+
+
+# --- Cohort iteration order: gRPC FIRST (Modal tunnel stickiness) ----------
+
+
+def test_cohorts_at_concurrency_dispatches_grpc_first() -> None:
+    """gRPC cohorts MUST come first in the iteration order so the Modal
+    plain-TCP gRPC tunnel sees traffic before the REST-cohort phases
+    extend the idle window past Modal's tunnel timeout.
+
+    Regression: the first live Modal sweep iterated cohorts alphabetically
+    (REST first, then gRPC), and ``embed × c=1 / default_grpc`` failed
+    0/50 because the gRPC tunnel had been idle for ~15 min while the two
+    REST cohorts ran. Both keepalive (M1_BASELINE_KEEPALIVE) and this
+    iteration order are required defenses.
+    """
+    # At c=1, gRPC (collapsed to default_grpc per FR-011) comes first.
+    c1_order = cohorts_at_concurrency(1)
+    assert c1_order[0] == "default_grpc", (
+        f"c=1 iteration must start with default_grpc; got {c1_order}"
+    )
+
+    # At c >= 2, BOTH gRPC cohorts come before either REST cohort.
+    for c in (2, 4, 8):
+        order = cohorts_at_concurrency(c)
+        # Find positions of each cohort
+        positions = {cohort: i for i, cohort in enumerate(order)}
+        grpc_positions = {
+            positions["default_grpc"],
+            positions["tuned_grpc_multiplexed"],
+        }
+        rest_positions = {
+            positions["rest_https_edge"],
+            positions["rest_plain_tcp"],
+        }
+        assert max(grpc_positions) < min(rest_positions), (
+            f"c={c} iteration must dispatch both gRPC cohorts before either "
+            f"REST cohort; got {order}"
+        )
