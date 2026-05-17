@@ -257,11 +257,24 @@ async def run_m6_1_2_sweep(
                 return await driver(cohort_ref, cell_ref, config.base_seed + i)
 
         results = await asyncio.gather(*(_one(i) for i in range(config.measurement_n)))
-        measurements.append(_summarize_cell(path, c, cohort, list(results)))
+        summary = _summarize_cell(path, c, cohort, list(results))
+        measurements.append(summary)
         cohorts_actually_run.add(cohort)
+        n_succ = summary.n_successes
+        n_att = summary.n_attempts
+        # Surface the dominant failure reason on the progress line when any
+        # RPC failed, so live diagnosis doesn't require waiting for the
+        # artifact (which only writes on full-sweep completion). For a
+        # complete cohort failure (0/N) the failure_reason is the single
+        # most useful signal — it tells the operator whether to chase a
+        # network/auth/quota issue without re-running the whole sweep.
+        failure_tail = ""
+        if n_succ < n_att and summary.top_failure_reasons:
+            top_reason, top_count = next(iter(summary.top_failure_reasons.items()))
+            failure_tail = f" — top failure ({top_count}/{n_att - n_succ}): {top_reason}"
         print(
             f"{_stderr_ts()} [{idx}/{total_pairs}] {path} × c={c} / {cohort} "
-            f"— {sum(1 for r in results if r.success)}/{len(results)} succ",
+            f"— {n_succ}/{n_att} succ{failure_tail}",
             file=sys.stderr,
             flush=True,
         )
