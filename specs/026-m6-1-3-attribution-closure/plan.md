@@ -1,0 +1,288 @@
+# Implementation Plan: M6.1.3 — Phase 1 Attribution Closure: Proxy-Edge Probes + Drift Root-Cause + Variance Characterization
+
+**Branch**: `026-m6-1-3-attribution-closure` | **Date**: 2026-05-17 | **Spec**: [spec.md](./spec.md)
+**Input**: Feature specification from `specs/026-m6-1-3-attribution-closure/spec.md`
+
+## Summary
+
+M6.1.3 is the Phase 1 attribution-closure bundle that resolves M6.1.1's three open `chat_stream` cells (c=1 reproducible `engine_compute_variation` with unidentified root-cause; c=4 / c=8 `inconclusive` with ~17 ms and ~5 ms unattributed budgets respectively). It ships three instrumentation / methodology additions in one Modal-deploy cycle, scoped by [`spike/m6-1-roadmap-additions`](../../docs/spikes/m6-1-roadmap-additions/) items #4 + #5 + #6. Inherits M6.1.2's 4-cohort matrix, `network_paths` block, `cohort_set` / `cohort_omissions` metadata, and timestamped progress lines verbatim (FR-032).
+
+**Three deliverables** (each a User Story in the spec):
+
+1. **Proxy-edge probes** (P1, Story 1) — two new clock-aligned checkpoints in the frontend servicers' streaming paths: `m6_1_1_t_pre_engine_wall_ns = time.time_ns()` (wall-clock anchor vs vLLM's `RequestStateStats.arrival_time`) and `m6_1_1_t_first_chunk_mono_ns = time.monotonic_ns()` (monotonic anchor vs vLLM's `first_token_ts`). Bisects the unattributed budget into `seg_ingress_ms` (proxy → engine handoff) and `seg_egress_ms` (engine → proxy yield). Extends M6.1.1's 5-bucket classifier to 7 buckets (`proxy_ingress_dominated`, `proxy_egress_dominated`), with FR-008a's highest-share-wins / compound-label tie-breaking and FR-026's `inconclusive_high_variance` outer override.
+
+2. **Per-cohort prompt-content audit** (P2, Story 2) — per-RPC `tokenized_prompt_length` + BLAKE2b-8 token-id-list hash captured on both streaming and unary RPCs. Pooled-distribution H1/H2/rejection verdict at `chat_stream c=1` distinguishes prompt-content drift (leading candidate per spike #5) from encoding drift, KV-cache reuse, cohort-order warmup bias. If H1 confirms, the published markdown carries the spec-decision recommendation that symmetric prompts become the M6.x convention (FR-017, binding M6.2 / M7 / M8 per SC-012). Optional Phase B (`--m6_1_3-symmetric-prompts`) re-wires the sweep via a **shared helper module** that M5.2's historical sweep also imports (FR-019, round-2 Q4 — port-in-place is explicitly not acceptable).
+
+3. **Multi-run sweep + between-run variance** (P3, Story 3) — `--m6_1_3-diagnose-repeat=N` modifier runs the existing Phase 1 sweep N times back-to-back; `compute_between_run_variance(phase_1_runs)` produces per-cohort per-cell `(mean_of_means_ms, stddev_of_means_ms, n_runs)`; new reporter section "Between-Run Variance" renders when `len(phase_1_runs) >= 3`. The **unified high-variance threshold** (between-run stddev ÷ within-run CI half-width, round-2 Q3) drives both the `inconclusive_high_variance` inner-label override (FR-026) AND the Phase B publication requirement (FR-043) — one `/speckit-plan` knob, not two. Preemption-aware loop with FR-028's pinned-at-2 abort threshold (round-3 Q3).
+
+**Technical approach.** Build a parallel `m6_1_3_*` module family mirroring M6.1.2's naming pattern (8 new modules under `tools/benchmark/src/vllm_grpc_bench/` — `m6_1_3_types`, `m6_1_3_sweep`, `m6_1_3_reporter`, `m6_1_3_validate`, `m6_1_3_classifier`, `m6_1_3_audit`, `m6_1_3_variance`, plus the cross-milestone `symmetric_prompts` shared helper). The `--m6_1_3` (multi-run publishing) and `--m6_1_3-validate` (single-run smoke-equivalent wiring check) top-level CLI mode flags are mutually exclusive with each other and with all M5.x / M6 / M6.1 / M6.1.1 / M6.1.2 mode flags (FR-034 + round-2 Q2). Three modifier flags (`--m6_1_3-diagnose-repeat=N`, `--m6_1_3-diagnose-n=N`, `--m6_1_3-symmetric-prompts`) plus the canonical `--m6_1_3-*` sub-flag set (FR-035) round out the CLI surface.
+
+**Wire-format scope.** This milestone is the only M6.x sub-milestone that modifies code outside `tools/benchmark/` — the proxy-edge probes (FR-001 / FR-002 / FR-003) and audit keys (FR-012 / FR-013 / FR-014) must emit from inside the in-process frontend servicers (`packages/frontend/src/vllm_grpc_frontend/chat.py` and `completions.py`). The new wire keys are additive at the gRPC trailing-metadata layer and SSE / JSON terminal event layer; `schema_version` stays at `"m6_1_1.v1"` for both prefix families per FR-010 + round-3 Q1 (the `m6_1_1_*` proxy-edge prefix extends M6.1.1's vocabulary additively; the `m6_1_3_*` audit prefix is a new naming convention, not a versioning signal).
+
+**Three published artifacts.** Distinct paths per FR-038 + round-2 Q1:
+- `docs/benchmarks/m6_1_3-attribution-closure.{md,json}` — canonical milestone artifact from `--m6_1_3` (`repeat=5`, `n=50`).
+- `docs/benchmarks/m6_1_3-attribution-closure-validate.{md,json}` — validate sibling from `--m6_1_3-validate` (`repeat=1`, `n=50`).
+- `docs/benchmarks/m6_1_3-attribution-closure-phase-b.{md,json}` — Phase B sibling from `--m6_1_3 --m6_1_3-diagnose-repeat=1 --m6_1_3-diagnose-n=200` (FR-045). Conditional per FR-043's unified high-variance trigger.
+
+**M6.1.1 forward-pointing annotation.** Per FR-031 round-3 Q2 minimal-touch mechanism: single leading `> **Note**: ...` line added to `docs/benchmarks/m6_1_1-engine-cost-instrumentation.md` pointing at the M6.1.3 artifact, no body-content mutation. Reciprocal cross-reference in M6.1.3's markdown "Method / Background" section per FR-041.
+
+## Technical Context
+
+**Language/Version**: Python 3.12 (project standard; matches M5.x / M6 / M6.1 / M6.1.1 / M6.1.2 harness, frontend, proxy, and Modal app).
+
+**Primary Dependencies**:
+
+- `vllm` + `torch` — UNCHANGED from M6.1.2's pinned set (FR-033: M6.1.3 modifies no engine-cost code or Modal-endpoint code). Operator runs `uv sync --frozen` against the existing `uv.lock` to inherit pinned versions.
+- `grpcio` + `grpcio-tools` — UNCHANGED. Wire format extends M6.1.1's vocabulary additively via new trailing-metadata keys; no `.proto` schema changes (Constitution Principle I).
+- `httpx` (REST client used by `rest_cohort.py` / `rest_shim.py`) — UNCHANGED; the new audit / proxy-edge keys flow through the existing SSE / JSON terminal-event path.
+- `modal` — UNCHANGED. M6.1.3 does not change `scripts/python/modal_bench_rest_grpc_server.py` or any other Modal endpoint code; the engine runs in-process with the frontend servicer (confirmed by spike #4's read of `vllm/v1/engine/__init__.py:149-153`), so the proxy-edge probes work entirely client-side.
+- `tcptraceroute` — INHERITED from M6.1.2 (FR-032 inherits M6.1.2's `network_paths` probe verbatim). No new external binary dependency.
+- BLAKE2b-8 hashing — standard library (`hashlib.blake2b(digest_size=8)`); no new dependency.
+
+**Storage**:
+
+- Outputs: `docs/benchmarks/m6_1_3-attribution-closure.{md,json}` — NEW canonical M6.1.3 artifact (FR-038, produced by `--m6_1_3` at `repeat=5`).
+- Outputs: `docs/benchmarks/m6_1_3-attribution-closure-validate.{md,json}` — NEW validate sibling (FR-038, produced by `--m6_1_3-validate` at `repeat=1`).
+- Outputs: `docs/benchmarks/m6_1_3-attribution-closure-phase-b.{md,json}` — NEW Phase B sibling (FR-045, conditional on FR-043 trigger or operator-discretionary; produced by `--m6_1_3 --m6_1_3-diagnose-repeat=1 --m6_1_3-diagnose-n=200`).
+- Outputs: `docs/benchmarks/m6_1_3-events.jsonl` — NEW sidecar JSONL extending the M6.1.1 sidecar pattern with the audit fields per FR-015 (orchestrator-derived from the extractor output, not a parallel emission path per round-1 Q1).
+- Inputs: `docs/benchmarks/m6_1_2-methodology-discipline.json` — READ-ONLY M6.1.2 baseline; consumed via inheritance of the 4-cohort matrix + `network_paths` + `cohort_set` conventions (FR-032).
+- Inputs: `docs/benchmarks/m6_1_1-engine-cost-instrumentation.json` — READ-ONLY M6.1.1 baseline; consumed via `--m6_1_3-m6-1-1-baseline` (FR-035, default path; per-cell comparison reference for the segment-decomposition diff).
+- Modifications: `docs/benchmarks/m6_1_1-engine-cost-instrumentation.md` — ONE LINE added at the top per FR-031 + round-3 Q2: `> **Note**: This milestone's c=4 / c=8 verdicts were updated by [M6.1.3](m6_1_3-attribution-closure.md). See that artifact for attributed labels and Phase B variance characterization.`
+- Modifications: `contracts/instrumentation.md` — UPDATED to document the 4 new wire keys (2 proxy-edge `m6_1_1_*` + 2 audit `m6_1_3_*`), the 7-bucket classifier extension, the compound-label vocabulary mapping, the `between_run_variance` block, the `inconclusive_high_variance` label, and the additive-strict-superset versioning convention per FR-010 + FR-011 + SC-010.
+
+**Testing**: `pytest` + `pytest-asyncio` (project convention). Coverage tiers:
+
+- **Unit tests** — `tools/benchmark/tests/test_m6_1_3_classifier.py` (NEW):
+  - 7-bucket decision-tree: feed canned `PerSegmentAggregate` instances with various spread distributions; assert each of the 7 base labels (5 inherited + `proxy_ingress_dominated` + `proxy_egress_dominated`) fires correctly under the relevant per-rule dominance threshold (FR-008 + FR-008a).
+  - Compound-label tie-breaking: feed near-ties (e.g., seg_egress 45%, seg_prefill 43% — within 5pp margin); assert the compound label `multi_factor_engine_compute_proxy_egress` is emitted with alphabetical ordering (FR-008a + round-1 Q4).
+  - Dominance margin enforcement: feed a clear winner (seg_egress 50%, seg_prefill 40% — 10pp gap); assert the single label `proxy_egress_dominated` is emitted (not compound).
+  - `inconclusive` collision rule: feed a cell where one of the top two candidates is `inconclusive` (per FR-008a's "collapses to the other candidate's single label, no compound formed"); assert the non-inconclusive label wins.
+  - Outer-label override: feed a cell where between-run stddev / CI half-width > threshold AND an inner label fires; assert `inconclusive_high_variance` is the headline label with the inner label as the parenthetical (FR-026 + round-2 Q3).
+  - Legacy fallback: feed a `PerSegmentAggregate` missing `seg_ingress_ms` / `seg_egress_ms` (rehydrated pre-M6.1.3 manifest); assert the 5-bucket M6.1.1 classifier fires unchanged (FR-008 + FR-010).
+  - `frontend_arrival_jitter` dormant-label assertion (round-4 Q1): assert the label is never emitted as a primary attribution AND never appears inside a `multi_factor_*` token (FR-008a revised row 4).
+- **Unit tests** — `tools/benchmark/tests/test_m6_1_3_audit.py` (NEW):
+  - Pooled-distribution H1 verdict: synthesize 5 per-run audit datasets at `chat_stream c=1` with per-cohort token-count means at e.g. `{rest_https_edge: 48.2, default_grpc: 53.7, tuned_grpc_multiplexed: 47.9}` (3σ divergence from pooled stddev ~1.2); assert pooled verdict is `"H1 confirmed: per-cohort token-count means diverge by >2σ"` (FR-016 + round-1 Q5).
+  - Pooled-distribution H2 verdict: synthesize 5 per-run datasets with identical token-count means but divergent per-cohort hash distributions; assert pooled verdict is `"H2 candidate: token-counts identical but hash distributions differ"`.
+  - Pooled-distribution H1 rejection: synthesize 5 per-run datasets with identical token-count means AND identical hash distributions across cohorts; assert pooled verdict is `"H1 rejected: per-cohort distributions statistically identical"`.
+  - Per-run appendix conditional rendering (FR-016a + round-2 Q5): synthesize 5-run dataset where all per-run verdicts == pooled verdict; assert appendix is omitted. Synthesize 5-run dataset where 2 per-run verdicts differ from pooled (e.g., 3 confirmed, 2 rejected); assert appendix MUST render with all 5 per-run verdicts visible alongside the pooled.
+  - Pooled n-counts: assert `n_rpcs == 5 × 50 == 250` per cohort on the publish sweep dataset; assert `n_rpcs == 50` per cohort on the validate sweep dataset.
+- **Unit tests** — `tools/benchmark/tests/test_m6_1_3_variance.py` (NEW):
+  - `compute_between_run_variance` shape: feed 5 per-run `phase_1_runs[]` entries with per-cohort means; assert output dict is keyed by `(cell, cohort)` with `(mean_of_means_ms, stddev_of_means_ms, n_runs)` values.
+  - Cohort-unhealthy handling (FR-027): feed 5-run data where one cohort has `n_rpcs=0` in 3 of the 5 runs; assert the variance compute emits `null` for that cell × cohort AND the classifier emits `cohort_unhealthy` warning.
+  - Phase B trigger logic (FR-043 + round-3 Q3 unified threshold): feed a multi-run dataset where one cell's between-run stddev exceeds the unified threshold × within-run CI half-width; assert the cell carries `inconclusive_high_variance` AND `compute_phase_b_trigger_cells(...)` returns that cell name.
+  - Phase B trigger absence: feed clean data; assert `compute_phase_b_trigger_cells(...)` returns `[]`.
+  - Variance section suppression (FR-025 + FR-044 override case): feed 2-run data; assert variance compute returns valid output but the reporter omits the "Between-Run Variance" section AND FR-044's verdict line renders the override fallback message.
+- **Unit tests** — `tools/benchmark/tests/test_m6_1_3_proxy_edge_probes.py` (NEW):
+  - Wire-format round trip: synthesize a TimingCheckpoint with `pre_engine_ns`, `pre_engine_wall_ns`, `first_chunk_ns`, `first_chunk_mono_ns`, `engine_arrival_ns`, `engine_first_token_ns`; pass through the extractor; assert `seg_ingress_ms = (engine_arrival_ns - pre_engine_wall_ns) × 1e-6` and `seg_egress_ms = (first_chunk_mono_ns - engine_first_token_ns) × 1e-6` (FR-004 + FR-005).
+  - Negative-value assertion (FR-006): feed a TimingCheckpoint with `engine_arrival_ns < pre_engine_wall_ns` (clock-anomaly case); assert the per-RPC row is marked as a clock anomaly AND the offending raw values are logged. Feed a cell with > configurable-fraction of clock anomalies; assert the cell receives the `clock_anomaly` warning and classifier downgrades to `inconclusive`.
+  - Embed-cell no-emission (FR-003 + AS 1.7): feed a unary RPC's TimingCheckpoint (no `pre_engine_wall_ns` / `first_chunk_mono_ns`); assert `seg_ingress_ms` and `seg_egress_ms` are `null` and the negative-value assertion is NOT fired.
+  - Strict-superset compat (FR-010 + SC-008): synthesize an M6.1.3 artifact JSON with `seg_ingress_ms` / `seg_egress_ms` / `m6_1_3_*` audit fields / `between_run_variance` block; parse with an M6.1.1-vintage reader; assert no parse error and the unknown top-level keys are ignored cleanly.
+- **Unit tests** — `tools/benchmark/tests/test_m6_1_3_cli.py` (NEW):
+  - All `--m6_1_3-*` flags parse with their documented defaults (FR-034 + FR-035 + FR-036).
+  - Mutual exclusion: `--m6_1_3 --m6_1_3-validate` → argparse error; `--m6_1_3 --m6_1_2-validate` → argparse error; full pairwise sweep against all 14 prior mode flags listed in FR-034.
+  - Default-inheritance regression (FR-036 + round-2 carry-over from M6.1.2 FR-027): assert `--m6_1_3-modal-region` defaults to `"eu-west-1"`, `--m6_1_3-base-seed` defaults to `42`, `--m6_1_3-model` defaults to `"Qwen/Qwen3-8B"` (all sourced verbatim from M6.1.2's defaults which in turn match M6.1.1's). Fail loudly if any drifts.
+  - Modifier defaults per mode (FR-022 + FR-023): under `--m6_1_3` assert `--m6_1_3-diagnose-repeat` defaults to 5 and `--m6_1_3-diagnose-n` defaults to 50; under `--m6_1_3-validate` assert `--m6_1_3-diagnose-repeat` defaults to 1.
+  - Output-path inference (FR-038): under `--m6_1_3-validate` assert `--m6_1_3-report-out` defaults to `docs/benchmarks/m6_1_3-attribution-closure-validate.md`; under `--m6_1_3` (with default modifiers) defaults to `docs/benchmarks/m6_1_3-attribution-closure.md`; under `--m6_1_3 --m6_1_3-diagnose-repeat=1 --m6_1_3-diagnose-n=200` defaults to `docs/benchmarks/m6_1_3-attribution-closure-phase-b.md`.
+- **Unit tests** — `tools/benchmark/tests/test_m6_1_3_symmetric_prompts.py` (NEW):
+  - Shared-helper module roundtrip: import `symmetric_prompts` from the new shared location; invoke against canned inputs; assert outputs match the M5.2-era `m5_2_symmetry`-style behavior (same prompt for same iteration index across cohorts).
+  - M5.2 back-compat (FR-019 + round-2 Q4): import via the legacy path (`from vllm_grpc_bench.m5_2_symmetry import ...` or whatever the re-export shim chose); assert the legacy import resolves to the shared helper without behavior change.
+  - Symmetric-mode invariant (FR-020): when `--m6_1_3-symmetric-prompts` is set, assert per-cohort token-count and token-hash distributions are byte-identical across cohorts for the same iteration index.
+- **Unit tests** — `tools/benchmark/tests/test_m6_1_3_artifact_schema.py` (NEW):
+  - Three-path scheme (FR-038 + round-2 Q1): assert validate sweep writes to `m6_1_3-attribution-closure-validate.{md,json}`; publish sweep writes to `m6_1_3-attribution-closure.{md,json}`; Phase B writes to `m6_1_3-attribution-closure-phase-b.{md,json}`; `--m6_1_3-report-out` override takes precedence over mode-inferred path.
+  - 5-segment sum canonical (SC-002 + round-4 Q1): synthesize a per-cell row with all 5 named segments populated; assert `seg_ab_ms + seg_queue_ms + seg_prefill_ms + seg_ingress_ms + seg_egress_ms` converges to `engine_ttft_ms` within ±1 ms.
+  - Cohort_set / cohort_omissions inheritance from M6.1.2: assert M6.1.3 artifacts carry these top-level keys with M6.1.2's invariants intact.
+- **Integration test** — `tools/benchmark/tests/test_m6_1_3_validate_cli.py` (NEW): CLI-only test exercising `--m6_1_3-validate --m6_1_3-skip-deploy` against a stub RPC driver that returns canned timing + audit data, end-to-end through the sweep orchestrator + reporter, asserting the validate-sibling artifact JSON parses + contains the new wire-key-derived columns + the audit reporter section + the 7-bucket classifier output. No Modal compute required.
+- **Integration test** — `tools/benchmark/tests/test_m6_1_3_publish_multirun_cli.py` (NEW): CLI-only test exercising `--m6_1_3 --m6_1_3-diagnose-repeat=3 --m6_1_3-skip-deploy` against the stub driver (using repeat=3 instead of repeat=5 to keep the test fast); asserts `phase_1_runs[]` accumulates 3 entries, the "Between-Run Variance" section renders, the Phase B trigger verdict line renders (either "Phase B required: ..." or "Phase B not required"), and the per-run audit appendix renders only when per-run verdicts disagree with the pooled verdict (FR-016a + round-2 Q5).
+- **CI gate (Constitution Principle IV)**: All new tests run in the same `pytest` invocation as the existing M6.1.1 + M6.1.2 test suite; failure blocks the M6.1.3 PR merge gate. The local-lint chain (`ruff check`, `ruff format --check`, `mypy --strict`, `pytest`) per [`feedback_local_lint_chain`](../../specs/022-m6-1-real-prompt-embeds/checklists/requirements.md) memory must pass before push.
+
+**Target Platform**:
+
+- **Code changes**: operator workstation only — no Modal compute required for code/lint/test gates.
+- **Smoke-equivalent validation sweep** (`--m6_1_3-validate`): Modal A10G GPU instance in `eu-west-1` (FR-036 default, sourced verbatim from M6.1.2 → M6.1.1). Driven from operator workstation. `tcptraceroute` installed for the inherited M6.1.2 topology probe.
+- **Milestone-publishing sweep** (`--m6_1_3` at `repeat=5`): same Modal config as validate. Operator's tunnel must stay alive across the ~75 min multi-run; preemption-aware URL refresh per FR-028 handles transient rotations.
+- **Phase B sweep** (`--m6_1_3 --m6_1_3-diagnose-repeat=1 --m6_1_3-diagnose-n=200`): same Modal config. ~60 min single run at 4× the M6.1.1 baseline sample size.
+
+**Project Type**: Sibling library + benchmark harness — Python monorepo with `proxy/`, `frontend/`, `client/`, `proto/`, `tools/benchmark/`, `scripts/`, `docs/benchmarks/`. M6.1.3 is a Phase 1 attribution-closure sub-milestone (additive to M6 / M6.1 / M6.1.1 / M6.1.2 harness + the new wire vocabulary). Unlike M6.1.2 (which was harness-only), M6.1.3 modifies the frontend servicers (`packages/frontend/`) to emit the new wire keys — but the changes are strictly additive trailing-metadata / terminal-event keys, with no behavioral change to the existing RPC handlers.
+
+**Performance Goals**:
+
+- SC-001: `--m6_1_3` publish sweep completes in ~75 min wall-clock on Modal A10G `eu-west-1` (5 × ~15 min per single-sweep run, matching M6.1.1's per-sweep profile within Modal cold-start variance). Preceding `--m6_1_3-validate` adds ~15 min.
+- SC-002: validate-sibling artifact contains non-null `seg_ingress_ms` + `seg_egress_ms` for all chat_stream cells; canonical 5-segment sum converges to `engine_ttft_ms` within ±1 ms (round-4 Q1).
+- SC-003: publish sweep produces one of 7 classifier labels (+ `inconclusive_high_variance`) per chat_stream cell; M6.1.1's two `inconclusive` cells (c=4, c=8) re-classify to attributable labels.
+- SC-004: both validate + canonical publish artifacts contain per-RPC sidecar with `tokenized_prompt_length` + `tokenized_prompt_hash` (round-4 Q1 propagation).
+- SC-005: audit verdict at `chat_stream c=1` is one of three explicit forms; markdown carries the corresponding recommendation per FR-017 / FR-018.
+- SC-006: publish sweep produces `phase_1_runs[]` with 5 entries + non-null `between_run_variance` block.
+- SC-007: reader can determine label, root-cause, c=4 between-run variance fraction, and audit recommendation in under 5 min from the published markdown.
+- SC-008: M6.1.1-aware reader parses all 3 M6.1.3 artifacts without parse error (strict-superset).
+- SC-009: Total Modal spend ~$1.74 (Phase A only, validate + publish) or ~$2.90 (with Phase B fired per FR-043 trigger); hard cap ~$6.05 including optional Phase C + D (round-3 Q3 + round-4 Q3).
+- SC-010: `contracts/instrumentation.md` updated with the 4 new wire keys, 7-bucket classifier, compound labels, between_run_variance, additive-strict-superset versioning convention (round-3 Q1 propagation).
+- SC-011: M6.2 / M7 / M8 inherit M6.1.3 conventions zero-config (except `--m6_1_3-symmetric-prompts` which is operator-invoked).
+- SC-012: Binding on M6.2 spec author — accept the H1-confirmed symmetric-prompts recommendation or document divergence.
+- SC-013: Negative-value assertion (FR-006) fires in < 0.5% of streaming-path RPCs in BOTH the validate artifact AND the canonical publish artifact (round-3 Q5 dual-gate).
+
+**Constraints**:
+
+- **Frontend-servicer scope** (FR-001 / FR-002 / FR-003 / FR-012 / FR-013 / FR-014): wire-key emission lands in `packages/frontend/src/vllm_grpc_frontend/chat.py` (`CompleteStream` streaming path: proxy-edge + audit keys) and `packages/frontend/src/vllm_grpc_frontend/completions.py` (`CompleteStream`: proxy-edge + audit keys; `Complete` unary: audit keys only — proxy-edge gap doesn't apply to unary per FR-003). Touch is additive; no behavioral change to RPC handling.
+- **Harness scope** (FR-021 / FR-033): all other code changes confined to `tools/benchmark/src/vllm_grpc_bench/` and `tools/benchmark/tests/`. No edits to `proxy/`, `client/`, `proto/`, `scripts/python/modal_bench_rest_grpc_server.py`, or any vLLM / torch source.
+- **No `.proto` edits**: wire keys are added via gRPC trailing-metadata (string-keyed) and REST SSE / JSON terminal-event objects — neither requires proto schema changes (Constitution Principle I).
+- **No engine path changes** (FR-033): the M6.1.1 + M6.1.2 Modal endpoint is reused unchanged; `provide_m6_endpoint` + `provide_m6_1_rpc_driver` are not modified for the audit / probe paths; the M5.2-shared symmetric_prompts module is the one cross-milestone code surface added.
+- **Verdict-body preservation** (FR-031 + round-3 Q2): M6 / M6.1 / M6.1.2 published markdowns and JSONs UNCHANGED. M6.1.1's markdown receives exactly ONE leading note line; its JSON is untouched. M6.1.3's markdown carries the reciprocal cross-reference per FR-041.
+- **Strict-superset schema** (FR-010 + round-3 Q1): all M6.1.3 additions (proxy-edge keys, audit keys, new segments, new classifier labels, `between_run_variance` block) are additive; `schema_version` stays at `"m6_1_1.v1"` for both prefix families. Pre-M6.1.3 readers ignore unknown keys cleanly.
+- **Wire schema is shared** (FR-002 + FR-010): proxy-edge keys use the `m6_1_1_*` prefix (extending M6.1.1's vocabulary); audit keys use the `m6_1_3_*` prefix (new category within the extensible vocabulary). The prefix is a naming convention, not a versioning signal.
+- **Streaming-only constraint** (FR-003 + AS 1.7): proxy-edge probes emit on chat_stream (`CompleteStream` in chat.py + completions.py) only. The unary `Complete` path in completions.py emits the audit keys (FR-014 both-RPC-kinds) but NOT the proxy-edge keys.
+- **Shared symmetric-prompts helper** (FR-019 + round-2 Q4): the M6.1.3 symmetric-prompts wiring uses a shared helper module that M5.2's historical sweep also imports — port-in-place duplication is explicitly NOT acceptable. M5.2's `m5_2_symmetry.py` is either relocated to the shared location with a re-export shim, or M5.2's sweep is updated to import from the new shared module (mechanic deferred to Phase 1's contracts work).
+- **Single CLI entry per mode** (FR-034 + round-2 Q2): `--m6_1_3` and `--m6_1_3-validate` share one dispatch function `run_m6_1_3(args, *, sweep_mode)` (matching M6.1.2's `--m6_1_2` + `--m6_1_2-validate` pattern); `sweep_mode: Literal["full", "validate"]` is recorded in `run_meta.sweep_mode` artifact metadata.
+- **Unified high-variance threshold** (FR-026 + FR-043 + round-2 Q3): between-run stddev ÷ within-run CI half-width is the single threshold driving both the `inconclusive_high_variance` inner-label override AND the Phase B publication requirement. One `/speckit-plan` knob, not two; Phase B trigger verdict derives mechanically from the cell-label list.
+- **Pinned preemption threshold** (FR-028 + round-3 Q3): the preemption-recurrence abort fires at strictly > 2 preemptions in a single multi-run sequence. Pinned in spec; no `/speckit-plan` deferral.
+- **5-segment sum canonical** (SC-002 + round-4 Q1): the per-cell engine_ttft_ms decomposition is exactly `seg_ab_ms + seg_queue_ms + seg_prefill_ms + seg_ingress_ms + seg_egress_ms`. `seg_arrival_ms` is dormant in M6.1.3 (`frontend_arrival_jitter` label remains in the bucket list for backward-compat only per FR-008a revised row 4); never appears in compound labels; never fires as primary attribution.
+- **Compound-label vocabulary canonical** (FR-008a + round-2 Q2): the 6-row mapping table from classifier label → abbreviated identifier → driving segment field is load-bearing spec-level vocabulary, documented in `contracts/instrumentation.md` per FR-011, inherited unchanged by M6.2 / M7 / M8.
+- **M6.1.1 forward-pointing annotation minimal-touch** (FR-031 + round-3 Q2): single leading `> **Note**: ...` line in M6.1.1's markdown body, no body-content mutation, no appended subsection, no sibling annotation file. Sets project-wide convention for superseding-milestone updates.
+- **Phase B conditional** (FR-043 + FR-044 + round-3 Q3): Phase B is required exactly when one or more cells carry `inconclusive_high_variance` per the unified threshold (FR-026); otherwise operator-discretionary. Phase A publish-run reporter emits the trigger verdict line at the end of the "Between-Run Variance" section (FR-044), with the override fallback message when the operator runs `--m6_1_3-diagnose-repeat < 3` and the variance section is suppressed.
+- **Dual-gate clock-anomaly threshold** (SC-013 + round-3 Q5): the 0.5%-of-streaming-RPCs negative-value assertion budget applies to BOTH the validate artifact AND the canonical publish artifact, at the same threshold.
+
+**Scale/Scope**:
+
+- **New module files**: 8 — `m6_1_3_types.py`, `m6_1_3_sweep.py`, `m6_1_3_reporter.py`, `m6_1_3_validate.py`, `m6_1_3_classifier.py`, `m6_1_3_audit.py`, `m6_1_3_variance.py`, plus the cross-milestone `symmetric_prompts.py` shared helper. Combined: ~1500–2200 LOC.
+- **Modified module files**: 5 — `packages/frontend/src/vllm_grpc_frontend/chat.py` (proxy-edge + audit key emission in CompleteStream; ~25-40 LOC), `packages/frontend/src/vllm_grpc_frontend/completions.py` (same for streaming + audit-only for unary; ~40-60 LOC), `tools/benchmark/src/vllm_grpc_bench/rest_shim.py` (terminal-event handler reads new keys; ~15-25 LOC), `tools/benchmark/src/vllm_grpc_bench/m6_1_1_timing.py` (extractor populates new TimingCheckpoint optional fields; ~10-20 LOC), `tools/benchmark/src/vllm_grpc_bench/__main__.py` (argparse wiring; ~120-180 LOC). Plus the M5.2 `m5_2_symmetry.py` / `m5_2_sweep.py` back-compat (relocation OR import-target update; ~10-30 LOC depending on chosen mechanic).
+- **New test files**: 8 — `test_m6_1_3_classifier.py`, `test_m6_1_3_audit.py`, `test_m6_1_3_variance.py`, `test_m6_1_3_proxy_edge_probes.py`, `test_m6_1_3_cli.py`, `test_m6_1_3_symmetric_prompts.py`, `test_m6_1_3_artifact_schema.py`, plus 2 integration tests (`test_m6_1_3_validate_cli.py`, `test_m6_1_3_publish_multirun_cli.py`). Combined: ~1200–1800 LOC.
+- **Modified doc files**: 2 — `contracts/instrumentation.md` (extend with M6.1.3 wire vocabulary + classifier extension + compound labels + variance block + versioning convention per FR-011 + SC-010); `docs/benchmarks/m6_1_1-engine-cost-instrumentation.md` (single leading-note line per FR-031).
+- **New benchmark artifacts**: 3 — validate sibling, canonical publish, Phase B sibling (FR-038 + FR-045).
+- **Modal compute**: ~$1.74 (Phase A only) to ~$2.90 (with Phase B); hard cap ~$6.05 including optional Phase C + D per SC-009 + FR-042 round-4 Q3.
+
+## Constitution Check
+
+*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+
+Evaluated against the 5 principles in `.specify/memory/constitution.md` (v1.0.0):
+
+| Principle | Status | Notes |
+|---|---|---|
+| **I. Proto-First** | **PASS** | M6.1.3 makes no `.proto` edits. The 4 new wire keys (2 proxy-edge with `m6_1_1_*` prefix + 2 audit with `m6_1_3_*` prefix) are added at the gRPC trailing-metadata layer (string-keyed) and the REST SSE / JSON terminal-event object — neither requires proto schema changes. The new top-level artifact fields (`between_run_variance`) and per-cell segment columns (`seg_ingress_ms`, `seg_egress_ms`) are JSON-schema additions only; JSON manifests are not proto-tracked. The new classifier labels (`proxy_ingress_dominated`, `proxy_egress_dominated`, `inconclusive_high_variance`, `multi_factor_*` compound) are string enums in JSON, not proto enums. |
+| **II. Library Dependency, Not Fork** | **PASS** | M6.1.3 uses `vllm` + `torch` + `grpcio` + `httpx` + `modal` + `tcptraceroute` as ordinary pinned dependencies (the last inherited from M6.1.2). No vLLM, torch, Modal source modification. The proxy-edge probes work entirely client-side per spike #4 (vLLM's `RequestStateStats.arrival_time` / `first_token_ts` are already exposed; M6.1.3 just compares them against the frontend's wall-clock + monotonic anchors). The BLAKE2b-8 hash is standard library. The shared symmetric-prompts helper is a project-internal refactor, not a fork of any external library. |
+| **III. Phase Discipline** | **PASS** | M6.1.3 is a canonical milestone in [`docs/PLAN.md`](../../docs/PLAN.md) (Draft v7) — M6.1.3 §259-307. Spec scope matches PLAN.md M6.1.3: three sub-items (#4 + #5 + #6) from `spike/m6-1-roadmap-additions`. Out-of-scope items (FR-033 / spec out-of-scope notes): deeper attribution bisection beyond the proxy-edge probes (M6.1.4 territory if gRPC trailer-emit is the remaining culprit); upstream vLLM contributions (probes work client-side); Phase C engine-config probes (prefix-cache disable, reversed cohort order — operator-triggered with `/speckit-plan`-defined flags, not invoked by default per FR-042); `max_tokens` axis (M6.2); corpus diversity (M7); multi-model (M8). The conditional Phase B (per FR-043) is in-scope but operator-discretionary; the optional Phase C / Phase D (per FR-042) are explicitly out-of-scope deliverables of M6.1.3 closure even though their CLI flags exist for follow-up operator use. |
+| **IV. CI is the Merge Gate** | **PASS** | All new test files (`test_m6_1_3_*.py`) + 2 integration tests run in the same `pytest` invocation as the existing M6.1.1 + M6.1.2 test suite; failure blocks the M6.1.3 PR merge. Local-lint chain (`ruff check`, `ruff format --check`, `mypy --strict`, `pytest`) per [`feedback_local_lint_chain`](../../specs/022-m6-1-real-prompt-embeds/checklists/requirements.md) memory must pass before push. The default-inheritance regression test (`test_m6_1_3_cli.py`'s assertions on `--m6_1_3-modal-region` / `-base-seed` / `-model`) prevents silent default drift via CI. The two integration tests exercise the full CLI → orchestrator → reporter path against a stub driver, catching wiring regressions without Modal compute. The negative-value assertion's 0.5% RPC budget (SC-013) is verifiable in CI from the artifact JSON output. |
+| **V. Honest Measurement** | **PASS** | The entire milestone IS an Honest-Measurement upgrade: M6.1.1's two `inconclusive` cells were honest about unattributed budget but failed to characterize WHERE that budget lived. M6.1.3's proxy-edge probes bisect the gap (Story 1); the per-cohort audit reveals whether prompt-content drift drives the c=1 finding (Story 2); the multi-run variance characterization bounds true cohort-comparison uncertainty alongside the bootstrap CIs that capture only sample noise (Story 3). The reporter renders contradictions explicitly: the per-run audit appendix MUST surface disagreements between per-run and pooled verdicts (FR-016a + round-2 Q5); the compound-label narrative cites contributing-segment shares so readers judge near-ties (FR-009 + round-2 Q2); the Phase B trigger verdict line tells the operator whether the unified high-variance threshold fired (FR-044). The negative-value clock-anomaly assertion (FR-006 + SC-013 dual-gate) is the canary against silent clock-source drift. The three-artifact publishing scheme (validate / canonical / Phase B sibling per FR-038) ensures no re-run clobbers prior data. M6.1.1's forward-pointing annotation (FR-031 round-3 Q2 minimal-touch) keeps the prior-milestone body verbatim while pointing readers at the updated verdicts. |
+
+**Result: 5/5 PASS. No violations. Complexity Tracking is empty.**
+
+Re-check after Phase 1 design: see "Post-Design Constitution Check" at the end of this document.
+
+## Project Structure
+
+### Documentation (this feature)
+
+```text
+specs/026-m6-1-3-attribution-closure/
+├── plan.md                     # This file (/speckit-plan output)
+├── research.md                 # Phase 0 — research items + decisions (/speckit-plan output)
+├── data-model.md               # Phase 1 — entity shapes for the new wire keys, segments, classifier labels, variance + audit dataclasses (/speckit-plan output)
+├── quickstart.md               # Phase 1 — operator playbook: validate sweep → publish sweep → conditional Phase B → ANALYSIS.md + contracts/instrumentation.md update → PR (/speckit-plan output)
+├── contracts/
+│   ├── cli.md                  # The --m6_1_3 + --m6_1_3-validate CLI surface + 3 modifier flags + 11 namespaced sub-flags + mutual exclusion + verbatim-inheritance defaults
+│   ├── wire-vocabulary.md      # The 4 new wire keys (2 proxy-edge m6_1_1_*, 2 audit m6_1_3_*), the extractor mapping, the additive-strict-superset versioning convention
+│   ├── classifier.md           # The 7-bucket decision tree, the FR-008a compound-label tie-breaking rule, the canonical 6-row classifier-label → abbreviated-identifier → driving-segment mapping table, the `inconclusive_high_variance` outer-override semantics, the `frontend_arrival_jitter` dormancy note
+│   └── artifact-schema.md      # The new top-level `between_run_variance` block, the three-path publishing scheme (validate sibling / canonical / Phase B sibling), the per-run audit appendix conditional rendering, the Phase B trigger verdict line, the M6.1.1 forward-pointing annotation contract
+├── spec.md                     # Feature spec (existing, 18 Q/A clarifications across 4 rounds)
+├── checklists/
+│   └── requirements.md         # Spec quality checklist (existing)
+└── tasks.md                    # /speckit-tasks output (NOT created by /speckit-plan)
+```
+
+### Source Code (repository root — extending existing layout)
+
+M6.1.3 adds 8 new modules (7 `m6_1_3_*` + 1 shared `symmetric_prompts.py`) + 5 modified existing files. Frontend servicers are touched for the first time in an M6.x sub-milestone (M6.1.2 was harness-only); harness changes follow the M6.1.2 + M6.1.1 parallel-module pattern.
+
+```text
+tools/benchmark/src/vllm_grpc_bench/
+├── m6_1_3_types.py             # NEW — dataclass definitions: M6_1_3SweepArtifact (extends M6_1_2SweepArtifact with new top-level `between_run_variance` field), M6_1_3PerRunAuditVerdict, M6_1_3PerCellAuditAggregate, M6_1_3CompoundLabel (Literal type combining the 7 base + the multi_factor_* compound space + `inconclusive_high_variance` outer label).
+├── m6_1_3_sweep.py             # NEW — sweep orchestrator: multi-run loop with FR-028 preemption-aware URL refresh (port the M5.2 pattern from m5_2_sweep.py), FR-022 repeat semantics (default 5 under --m6_1_3, default 1 under --m6_1_3-validate), FR-023 n override semantics; inherits M6.0a-corrected concurrent dispatch + M6.1.1 classifier instrumentation + M6.1.2 4-cohort iteration + network_paths probe-once-per-sweep behavior (FR-030 + round-2 Q1).
+├── m6_1_3_classifier.py        # NEW — extends M6.1.1's 5-bucket tree to 7 buckets (FR-008 proxy_ingress_dominated / proxy_egress_dominated); applies FR-008a highest-share-wins / compound-label tie-breaking with the 5pp dominance margin; FR-026 inconclusive_high_variance outer override (consumes between_run_variance from m6_1_3_variance.py); FR-008a `frontend_arrival_jitter` dormancy enforcement (round-4 Q1); legacy fallback to M6.1.1's 5-bucket tree when pre-M6.1.3 manifest is rehydrated.
+├── m6_1_3_audit.py             # NEW — pooled audit aggregation per FR-016 + round-1 Q5: aggregate per-RPC audit data across all phase_1_runs[] into one per-cohort distribution per cell (n_rpcs = N × n per cohort); apply FR-016's H1 / H2 / rejection criterion; emit FR-017 / FR-018 spec-decision recommendations conditional on the chat_stream c=1 verdict; emit per-run verdicts for the FR-016a conditional appendix (round-2 Q5).
+├── m6_1_3_variance.py          # NEW — compute_between_run_variance(phase_1_runs) per FR-024 produces (mean_of_means_ms, stddev_of_means_ms, n_runs) per cell × cohort; FR-027 cohort-unhealthy handling; FR-043 + round-2 Q3 unified high-variance threshold check; compute_phase_b_trigger_cells(...) returns the cell list for FR-044's verdict line.
+├── m6_1_3_reporter.py          # NEW — render_json() / render_markdown() / write_m6_1_3_report() — mirrors m6_1_2_reporter.py but adds: seg_ingress + seg_egress columns in per-cell timing table (FR-009), classification narratives for the 2 new proxy_*_dominated labels + compound-label narrative with abbreviated identifiers (round-2 Q2), identifier legend (FR-009a + round-2 Q2), "Per-Cohort Prompt-Content Audit" section with the H1 verdict line (FR-016), conditional per-run audit appendix (FR-016a), spec-decision recommendation block (FR-017 / FR-018), "Between-Run Variance" section conditional on len(phase_1_runs) >= 3 (FR-025), Phase B trigger verdict line at end of variance section with FR-044 override fallback, "Phase B: n=200 Power Test" comparison section when invoked for the Phase B mode. Three-path output routing per FR-038 + round-2 Q1.
+├── m6_1_3_validate.py          # NEW — single CLI entry function run_m6_1_3(args, *, sweep_mode: Literal["full", "validate"]) handling both `--m6_1_3` and `--m6_1_3-validate` per round-2 Q2 (matches M6.1.2 pattern). Mode-inferred output path per FR-038. Records sweep_mode in run_meta.sweep_mode artifact metadata.
+├── symmetric_prompts.py        # NEW — cross-milestone shared helper per FR-019 + round-2 Q4. Same-prompt-for-same-iteration-index-across-cohorts semantics (M5.2-era cohort-prompt assignment). Imported by M6.1.3 sweep (when --m6_1_3-symmetric-prompts is set) AND by M5.2's historical sweep (back-compat); the M5.2-side wiring chooses between re-export shim at m5_2_symmetry.py OR direct import in m5_2_sweep.py (deferred to Phase 1's contracts work).
+├── m6_1_rpc_driver.py          # READ-ONLY (modified by M6.1.2; unchanged by M6.1.3) — the 4-cohort dispatch lands in M6.1.2 (FR-032); M6.1.3 reuses verbatim.
+├── m6_1_1_timing.py            # MODIFY — extractor populates new TimingCheckpoint optional fields per FR-004: `pre_engine_wall_ns`, `first_chunk_mono_ns` (proxy-edge), `tokenized_prompt_length`, `tokenized_prompt_hash` (audit). Uses the existing `_opt_int` / `_opt_str` patterns per the M6.1.1 wire-compatibility precedent. ~10-20 LOC net new. The per-RPC segment derivation (`seg_ingress_ms`, `seg_egress_ms`) is in m6_1_3_classifier.py / m6_1_3_sweep.py aggregator paths — not in this module.
+├── rest_shim.py                # MODIFY — REST SSE / JSON terminal-event handler reads the 4 new wire keys per FR-002 + FR-013 (terminal-event field path). Mirrors the gRPC trailing-metadata read in the timing.py extractor. ~15-25 LOC net new.
+├── m5_2_symmetry.py            # MODIFY (or remove + re-export shim) per FR-019 + round-2 Q4 — relocated to symmetric_prompts.py with a re-export shim at this path, OR removed entirely with m5_2_sweep.py updated to import from symmetric_prompts directly. Mechanic chosen in Phase 1 contracts work; either preserves M5.2's `--m5_2` historical re-runnability per FR-037.
+├── m5_2_sweep.py               # MODIFY (conditional, depends on the chosen m5_2_symmetry.py mechanic) — if symmetric_prompts.py replaces m5_2_symmetry.py without a re-export shim, this module's import line changes from `from .m5_2_symmetry import ...` to `from .symmetric_prompts import ...`. ~3-5 LOC. If the re-export shim is chosen, m5_2_sweep.py is UNCHANGED.
+├── __main__.py                 # MODIFY — add `--m6_1_3` + `--m6_1_3-validate` (mutually exclusive top-level mode flags per FR-034) and the 11 `--m6_1_3-*` namespaced sub-flags from FR-035 plus the 3 modifier flags (`--m6_1_3-diagnose-repeat`, `--m6_1_3-diagnose-n`, `--m6_1_3-symmetric-prompts`). Mutual-exclusion list per FR-034 (rejects against all M5.x / M6 / M6.1 / M6.1.1 / M6.1.2 mode flags). Wire both `--m6_1_3` and `--m6_1_3-validate` to run_m6_1_3(args, sweep_mode=...). ~120-180 LOC.
+├── m6_1_types.py               # READ-ONLY — M6_1_CELLS at lines 72-82 (the canonical 6-cell matrix) is REUSED by M6_1_3 unchanged.
+├── m6_1_2_types.py             # READ-ONLY — M6_1_2_COHORTS at the M6.1.2-defined 4-cohort tuple is REUSED by M6_1_3 unchanged (FR-032).
+├── m6_1_2_sweep.py             # READ-ONLY — the cohorts_at_concurrency() function (M5.2 tuned-pair-collapse-at-c=1 rule) is REUSED by M6_1_3 unchanged (FR-032).
+├── m6_1_1_classifier.py        # UNCHANGED — M6.1.1's 5-bucket classifier stays frozen so the `--m6_1_1-diagnose` historical re-run (per FR-037) remains identical. M6.1.3's 7-bucket extension lives in m6_1_3_classifier.py.
+├── m6_1_1_reporter.py          # UNCHANGED — M6.1.1's reporter stays frozen per FR-037; M6.1.3's reporter (with the new sections + columns) is m6_1_3_reporter.py.
+├── m6_1_2_reporter.py          # UNCHANGED — M6.1.2's reporter stays frozen per FR-037; M6.1.3's reporter mirrors it and extends with the new sections.
+
+packages/frontend/src/vllm_grpc_frontend/
+├── chat.py                     # MODIFY (CompleteStream path only) per FR-001 + FR-002 + FR-003 + FR-012 + FR-013 + FR-014: capture m6_1_1_t_pre_engine_wall_ns + m6_1_1_t_first_chunk_mono_ns + tokenized_prompt_length + tokenized_prompt_hash; emit via gRPC trailing metadata. ~25-40 LOC net new. The unary Complete path is N/A (chat has no unary RPC).
+├── completions.py              # MODIFY: CompleteStream gets proxy-edge keys + audit keys (4 keys total); Complete (unary) gets audit keys only per FR-003 + FR-014. ~40-60 LOC net new.
+
+tools/benchmark/tests/
+├── test_m6_1_3_classifier.py            # NEW — unit tests for the 7-bucket decision tree + compound-label tie-breaking + outer-override + legacy fallback + frontend_arrival_jitter dormancy.
+├── test_m6_1_3_audit.py                 # NEW — unit tests for pooled audit aggregation + H1 verdict + per-run appendix conditional rendering + pooled-n correctness.
+├── test_m6_1_3_variance.py              # NEW — unit tests for compute_between_run_variance + cohort-unhealthy handling + Phase B trigger logic + variance section suppression cases.
+├── test_m6_1_3_proxy_edge_probes.py     # NEW — unit tests for wire-format round-trip + negative-value assertion + embed-cell no-emission + strict-superset compat.
+├── test_m6_1_3_cli.py                   # NEW — unit tests for argparse: flag presence, defaults (with verbatim-inheritance regression from M6.1.2 → M6.1.1), mutual exclusion, modifier defaults per mode, output-path inference.
+├── test_m6_1_3_symmetric_prompts.py     # NEW — unit tests for the shared helper module: roundtrip behavior, M5.2 back-compat, symmetric-mode invariant.
+├── test_m6_1_3_artifact_schema.py       # NEW — unit tests for the three-path output scheme + canonical 5-segment sum + M6.1.2-inherited cohort_set / cohort_omissions invariants.
+├── test_m6_1_3_validate_cli.py          # NEW — integration test: --m6_1_3-validate --m6_1_3-skip-deploy against stub driver, end-to-end through orchestrator + reporter, asserts validate-sibling artifact JSON contents.
+└── test_m6_1_3_publish_multirun_cli.py  # NEW — integration test: --m6_1_3 --m6_1_3-diagnose-repeat=3 --m6_1_3-skip-deploy against stub driver, asserts phase_1_runs[] accumulates, variance section renders, Phase B trigger verdict line renders, per-run audit appendix renders conditionally.
+
+docs/benchmarks/
+├── m6_1_2-methodology-discipline.{md,json}              # READ-ONLY — M6.1.2's published baseline; M6.1.3 inherits the 4-cohort matrix + network_paths + cohort_set conventions per FR-032.
+├── m6_1_1-engine-cost-instrumentation.{md,json}         # READ-ONLY (JSON); MODIFY (markdown: single leading note line per FR-031 round-3 Q2). Consumed via --m6_1_3-m6-1-1-baseline (FR-035 default).
+├── m6_1_3-attribution-closure.{md,json}                 # NEW — canonical M6.1.3 publish artifact from `--m6_1_3` at repeat=5 (FR-038).
+├── m6_1_3-attribution-closure-validate.{md,json}        # NEW — validate sibling from `--m6_1_3-validate` (FR-038 round-2 Q1).
+├── m6_1_3-attribution-closure-phase-b.{md,json}         # NEW (CONDITIONAL) — Phase B sibling from `--m6_1_3 --m6_1_3-diagnose-repeat=1 --m6_1_3-diagnose-n=200` (FR-045). Conditional on FR-043 trigger or operator-discretionary invocation.
+└── m6_1_3-events.jsonl                                  # NEW — sidecar JSONL extending M6.1.1's pattern with the audit fields per FR-015.
+
+contracts/instrumentation.md                             # MODIFY — extend with M6.1.3 wire vocabulary (4 new keys), 7-bucket classifier, compound labels, between_run_variance block, inconclusive_high_variance label, additive-strict-superset versioning convention (FR-011 + SC-010 + round-3 Q1).
+CLAUDE.md                                                # MODIFY — update SPECKIT plan reference between markers to point at this plan (Phase 1 step 3 of /speckit-plan).
+```
+
+**Structure Decision**: M6.1.3 is structurally parallel to M6.1.2 (which was parallel to M6.1.1) — a new `m6_1_3_*` module family lands alongside the existing `m6_1_2_*` and `m6_1_1_*` modules without modifying them. This preserves FR-037 (M6.1.1 / M6.1.2 historical re-run capability stays frozen) AND the "one mode flag per milestone" pattern (FR-034). The cell matrix is REUSED from `m6_1_types.py:72-82` (`M6_1_CELLS`); the cohort tuple is REUSED from `m6_1_2_types.py` (`M6_1_2_COHORTS`); the tuned-pair-collapse-at-c=1 rule is REUSED from `m6_1_2_sweep.py`'s `cohorts_at_concurrency()` function (FR-032).
+
+Three genuine structural deltas:
+1. **Frontend-servicer code touch** (`packages/frontend/`) — the first M6.x sub-milestone to modify frontend servicer code; the touch is additive (new wire keys, no behavioral change).
+2. **Cross-milestone shared helper** (`symmetric_prompts.py`) — a new project-wide convention per FR-019 round-2 Q4; sets the precedent for M6.2 / M7 / M8 to inherit cleanly via direct import.
+3. **Three published artifacts** — distinct paths per FR-038 round-2 Q1 (validate / canonical / Phase B) vs M6.1.2's single canonical path.
+
+The 8 new `m6_1_3_*` modules split by concern: `_types` (dataclasses), `_sweep` (orchestrator + multi-run + preemption-aware refresh), `_reporter` (rendering), `_validate` (CLI entry, single function for both mode flags), `_classifier` (7-bucket extension + compound labels + outer override), `_audit` (pooled audit verdict), `_variance` (between-run compute + Phase B trigger). The split is intentional — the classifier / audit / variance modules each carry significant pure-function logic that's easier to unit-test in isolation than as part of a larger orchestrator module.
+
+## Complexity Tracking
+
+> Empty — Constitution Check passed 5/5 with no violations.
+
+Per the project's `feedback_thorough_clarify_cycles` memory, the spec underwent 4 rounds of clarification (18 Q/A bullets total — 5 in round 1, 5 in round 2, 5 in round 3, 3 in round 4) before this plan was written. The plan inherits those decisions verbatim. The genuinely new architectural concepts (proxy-edge probes' in-process clock alignment, the shared symmetric-prompts helper module, the multi-run preemption-aware loop) are each bounded by the spec: probe correctness is guarded by FR-006's negative-value assertion + SC-013's dual-gate 0.5% RPC budget; the shared helper's M5.2 back-compat is enforced by `test_m6_1_3_symmetric_prompts.py` per FR-019; the preemption threshold is pinned at 2 per FR-028 round-3 Q3 (no `/speckit-plan` knob). The 4 remaining `/speckit-plan`-deferred numeric thresholds (FR-006 clock-anomaly fraction, FR-008 seg dominance threshold, FR-016 H1 2σ threshold, FR-026 unified high-variance threshold) are intentional tuning knobs whose literal values benefit from planning-round access to spike #4 / #5 / #6 data.
+
+---
+
+## Phase 0: Outline & Research
+
+See [`research.md`](./research.md) for the research items and their decisions. All NEEDS CLARIFICATION items were resolved during the 4-round `/speckit-clarify` cycle; Phase 0 captures the implementation-level investigation (R-1 through R-10) that complements those spec-level decisions.
+
+**Output**: `research.md` with all NEEDS CLARIFICATION resolved (none in Technical Context).
+
+## Phase 1: Design & Contracts
+
+See [`data-model.md`](./data-model.md), [`contracts/cli.md`](./contracts/cli.md), [`contracts/wire-vocabulary.md`](./contracts/wire-vocabulary.md), [`contracts/classifier.md`](./contracts/classifier.md), [`contracts/artifact-schema.md`](./contracts/artifact-schema.md), [`quickstart.md`](./quickstart.md).
+
+Agent context update: the SPECKIT plan reference in `/Users/bsansom/projects/vllm-grpc/CLAUDE.md` between the `<!-- SPECKIT START -->` and `<!-- SPECKIT END -->` markers is updated as part of Phase 1 step 3 to point at this plan's path.
+
+**Output**: `data-model.md`, `contracts/cli.md`, `contracts/wire-vocabulary.md`, `contracts/classifier.md`, `contracts/artifact-schema.md`, `quickstart.md`, updated `CLAUDE.md`.
+
+## Post-Design Constitution Check
+
+Re-evaluated against the 5 principles after Phase 1 design artifacts were drafted:
+
+| Principle | Status | Post-design notes |
+|---|---|---|
+| I. Proto-First | **PASS** | Confirmed by [`contracts/wire-vocabulary.md`](./contracts/wire-vocabulary.md) — every new wire key (4 total: 2 proxy-edge `m6_1_1_*` + 2 audit `m6_1_3_*`) emits via gRPC trailing metadata (string-keyed; no proto schema involvement) or REST SSE / JSON terminal-event object (JSON-typed; no proto schema involvement). The new artifact-schema additions ([`contracts/artifact-schema.md`](./contracts/artifact-schema.md)) are JSON-level; the new classifier labels ([`contracts/classifier.md`](./contracts/classifier.md)) are string enums in JSON. Zero `.proto` impact. |
+| II. Library Dependency, Not Fork | **PASS** | Confirmed by [`data-model.md`](./data-model.md) — every M6.1.3 edit lands in `tools/benchmark/` or `packages/frontend/`. The vLLM `AsyncLLM` invocation, Modal endpoint provisioning, `provide_m6_endpoint` / `provide_m6_1_rpc_driver` factories, and the gRPC frontend transport are unchanged. The new wire keys are emitted by the frontend servicers (which run in-process with the vLLM engine per spike #4); no upstream vLLM contribution needed. The shared `symmetric_prompts.py` module is a project-internal refactor; M5.2's back-compat is preserved per FR-019. |
+| III. Phase Discipline | **PASS** | Confirmed by [`contracts/wire-vocabulary.md`](./contracts/wire-vocabulary.md) + [`contracts/classifier.md`](./contracts/classifier.md) + [`contracts/artifact-schema.md`](./contracts/artifact-schema.md) — the wire vocabulary additions, classifier extension, and artifact-schema additions match exactly what M6.1.3 needs and no more. M6.2 (`max_tokens` axis), M7 (corpus), M8 (multi-model) functionality stays out — the schemas are forward-extensible via the same additive-strict-superset mechanism (round-3 Q1) but M6.1.3 itself adds only what its three Stories require. The conditional Phase B trigger (FR-043) is in-scope; Phase C (engine-config probes) and Phase D (multi-seed) are NOT invoked by default — they live as `/speckit-plan`-defined operator-triggered flags per FR-042. |
+| IV. CI is the Merge Gate | **PASS** | [`quickstart.md`](./quickstart.md) operator playbook includes the local-lint-chain step (`ruff check`, `ruff format --check`, `mypy --strict`, `pytest`) before any push per [`feedback_local_lint_chain`](../../specs/022-m6-1-real-prompt-embeds/checklists/requirements.md) memory. The new test files exercise: the 7-bucket classifier (`test_m6_1_3_classifier.py`), pooled audit aggregation (`test_m6_1_3_audit.py`), between-run variance + Phase B trigger (`test_m6_1_3_variance.py`), wire-key round-trip + negative-value assertion (`test_m6_1_3_proxy_edge_probes.py`), CLI surface + default-inheritance regression (`test_m6_1_3_cli.py`), shared-helper M5.2 back-compat (`test_m6_1_3_symmetric_prompts.py`), three-path output + 5-segment sum (`test_m6_1_3_artifact_schema.py`). Two integration tests (`test_m6_1_3_validate_cli.py` + `test_m6_1_3_publish_multirun_cli.py`) exercise full CLI → orchestrator → reporter without Modal. SC-013's 0.5%-of-RPCs clock-anomaly budget is CI-verifiable. |
+| V. Honest Measurement | **PASS** | [`contracts/classifier.md`](./contracts/classifier.md) + [`contracts/artifact-schema.md`](./contracts/artifact-schema.md) mandate the methodology guarantees: (a) proxy-edge probes bisect M6.1.1's unattributed budget with the negative-value assertion as a clock-source canary; (b) the per-cohort audit's pooled-distribution H1 verdict is rendered alongside per-run verdicts whenever they disagree (FR-016a + round-2 Q5 — disagreement-surfacing is non-optional); (c) the compound-label narrative cites contributing-segment shares so readers judge near-ties (FR-009 + round-2 Q2); (d) the `inconclusive_high_variance` outer label OVERRIDES the inner attribution when between-run noise exceeds the unified threshold — readers see both signals (FR-026); (e) the Phase B trigger verdict line tells the operator whether the multi-run variance signal warrants the n=200 power test (FR-044); (f) the three-artifact publishing scheme prevents re-run clobbering (FR-038 round-2 Q1); (g) the M6.1.1 forward-pointing annotation is minimal-touch and bidirectional (FR-031 round-3 Q2 + FR-041) — readers of either artifact can navigate to the other without one milestone's body being mutated. The artifacts all commit alongside the code change per Constitution V's "all benchmark numbers MUST be committed alongside the code". |
+
+**Result: 5/5 PASS post-design. No new complexity introduced.**
