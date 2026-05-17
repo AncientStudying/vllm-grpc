@@ -5,6 +5,16 @@
 **Status**: Draft
 **Input**: User description: "M6.0a as described in PLAN.md"
 
+## Clarifications
+
+### Session 2026-05-16
+
+- Q: PR shape — single vs two-PR sequence → A: Two-PR sequence: PR-1 ships the harness fix + regression test; PR-2 ships the corrected-dispatch artifact + dispatch-correction note (after the Modal re-run)
+- Q: `dispatch_mode` schema evolution → A: Strict-superset addition — new top-level `dispatch_mode` key alongside existing keys; no schema-version bump; pre-existing readers unaffected
+- Q: Intermediate (5 %–10 %) band decision rule, given known FR-010 classifier degeneracy → A: Defer to FR-010 classifier output unchanged; record raw spread numbers alongside the label in the manifest; FR-010 classifier-degeneracy fix stays a separate M6.1.1 issue out of M6.0a scope
+- Q: Regression test path coverage → A: Path-agnostic — single fake-driver test exercises `c=1` / `c=4` / `c=8`; verifies peak concurrent entries per concurrency level regardless of path (chat_stream / embed / embed-prompt-embeds)
+- Q: Warmup dispatch mode → A: Warmup matches measurement — at `c=N` cells, warmup bursts `c=N` RPCs in parallel; symmetric dispatch primes the steady state measurement will sample; smoke / warmup `seed=0` convention preserved verbatim
+
 ## User Scenarios & Testing *(mandatory)*
 
 <!--
@@ -106,8 +116,10 @@ with measured evidence.
 **Why this priority**: This is documentation that crystallises Stories 1 and 2
 into something a reader six months from now can interpret without reading the
 git history or the PR thread. It is genuinely valuable but not on the critical
-path to closing M6.1.1's PR #27 — the PR can merge once Stories 1 and 2 are
-done, with this note following in a small docs PR.
+path to closing M6.1.1's PR #27. M6.0a ships as a **two-PR sequence**: PR-1
+delivers the harness fix and regression test (unblocks M6.1.1 PR #27 the
+moment it merges); PR-2 delivers the corrected-dispatch artifact and this
+dispatch-correction note together, after the Modal re-run completes.
 
 **Independent Test**: Can be fully tested by checking that
 `docs/benchmarks/m6_0a-dispatch-correction.md` exists, has a stable URL, links
@@ -126,7 +138,7 @@ M6.1's published narrative.
 ### Edge Cases
 
 - **What happens if the corrected concurrent dispatch surfaces an engine-side issue (e.g., shared-state corruption or a Modal-side rate limit) that didn't appear under sequential dispatch?** The run is halted, the failure is recorded in the manifest, and the issue is filed as an out-of-scope blocker (M6.0a is harness-only; engine-side fixes belong to a separate milestone).
-- **What if the per-cohort spread falls in the (5 %, 10 %) middle band — neither clearly drift nor clearly channel-dependent?** The existing M6.1.1 FR-010 classifier runs and produces whatever label its thresholds yield; the output drives Phase 2 dispatch through M6.1.1's existing decision rules. M6.0a does not change those thresholds.
+- **What if the per-cohort spread falls in the (5 %, 10 %) middle band — neither clearly drift nor clearly channel-dependent?** The existing M6.1.1 FR-010 classifier runs and produces whatever label its thresholds yield; the output drives Phase 2 dispatch through M6.1.1's existing decision rules. M6.0a does not change those thresholds. The manifest additionally records the raw per-cohort spread numbers so reviewers can apply manual interpretation if the classifier output is known-degenerate on chat_stream cells (`seg_bc ≡ engine_ttft` by construction). The FR-010 classifier-degeneracy fix is tracked separately as an M6.1.1 issue, not as an M6.0a deliverable.
 - **What if seed determinism breaks under the corrected concurrent dispatch (e.g., the new implementation accidentally couples to async ordering)?** Acceptance Scenario 1.4 fails, the regression test catches it, the fix is rejected before merge. Determinism is a hard precondition.
 - **What if a single RPC in a concurrent batch fails partway?** The harness applies the existing retry / failure-handling rules unchanged — concurrent dispatch is purely a structural change to the dispatch step, not to retry or error policy.
 - **What if Modal cold-start or handshake timing differs under concurrent dispatch (e.g., handshake reuse changes)?** Cold-start data is recorded in the manifest as it always has been; if the cold-start profile differs from the audit baseline, the difference is reported but does not block closure.
@@ -139,14 +151,15 @@ M6.1's published narrative.
 
 - **FR-001**: The M6 measurement-loop dispatch step at concurrency `c` MUST issue up to `c` RPCs concurrently — so that across cohorts a single batch has up to `c` simultaneously in-flight RPCs visible to the engine.
 - **FR-002**: The dispatch fix MUST preserve per-RPC seed determinism — every `(cohort, batch index, base_seed)` triple resolves to the same seed under the corrected harness as under the pre-fix harness, regardless of completion order.
-- **FR-003**: A regression test MUST verify peak in-flight concurrency at `c=4` and `c=8` cells using a counting fake driver (e.g., a `Semaphore`-wrapped harness that records the maximum simultaneous entries), with `c=1` covered as a no-regression case.
+- **FR-003**: A regression test MUST verify peak in-flight concurrency at `c=4` and `c=8` cells using a counting fake driver (e.g., a `Semaphore`-wrapped harness that records the maximum simultaneous entries), with `c=1` covered as a no-regression case. The test is **path-agnostic** — a single fake-driver exercise at each concurrency level covers all benchmark paths (chat_stream, embed, embed-prompt-embeds), because the dispatch step in the measurement loop selects path *after* dispatch. Per-path matrix coverage is explicitly not required (would add maintenance surface without adding signal).
 - **FR-004**: The regression test failure MUST block the M6.1.1 PR #27 merge — the test is wired into the same gate set as ruff / mypy / pytest.
 - **FR-005**: M6, M6.1, and M6.1.1 MUST inherit the corrected dispatch behaviour through the existing measurement loop — there MUST NOT be a parallel-fork "concurrent vs sequential" code path the operator chooses between.
+- **FR-005a**: The warmup phase MUST dispatch concurrently at the cell's full concurrency `c` (symmetric with measurement). At `c=N` cells warmup issues up to `N` concurrent RPCs, so the steady-state cache / connection / KV state measurement samples is the state warmup primed. The smoke / warmup `seed=0` convention is preserved verbatim (the existing `max(0, seed - base_seed)` clamp continues to handle the seed=0 case).
 - **FR-006**: The `concurrency` field's documented semantics in the M6 / M6.1 / M6.1.1 type definitions MUST be updated from "metadata tag for round-robin sequencing" back to "actual in-flight parallelism", matching M5.x semantics.
-- **FR-007**: A corrected-dispatch re-run of `--m6_1_1-diagnose` MUST produce a manifest annotated with `dispatch_mode: concurrent` (or an equivalent unambiguous attribute) so downstream consumers can distinguish it from the 2026-05-16 sequential baseline.
+- **FR-007**: A corrected-dispatch re-run of `--m6_1_1-diagnose` MUST produce a manifest with a new top-level `dispatch_mode` key (value `concurrent`) added as a **strict-superset addition** to the M6.1.1 manifest schema — no schema-version bump, no nested re-organisation, no breaking change. Pre-existing M6.1.1-aware readers (including the M6.2 consumer) ignore the unknown key without error. The 2026-05-16 sequential-baseline audit run lacked this key (the harness did not yet emit it); readers MUST treat an absent `dispatch_mode` as `sequential` for backward-compatibility.
 - **FR-008**: The corrected-dispatch re-run MUST use parameters identical to the sequential baseline (`Qwen3-8B fp16`, Modal A10G eu-west-1, base seed 42, `n=50` per cohort per cell, 500 µs perturbation budget) — dispatch mode is the only variable that changes.
 - **FR-009**: The corrected-dispatch run's chat_stream per-cohort `engine_ttft_ms` spread MUST be reported in the published markdown for each cell (`c=1`, `c=4`, `c=8`), alongside the audit baseline spread for direct comparison.
-- **FR-010**: The M6.1.1 Phase 2 dispatch decision derived from the corrected run MUST be recorded as a single explicit field in the manifest — either "spread below 5 %, Phase 2(a) not needed" or "spread at or above 10 %, Phase 2 (a or b) applies" or "intermediate, follow FR-010 classifier output".
+- **FR-010**: The M6.1.1 Phase 2 dispatch decision derived from the corrected run MUST be recorded as a single explicit field in the manifest — either "spread below 5 %, Phase 2(a) not needed" or "spread at or above 10 %, Phase 2 (a or b) applies" or "intermediate, follow FR-010 classifier output". When the intermediate branch fires, the manifest MUST additionally record the raw per-cohort `engine_ttft_ms` spread numbers (per chat_stream cell) alongside the FR-010 classifier's emitted label, so that a reader can apply manual interpretation if the classifier's output is known-degenerate. The M6.0a deliverable does NOT redesign the FR-010 classifier — its known degeneracy on chat_stream cells (`seg_bc ≡ engine_ttft` by construction) is tracked separately as an M6.1.1 issue.
 - **FR-011**: The 2026-05-16 sequential-baseline audit file (`docs/benchmarks/m6_1_1-audit-2026-05-16-seq-dispatch.md`, committed at `b63947a`) MUST be preserved verbatim as the "before" data set — no edits to its body, only additive cross-links from new artifacts may reference it.
 - **FR-012**: A short dispatch-correction note (`docs/benchmarks/m6_0a-dispatch-correction.md`) MUST be published containing: bug description, fix summary, regression-test description, and a side-by-side per-cohort spread table (audit baseline vs corrected run).
 - **FR-013**: The dispatch-correction note MUST cross-link to (a) the audit baseline artifact, (b) the corrected-dispatch artifact, (c) PR #27, and (d) PLAN.md's M6.0a section.
@@ -154,6 +167,7 @@ M6.1's published narrative.
 - **FR-015**: M6.0a MUST NOT modify the published verdict tables for M6's main finding ("engine cost dominates protocol cost at realistic workloads") or M6.1's main finding ("real-prompt-embeds engine path equivalent to text-prompt path") — those findings are dispatch-robust.
 - **FR-016**: M6.0a's existence and outcome MUST be cross-referenced from M6.1's published narrative (the per-cohort drift sub-finding picks up a methodology-supersedence annotation once the corrected-dispatch result is known).
 - **FR-017**: Total Modal compute spend for the corrective re-run MUST be at most ~$1 (one Phase 1 sweep at the existing M6.1.1 budget).
+- **FR-018**: M6.0a MUST ship as a two-PR sequence. PR-1 contains the harness fix (FR-001 / FR-002 / FR-005 / FR-006 / FR-014) plus the regression test (FR-003 / FR-004) and MAY merge before the Modal re-run completes — it is the critical-path unblocker for M6.1.1 PR #27. PR-2 contains the corrected-dispatch artifact (FR-007 / FR-008 / FR-009 / FR-010), the dispatch-correction note (FR-012 / FR-013), and the M6.1 cross-reference (FR-016); it opens after the Modal re-run produces the "after" data.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -181,7 +195,7 @@ M6.1's published narrative.
 - M5.1 / M5.2 use a true concurrent dispatch pattern (`asyncio.gather(*(_channel_worker(i) for i in range(concurrency)))` in `m5_1_grpc_cohort.run_grpc_cohort` and `rest_cohort.run_rest_cohort`), and that pattern is the canonical reference the M6 harness will port. Confirmed by inspection prior to drafting this spec.
 - M6.1.1's PR #27 stays open during M6.0a; the audit data committed at `b63947a` is the "before" baseline and is not edited.
 - The Modal endpoint provisioning code (`provide_m6_endpoint` + `provide_m6_1_rpc_driver`) tolerates concurrent in-flight calls at the same level M5.1 / M5.2 produced; no Modal-side rate-limit re-tuning is anticipated.
-- `compute_rpc_seed` is purely a function of `(cohort, batch index, base_seed)` and does not couple to async ordering — concurrent dispatch will not perturb it. The smoke / warmup `seed=0` convention (already accommodated by the `max(0, seed - base_seed)` clamp) is preserved verbatim.
+- `compute_rpc_seed` is purely a function of `(cohort, batch index, base_seed)` and does not couple to async ordering — concurrent dispatch will not perturb it. The smoke / warmup `seed=0` convention (already accommodated by the `max(0, seed - base_seed)` clamp) is preserved verbatim. Warmup uses the same dispatch shape as measurement (see FR-005a) so the steady state it primes matches what measurement samples.
 - The 2026-05-16 audit run's per-segment timing numbers (`seg_ab`, `seg_bc`, `seg_cd`) are real and re-interpretable under corrected mechanisms — only the classifier *labels* are mechanically inevitable, not the underlying data.
 - M6.1's verdict-supersedes table itself stands; only the per-cohort drift sub-finding may pick up a methodology-supersedence annotation after the corrected run.
 - The open M6.1.1 PR #27 methodology issue regarding FR-010 classifier degeneracy on chat_stream cells (`seg_bc ≡ engine_ttft` by construction — filed at PR comment `4468600646`) is *not* in scope for M6.0a; it is a separate classifier-design issue handled in M6.1.1's resolution. M6.0a addresses dispatch mode only.
