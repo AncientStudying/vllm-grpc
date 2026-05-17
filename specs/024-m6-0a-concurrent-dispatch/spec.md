@@ -14,6 +14,7 @@
 - Q: Intermediate (5 %–10 %) band decision rule, given known FR-010 classifier degeneracy → A: Defer to FR-010 classifier output unchanged; record raw spread numbers alongside the label in the manifest; FR-010 classifier-degeneracy fix stays a separate M6.1.1 issue out of M6.0a scope
 - Q: Regression test path coverage → A: Path-agnostic — single fake-driver test exercises `c=1` / `c=4` / `c=8`; verifies peak concurrent entries per concurrency level regardless of path (chat_stream / embed / embed-prompt-embeds)
 - Q: Warmup dispatch mode → A: Warmup matches measurement — at `c=N` cells, warmup bursts `c=N` RPCs in parallel; symmetric dispatch primes the steady state measurement will sample; smoke / warmup `seed=0` convention preserved verbatim
+- Q: Version-pin parity for the corrected-dispatch re-run → A: Pin to audit-baseline versions — corrected run uses `vllm==0.20.1`, `torch==2.11.0` client-side pin, `Qwen/Qwen3-8B` exactly as audit baseline; dispatch mode is the sole varying factor
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -88,10 +89,12 @@ inert — there is no "after" data to compare against the audit baseline.
 **Independent Test**: Can be fully tested by inspecting the artifacts written
 by the re-run: the resulting markdown / JSON contains a `dispatch_mode`
 attribute equal to `concurrent`, the per-cohort `engine_ttft_ms` spreads are
-reported for each chat_stream cell, and the Phase 2 dispatch verdict (either
-"drift drops below 5 % → state-drift artifact, Phase 2(a) not needed" or
-"drift stays at or above 10 % → channel-dependent batching, Phase 2 applies")
-is recorded as a single explicit field in the manifest.
+reported for each chat_stream cell, and the Phase 2 dispatch verdict — one
+of "drift drops below 5 % → state-drift artifact, Phase 2(a) not needed",
+"drift stays at or above 10 % → channel-dependent batching, Phase 2 applies",
+or "intermediate, follow FR-010 classifier output with raw spread numbers
+recorded for manual review" — is captured as a single explicit field in the
+manifest.
 
 **Acceptance Scenarios**:
 
@@ -100,6 +103,7 @@ is recorded as a single explicit field in the manifest.
 3. **Given** the corrected-dispatch run completes, **When** the chat_stream per-cohort `engine_ttft_ms` spread is computed for each cell (`c=1`, `c=4`, `c=8`), **Then** the spread values are reported in the markdown table together with the audit baseline values for direct comparison.
 4. **Given** the chat_stream per-cohort spread under corrected dispatch, **When** the spread for every cell drops below 5 %, **Then** M6.1's reported drift is annotated as a sequential-dispatch state-drift artifact and Phase 2(a) symmetrisation is recorded as not needed.
 5. **Given** the chat_stream per-cohort spread under corrected dispatch, **When** the spread for any cell stays at or above 10 %, **Then** the drift is annotated as a real channel-dependent batching effect and Phase 2 (a or b) of M6.1.1 applies per the existing contract.
+6. **Given** the chat_stream per-cohort spread under corrected dispatch falls in the intermediate band (any cell between 5 % and 10 %, with no cell at or above 10 %), **When** the manifest is written, **Then** it records both the FR-010 classifier's emitted label and the raw per-cohort spread numbers per chat_stream cell so a reviewer can apply manual interpretation if the classifier's output is known-degenerate.
 
 ---
 
@@ -157,7 +161,7 @@ M6.1's published narrative.
 - **FR-005a**: The warmup phase MUST dispatch concurrently at the cell's full concurrency `c` (symmetric with measurement). At `c=N` cells warmup issues up to `N` concurrent RPCs, so the steady-state cache / connection / KV state measurement samples is the state warmup primed. The smoke / warmup `seed=0` convention is preserved verbatim (the existing `max(0, seed - base_seed)` clamp continues to handle the seed=0 case).
 - **FR-006**: The `concurrency` field's documented semantics in the M6 / M6.1 / M6.1.1 type definitions MUST be updated from "metadata tag for round-robin sequencing" back to "actual in-flight parallelism", matching M5.x semantics.
 - **FR-007**: A corrected-dispatch re-run of `--m6_1_1-diagnose` MUST produce a manifest with a new top-level `dispatch_mode` key (value `concurrent`) added as a **strict-superset addition** to the M6.1.1 manifest schema — no schema-version bump, no nested re-organisation, no breaking change. Pre-existing M6.1.1-aware readers (including the M6.2 consumer) ignore the unknown key without error. The 2026-05-16 sequential-baseline audit run lacked this key (the harness did not yet emit it); readers MUST treat an absent `dispatch_mode` as `sequential` for backward-compatibility.
-- **FR-008**: The corrected-dispatch re-run MUST use parameters identical to the sequential baseline (`Qwen3-8B fp16`, Modal A10G eu-west-1, base seed 42, `n=50` per cohort per cell, 500 µs perturbation budget) — dispatch mode is the only variable that changes.
+- **FR-008**: The corrected-dispatch re-run MUST use parameters identical to the sequential baseline — `Qwen/Qwen3-8B` fp16, Modal A10G eu-west-1, base seed 42, `n=50` per cohort per cell, 500 µs perturbation budget — AND identical *dependency versions* pinned to the audit baseline at commit `b63947a` (specifically `vllm==0.20.1`, client-side `torch==2.11.0`, and the audit baseline's `uv.lock`-resolved transitive set). Dispatch mode is the SOLE variable that changes; dependency-version drift MUST NOT be in the diff. If upstream `main` has advanced since `b63947a`, the operator pins to the audit-baseline versions before launching the run (e.g., via `uv sync --frozen` against the `b63947a` lockfile, or an equivalent reproducible-environment step).
 - **FR-009**: The corrected-dispatch run's chat_stream per-cohort `engine_ttft_ms` spread MUST be reported in the published markdown for each cell (`c=1`, `c=4`, `c=8`), alongside the audit baseline spread for direct comparison.
 - **FR-010**: The M6.1.1 Phase 2 dispatch decision derived from the corrected run MUST be recorded as a single explicit field in the manifest — either "spread below 5 %, Phase 2(a) not needed" or "spread at or above 10 %, Phase 2 (a or b) applies" or "intermediate, follow FR-010 classifier output". When the intermediate branch fires, the manifest MUST additionally record the raw per-cohort `engine_ttft_ms` spread numbers (per chat_stream cell) alongside the FR-010 classifier's emitted label, so that a reader can apply manual interpretation if the classifier's output is known-degenerate. The M6.0a deliverable does NOT redesign the FR-010 classifier — its known degeneracy on chat_stream cells (`seg_bc ≡ engine_ttft` by construction) is tracked separately as an M6.1.1 issue.
 - **FR-011**: The 2026-05-16 sequential-baseline audit file (`docs/benchmarks/m6_1_1-audit-2026-05-16-seq-dispatch.md`, committed at `b63947a`) MUST be preserved verbatim as the "before" data set — no edits to its body, only additive cross-links from new artifacts may reference it.
