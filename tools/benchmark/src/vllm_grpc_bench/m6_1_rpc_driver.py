@@ -29,13 +29,7 @@ import grpc
 import httpx
 from vllm_grpc.v1 import completions_pb2
 
-from vllm_grpc_bench.channel_config import (
-    M1_BASELINE,
-    M1_BASELINE_KEEPALIVE,
-    MAX_MSG_16MIB,
-    MAX_MSG_16MIB_KEEPALIVE,
-    ChannelConfig,
-)
+from vllm_grpc_bench.channel_config import M1_BASELINE, MAX_MSG_16MIB, ChannelConfig
 from vllm_grpc_bench.m3_sweep import _client_kwargs
 from vllm_grpc_bench.m3_types import RTTRecord
 from vllm_grpc_bench.m6_1_2_types import M6_1_2CohortKind
@@ -452,14 +446,15 @@ async def provide_m6_1_2_rpc_driver(
     # the same transform at m5_2_sweep.py:1280-1283.
     rest_plain_tcp_base = _normalize_rest_url_for_httpx(endpoints.rest_plain_tcp_url)
 
-    # M6.1.2 keepalive variants: keep Modal's plain-TCP gRPC tunnel alive
-    # during the REST-cohort phases (regression — without keepalive the
-    # tunnel goes idle for ~15 min between gRPC dispatches in a 4-cohort
-    # sweep and the next RPC fails UNAVAILABLE). Wire shape is identical
-    # to M1_BASELINE / MAX_MSG_16MIB; keepalive is transport-layer only,
-    # so FR-024's cell-by-cell comparability with M6.1.1 is preserved.
-    default_channel = _open_grpc_channel(endpoints.grpc_url, M1_BASELINE_KEEPALIVE)
-    tuned_channel = _open_grpc_channel(endpoints.grpc_url, MAX_MSG_16MIB_KEEPALIVE)
+    # M6.1.2 reuses M6.1.1's M1_BASELINE / MAX_MSG_16MIB wire shapes
+    # verbatim (FR-024 cell-by-cell comparability). A prior attempt to
+    # add 60s client keepalive failed in live testing — Modal's gRPC
+    # frontend rejected the pings with ENHANCE_YOUR_CALM GOAWAY. The
+    # tunnel-idle defense is the cohort-iteration reorder in
+    # cohorts_at_concurrency (gRPC FIRST within each cell), not keepalive.
+    # See channel_config.py for the full discussion.
+    default_channel = _open_grpc_channel(endpoints.grpc_url, M1_BASELINE)
+    tuned_channel = _open_grpc_channel(endpoints.grpc_url, MAX_MSG_16MIB)
     rest_client = httpx.AsyncClient(
         http2=False,
         limits=httpx.Limits(max_keepalive_connections=8, max_connections=8),

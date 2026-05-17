@@ -129,57 +129,30 @@ def test_normalize_rest_url_for_httpx_prepends_http_to_bare_host_port() -> None:
     assert _normalize_rest_url_for_httpx("r439.modal.host:43209") == "http://r439.modal.host:43209"
 
 
-# --- M6.1.2 keepalive channel configs --------------------------------------
+# --- M6.1.2 channel-config choice (no keepalive) ----------------------------
 
 
-def test_m6_1_2_keepalive_configs_carry_client_side_keepalive() -> None:
-    """Regression: M6.1.2's gRPC channels MUST carry client-side keepalive
-    so Modal's plain-TCP gRPC tunnel doesn't go idle during the REST-cohort
-    phases of a 4-cohort sweep.
+def test_provide_m6_1_2_rpc_driver_uses_baseline_configs_without_keepalive() -> None:
+    """M6.1.2's gRPC channels MUST use M1_BASELINE / MAX_MSG_16MIB without
+    client keepalive. A prior attempt to add 60s client keepalive failed
+    in live Modal testing: the gRPC frontend rejected the pings with
+    ``ENHANCE_YOUR_CALM: too_many_pings`` GOAWAY, killing the first
+    ``default_grpc`` cell with 0/50 successes. gRPC's default server
+    ``MIN_RECV_PING_INTERVAL_WITHOUT_DATA_MS`` is 300000 (5 min); any
+    keepalive interval shorter than that triggers too_many_pings, and a
+    5min interval provides no defense against shorter idle timeouts.
 
-    First live Modal sweep failed ``embed × c=1 / default_grpc`` 0/50 with
-    UNAVAILABLE errors because the gRPC tunnel had been idle for ~15 min
-    while two REST cohorts ran. The keepalive variants (used by M6.1.2's
-    driver only; M6.1.1's M1_BASELINE / MAX_MSG_16MIB stay frozen per
-    FR-028) send 60s client-side pings to keep the tunnel warm.
+    Tunnel-idle defense lives in :func:`cohorts_at_concurrency` (gRPC
+    FIRST within each cell — see :mod:`vllm_grpc_bench.m6_1_2_types`).
     """
-    from vllm_grpc_bench.channel_config import (
-        M1_BASELINE,
-        M1_BASELINE_KEEPALIVE,
-        MAX_MSG_16MIB,
-        MAX_MSG_16MIB_KEEPALIVE,
-    )
-
-    # Each keepalive variant carries the expected client_options.
-    for cfg in (M1_BASELINE_KEEPALIVE, MAX_MSG_16MIB_KEEPALIVE):
-        client_opts = dict(cfg.client_options)
-        assert client_opts.get("grpc.keepalive_time_ms") == 60000
-        assert client_opts.get("grpc.keepalive_timeout_ms") == 20000
-        assert client_opts.get("grpc.keepalive_permit_without_calls") == 1
-
-    # The frozen M6.1.1 originals do NOT carry keepalive (FR-028).
-    assert "grpc.keepalive_time_ms" not in dict(M1_BASELINE.client_options)
-    assert "grpc.keepalive_time_ms" not in dict(MAX_MSG_16MIB.client_options)
-
-    # MAX_MSG_16MIB_KEEPALIVE preserves the 16-MiB wire shape so cell-by-cell
-    # comparability with M6.1.1's published baseline holds (FR-024).
-    for opt in (
-        "grpc.max_send_message_length",
-        "grpc.max_receive_message_length",
-    ):
-        assert dict(MAX_MSG_16MIB.client_options)[opt] == 16 * 1024 * 1024
-        assert dict(MAX_MSG_16MIB_KEEPALIVE.client_options)[opt] == 16 * 1024 * 1024
-
-
-def test_provide_m6_1_2_rpc_driver_uses_keepalive_configs() -> None:
-    """The 4-cohort driver MUST open both gRPC channels with the keepalive
-    variants. Static check on the driver source — without it, future
-    refactors could silently revert to M1_BASELINE / MAX_MSG_16MIB and
-    re-introduce the Modal tunnel idle-timeout failure."""
     import inspect
 
     from vllm_grpc_bench import m6_1_rpc_driver
 
     src = inspect.getsource(m6_1_rpc_driver.provide_m6_1_2_rpc_driver)
-    assert "M1_BASELINE_KEEPALIVE" in src
-    assert "MAX_MSG_16MIB_KEEPALIVE" in src
+    # Driver references the non-keepalive base configs.
+    assert "M1_BASELINE)" in src
+    assert "MAX_MSG_16MIB)" in src
+    # And does NOT reference keepalive variants (which no longer exist).
+    assert "M1_BASELINE_KEEPALIVE" not in src
+    assert "MAX_MSG_16MIB_KEEPALIVE" not in src
