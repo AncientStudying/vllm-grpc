@@ -419,6 +419,7 @@ def _make_args(tmp_path: Path, *, allow_engine_mismatch: bool = False) -> argpar
     return argparse.Namespace(
         m6_1_1_m6_1_baseline=_baseline_path(tmp_path),
         m6_1_1_report_json_out=tmp_path / "m6_1_1.json",
+        m6_1_1_report_out=tmp_path / "m6_1_1.md",
         m6_1_1_allow_engine_mismatch=allow_engine_mismatch,
     )
 

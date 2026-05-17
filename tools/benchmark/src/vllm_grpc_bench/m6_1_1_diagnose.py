@@ -405,9 +405,7 @@ def _default_write_report(
         methodology_supersedence="",
     )
 
-    md_path = Path(
-        getattr(args, "m6_1_1_report_out", "docs/benchmarks/m6_1_1-engine-cost-instrumentation.md")
-    )
+    md_path = Path(args.m6_1_1_report_out)
     json_path = Path(args.m6_1_1_report_json_out)
     write_m6_1_1_report(run, md_path, json_path)
     print(f"m6.1.1: report written to {md_path} and {json_path}", file=sys.stderr)
@@ -570,9 +568,7 @@ def _rehydrate_perturbation_audit(raw: dict[str, Any]) -> PerturbationAudit:
                 f"perturbation_audit per_cohort_per_cell key {k!r} not in 'cohort|cell_str' shape"
             )
         per_cohort_per_cell[(parts[0], parts[1])] = float(v)
-    exceeded_pairs = [
-        (str(pair[0]), str(pair[1])) for pair in (raw.get("exceeded_pairs") or [])
-    ]
+    exceeded_pairs = [(str(pair[0]), str(pair[1])) for pair in (raw.get("exceeded_pairs") or [])]
     return PerturbationAudit(
         per_cohort_per_cell=per_cohort_per_cell,
         exceeded=bool(raw.get("exceeded", False)),

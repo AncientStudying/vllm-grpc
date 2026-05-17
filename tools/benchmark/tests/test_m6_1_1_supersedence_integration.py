@@ -67,6 +67,7 @@ def _make_args(tmp_path: Path) -> tuple[argparse.Namespace, Path]:
     args = argparse.Namespace(
         m6_1_1_m6_1_baseline=json_path,
         m6_1_1_report_json_out=report_path,
+        m6_1_1_report_out=report_path.with_suffix(".md"),
         m6_1_1_allow_engine_mismatch=False,
     )
     return args, report_path
