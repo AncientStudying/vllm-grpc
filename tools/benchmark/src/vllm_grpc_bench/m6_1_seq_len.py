@@ -22,6 +22,28 @@ from typing import Any
 # the same shape so the pin is deterministic.
 _M6_TEXT_DIGEST_SAMPLE: str = "embeds:" + "0" * 16
 
+# Precomputed pins for (model_identifier, sample) → seq_len.
+# Populated once via the live HuggingFace tokenizer and recorded here so
+# the fast path doesn't need a ``transformers`` import. Lets CI (which
+# installs only the default dep groups, not ``investigation``) and any
+# other sandboxed runtime exercise sweep code paths that hit
+# :func:`pin_seq_len_at_sweep_start`.
+#
+# To add a new (model, sample) entry, run the tokenizer once with the
+# investigation group installed:
+#
+#     uv run python -c "from transformers import AutoTokenizer; \
+#         t = AutoTokenizer.from_pretrained('<model>'); \
+#         print(len(t.encode('<sample>', add_special_tokens=False)))"
+#
+# and append the result here. Determinism is the contract: the same
+# tokenizer + add_special_tokens=False always yields the same count.
+_PRECOMPUTED_SEQ_LEN: dict[tuple[str, str], int] = {
+    # Qwen/Qwen3-8B encodes "embeds:" + "0"*16 as 19 tokens
+    # (verified 2026-05-17 against HuggingFace ``Qwen/Qwen3-8B``).
+    ("Qwen/Qwen3-8B", _M6_TEXT_DIGEST_SAMPLE): 19,
+}
+
 _tokenizer_cache: dict[str, Any] = {}
 
 
@@ -39,11 +61,21 @@ def _load_tokenizer(model_identifier: str) -> Any:
 def pin_seq_len_at_sweep_start(model_identifier: str = "Qwen/Qwen3-8B") -> int:
     """Return the pinned prompt-embeds ``seq_len`` for the given model.
 
-    Tokenises the M6 canonical text-digest sample against the loaded model's
-    tokenizer with ``add_special_tokens=False`` and returns the token count.
-    The tokenizer is cached so repeated calls within a process do not re-fetch
-    from HuggingFace.
+    Fast path: look up the (model, canonical sample) pair in
+    :data:`_PRECOMPUTED_SEQ_LEN`. Avoids a ``transformers`` import in
+    environments where the tokenizer isn't installed (CI without the
+    ``investigation`` dependency group; sandboxed test runners).
+
+    Slow path: tokenize the canonical sample against the live model
+    tokenizer with ``add_special_tokens=False`` and return the token
+    count. Required when a caller passes a model that isn't in the
+    precomputed table. The tokenizer is cached so repeated calls within
+    a process don't re-fetch from HuggingFace.
     """
+    cached = _PRECOMPUTED_SEQ_LEN.get((model_identifier, _M6_TEXT_DIGEST_SAMPLE))
+    if cached is not None:
+        return cached
+
     tok = _load_tokenizer(model_identifier)
     tokens = tok.encode(_M6_TEXT_DIGEST_SAMPLE, add_special_tokens=False)
     seq_len = len(tokens)

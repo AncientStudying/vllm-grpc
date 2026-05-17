@@ -71,6 +71,16 @@ M6_DRIFT_WARNING_PCT: float = 0.10  # FR-014 sub-clause (>10%)
 
 @dataclass(frozen=True)
 class M6Cell:
+    """One (path, hidden_size, concurrency) cell of the M6 sweep matrix.
+
+    ``concurrency`` is the actual in-flight parallelism: the peak number
+    of concurrent RPCs dispatched per cohort within a c-batch under
+    M6.0a's restored concurrent dispatch (FR-006). Cohort iteration stays
+    sequential; within a cohort, ``concurrency`` RPCs run concurrently
+    via ``asyncio.gather`` in :mod:`vllm_grpc_bench.m6_sweep`. This shape
+    is re-exported as :data:`M6_1Cell` and :data:`M6_1_1Cell`.
+    """
+
     path: M6Path
     hidden_size: Literal[4096]
     concurrency: M6Concurrency

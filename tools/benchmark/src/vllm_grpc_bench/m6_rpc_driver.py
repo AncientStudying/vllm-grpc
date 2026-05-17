@@ -206,12 +206,21 @@ async def _drive_grpc_chat_stream(
     engine_cost: EngineCostSpan | None = (
         parse_grpc_trailing_metadata(md, "chat_stream") if md is not None else None
     )
+    # M6.1.1: extract the 4-checkpoint timing data from the same trailing
+    # metadata. Best-effort — pre-M6.1.1 servers return None.
+    from vllm_grpc_bench.m6_1_1_timing import extract_grpc_timings, timing_checkpoint_to_payload
+
+    md_dict = {k: v for k, v in md} if md is not None else None
+    m6_1_1_payload = timing_checkpoint_to_payload(
+        extract_grpc_timings(md_dict) if md_dict is not None else None
+    )
     return RPCResult(
         success=True,
         wall_clock_ms=wall_ms,
         ttft_ms=ttft_ms,
         engine_cost=engine_cost,
         failure_reason=None,
+        m6_1_1_timing_payload=m6_1_1_payload,
     )
 
 
@@ -258,12 +267,19 @@ async def _drive_rest_embed(
     except (ValueError, json.JSONDecodeError):
         payload = {}
     engine_cost = parse_rest_response(payload, "embed") if isinstance(payload, dict) else None
+    # M6.1.1: same JSONResponse body carries m6_1_1_timings (FR-011 audit).
+    from vllm_grpc_bench.m6_1_1_timing import extract_rest_timings, timing_checkpoint_to_payload
+
+    m6_1_1_payload = timing_checkpoint_to_payload(
+        extract_rest_timings(payload) if isinstance(payload, dict) else None
+    )
     return RPCResult(
         success=True,
         wall_clock_ms=wall_ms,
         ttft_ms=None,
         engine_cost=engine_cost,
         failure_reason=None,
+        m6_1_1_timing_payload=m6_1_1_payload,
     )
 
 
@@ -312,6 +328,7 @@ async def _drive_rest_chat_stream(
     wall_ms = (time.perf_counter() - t0) * 1000.0
     ttft_ms = (first_chunk_at - t0) * 1000.0 if first_chunk_at else None
     engine_cost: EngineCostSpan | None = None
+    m6_1_1_payload: dict[str, int] | None = None
     if last_data_payload:
         try:
             terminal = json.loads(last_data_payload)
@@ -319,12 +336,19 @@ async def _drive_rest_chat_stream(
             terminal = None
         if isinstance(terminal, dict):
             engine_cost = parse_rest_response(terminal, "chat_stream")
+            from vllm_grpc_bench.m6_1_1_timing import (
+                extract_rest_timings,
+                timing_checkpoint_to_payload,
+            )
+
+            m6_1_1_payload = timing_checkpoint_to_payload(extract_rest_timings(terminal))
     return RPCResult(
         success=True,
         wall_clock_ms=wall_ms,
         ttft_ms=ttft_ms,
         engine_cost=engine_cost,
         failure_reason=None,
+        m6_1_1_timing_payload=m6_1_1_payload,
     )
 
 

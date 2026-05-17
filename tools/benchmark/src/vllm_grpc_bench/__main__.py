@@ -521,6 +521,84 @@ def _build_parser() -> argparse.ArgumentParser:
         help="M6.1: M6 baseline JSON path (FR-008/FR-009 hard precondition).",
     )
 
+    # ---- M6.1.1 mode (engine-cost instrumentation diagnosis & symmetrisation) ----
+    parser.add_argument(
+        "--m6_1_1-diagnose",
+        action="store_true",
+        help="M6.1.1 Phase 1: 6 cells × 3 cohorts × n=50 diagnostic mini-sweep "
+        "with four-checkpoint instrumentation. "
+        "See specs/023-m6-1-1-engine-cost-instrumentation/contracts/cli.md.",
+    )
+    parser.add_argument(
+        "--m6_1_1",
+        action="store_true",
+        help="M6.1.1 Phase 2: branches on most-recent Phase 1 classification. "
+        "Under instrumentation_artifact runs n=100 verification sweep; "
+        "under channel_dependent_batching validates contracts/instrumentation.md heading. "
+        "Mutually exclusive with --m6_1_1-diagnose.",
+    )
+    parser.add_argument(
+        "--m6_1_1-modal-region",
+        default="eu-west-1",
+        help="M6.1.1: Modal region for the deploy (default eu-west-1).",
+    )
+    parser.add_argument(
+        "--m6_1_1-modal-token-env",
+        default="MODAL_BENCH_TOKEN",
+        help="M6.1.1: env-var name carrying the bearer token.",
+    )
+    parser.add_argument(
+        "--m6_1_1-modal-endpoint",
+        default=None,
+        help="M6.1.1: pre-existing endpoint (advanced; implies --m6_1_1-skip-deploy).",
+    )
+    parser.add_argument(
+        "--m6_1_1-skip-deploy",
+        action="store_true",
+        help="M6.1.1: skip Modal deploy and reuse --m6_1_1-modal-endpoint.",
+    )
+    parser.add_argument(
+        "--m6_1_1-base-seed",
+        type=int,
+        default=42,
+        help="M6.1.1: base RNG seed (default 42, matches M6 / M6.1).",
+    )
+    parser.add_argument(
+        "--m6_1_1-model",
+        default="Qwen/Qwen3-8B",
+        help="M6.1.1: HuggingFace model identifier (default Qwen/Qwen3-8B, matches M6.1).",
+    )
+    parser.add_argument(
+        "--m6_1_1-m6-1-baseline",
+        type=Path,
+        default=Path("docs/benchmarks/m6_1-real-prompt-embeds.json"),
+        help="M6.1.1: M6.1 baseline JSON path (FR-001 hard precondition).",
+    )
+    parser.add_argument(
+        "--m6_1_1-report-out",
+        type=Path,
+        default=Path("docs/benchmarks/m6_1_1-engine-cost-instrumentation.md"),
+        help="M6.1.1: markdown output path.",
+    )
+    parser.add_argument(
+        "--m6_1_1-report-json-out",
+        type=Path,
+        default=Path("docs/benchmarks/m6_1_1-engine-cost-instrumentation.json"),
+        help="M6.1.1: JSON companion output path.",
+    )
+    parser.add_argument(
+        "--m6_1_1-events-sidecar-out",
+        type=Path,
+        default=Path("docs/benchmarks/m6_1_1-events.jsonl"),
+        help="M6.1.1: per-RPC events sidecar (JSONL).",
+    )
+    parser.add_argument(
+        "--m6_1_1-allow-engine-mismatch",
+        action="store_true",
+        help="M6.1.1: acknowledge an engine_version divergence between M6.1's baseline "
+        "and the deployment (FR-004 escape hatch).",
+    )
+
     # ---- M5.1 mode (REST vs gRPC head-to-head on real wire) ----
     parser.add_argument(
         "--m5_1",
@@ -2102,9 +2180,107 @@ def _run_m6_1(args: argparse.Namespace) -> int:
     return asyncio.run(run_m6_1_sweep(args, baseline_tuple))
 
 
+def _validate_m6_1_1_args(args: argparse.Namespace) -> int:
+    """Pre-flight validation for M6.1.1 mode. Returns exit code; 0 means OK.
+
+    See specs/023-m6-1-1-engine-cost-instrumentation/contracts/cli.md
+    §"Exit codes" and §"Mutual exclusions and preconditions".
+    """
+    import os as _os
+
+    if getattr(args, "m6_1_1_diagnose", False) and getattr(args, "m6_1_1", False):
+        print(
+            "Error: --m6_1_1-diagnose and --m6_1_1 are mutually exclusive (pick one).",
+            file=sys.stderr,
+        )
+        return 2
+    if (
+        getattr(args, "m3", False)
+        or getattr(args, "m4", False)
+        or getattr(args, "m5", False)
+        or getattr(args, "m5_1", False)
+        or getattr(args, "m5_2", False)
+        or getattr(args, "m5_2_smoke", False)
+        or getattr(args, "m6", False)
+        or getattr(args, "m6_smoke", False)
+        or getattr(args, "m6_1", False)
+        or getattr(args, "m6_1_smoke", False)
+    ):
+        print(
+            "Error: --m6_1_1-diagnose / --m6_1_1 are mutually exclusive with all "
+            "earlier mode flags (--m3, --m4, --m5, --m5_1, --m5_2, --m5_2-smoke, "
+            "--m6, --m6-smoke, --m6_1, --m6_1-smoke).",
+            file=sys.stderr,
+        )
+        return 2
+    if bool(getattr(args, "m6_1_1_skip_deploy", False)) and not getattr(
+        args, "m6_1_1_modal_endpoint", None
+    ):
+        print(
+            "Error: --m6_1_1-skip-deploy requires --m6_1_1-modal-endpoint",
+            file=sys.stderr,
+        )
+        return 2
+    token_env = str(args.m6_1_1_modal_token_env)
+    if not _os.environ.get(token_env):
+        print(
+            f"Error: bearer-token env var {token_env!r} is unset; "
+            "export it before running --m6_1_1-diagnose / --m6_1_1 "
+            "(see specs/023-m6-1-1-engine-cost-instrumentation/quickstart.md)",
+            file=sys.stderr,
+        )
+        return 4
+    return 0
+
+
+def _run_m6_1_1(args: argparse.Namespace) -> int:
+    """Dispatch to the M6.1.1 Phase 1 diagnose or Phase 2 entry point.
+
+    Exit codes per
+    specs/023-m6-1-1-engine-cost-instrumentation/contracts/cli.md:
+    * 0 — success
+    * 1 — missing baseline / missing contracts heading /
+          --m6_1_1 invoked in non-actionable state (FR-001, FR-004, FR-016)
+    * 2 — argparse rejection or torch-pin mismatch (FR-003)
+    * 3 — Phase 1 re-run needed (mixed / inconclusive / drift_not_reproduced
+          single-run — FR-017, FR-018)
+    * 4 — instrumentation perturbation budget exceeded (FR-012, round-2 Q3),
+          OR bearer-token env var unset
+    * 5 — milestone split required (FR-017(b), FR-018, round-2 Q4)
+    """
+    rc = _validate_m6_1_1_args(args)
+    if rc != 0:
+        return rc
+
+    # FR-003: torch-pin validation runs FIRST, before any baseline file or
+    # Modal compute is touched. Raises SystemExit(2) on mismatch — that
+    # exit code matches contracts/cli.md exit code 2.
+    from vllm_grpc_bench.m6_1_torch_pin import validate_torch_version
+
+    validate_torch_version()
+
+    if getattr(args, "m6_1_1_diagnose", False):
+        from vllm_grpc_bench.m6_1_1_diagnose import run_m6_1_1_diagnose
+
+        return asyncio.run(run_m6_1_1_diagnose(args))
+
+    if getattr(args, "m6_1_1", False):
+        from vllm_grpc_bench.m6_1_1_phase2 import run_m6_1_1_phase_2
+
+        return asyncio.run(run_m6_1_1_phase_2(args))
+
+    # Unreachable when called from main() (the dispatch guard already
+    # filters on these flags); keep an explicit fallback for direct test
+    # invocation.
+    return 0
+
+
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+
+    if getattr(args, "m6_1_1_diagnose", False) or getattr(args, "m6_1_1", False):
+        sys.exit(_run_m6_1_1(args))
 
     if getattr(args, "m6_1", False) or getattr(args, "m6_1_smoke", False):
         sys.exit(_run_m6_1(args))

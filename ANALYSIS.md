@@ -258,6 +258,36 @@ Closes the real-prompt-embeddings caveat M6 left open. M6.1 reruns M6's 6-cell �
 
 ---
 
+## M6.0a — Concurrent Dispatch Restoration
+
+**Status**: delivered 2026-05-17
+**Report**: [`docs/benchmarks/m6_0a-dispatch-correction.md`](docs/benchmarks/m6_0a-dispatch-correction.md)
+**Sequel-to**: M6.1.1 audit baseline at [`docs/benchmarks/m6_1_1-audit-2026-05-16-seq-dispatch.md`](docs/benchmarks/m6_1_1-audit-2026-05-16-seq-dispatch.md)
+**Corrected baseline**: [`docs/benchmarks/m6_1_1-engine-cost-instrumentation.{md,json}`](docs/benchmarks/m6_1_1-engine-cost-instrumentation.md)
+
+Methodology correction discovered during M6.1.1's first live Phase 1 run (2026-05-16). The M6 / M6.1 / M6.1.1 benchmark harness inherited M5.x's cell × cohort × concurrency matrix but silently dropped `asyncio.gather`-based concurrent in-flight dispatch in favour of a sequential `await` loop. Peak in-flight RPCs equalled 1 regardless of `cell.concurrency`, so vLLM's continuous batching never saw overlapping requests from different cohorts — making the M6.1.1 FR-010 classifier unable to mechanistically distinguish real channel-dependent batching from chronological state drift. M6.0a restores the canonical M5.1 dispatch pattern (per-cohort `asyncio.gather`; sequential across cohorts) in five harness entry points across three modules, adds a path-agnostic regression test (`test_m6_concurrent_dispatch.py`), and re-runs M6.1.1 Phase 1 against the same Modal A10G `eu-west-1` configuration to produce the corrected baseline. Harness-only fix; no engine, transport, or wire-format changes.
+
+**Headline finding(s)**:
+
+- **The "sequential-dispatch state-drift artifact" hypothesis is disproved.** Under M6.0a's corrected dispatch, chat_stream per-cohort `engine_ttft_ms` spread at c=4 and c=8 *grows* from the audit baseline's 6.0% / 8.4% to 15.9% / 16.4%. If the original M6.1 per-cohort drift had been a sequential-state artifact, real concurrency would have collapsed it; instead it amplifies. The effect is engine-side under continuous batching, not a measurement artifact.
+- **The FR-010 classifier produces `channel_dependent_batching × 3` for the corrected run — same label as the audit baseline.** But this classification remains **classifier-degenerate**: `seg_bc_ms ≡ engine_ttft_ms` by construction (both measure `first_chunk_ns − pre_engine_ns`), so the classifier's `spread(seg_bc) / spread(engine_ttft) ≥ 0.80` attribution rule fires for *any* non-trivial chat_stream spread. The classifier-degeneracy issue ([PR #27 comment 4468600646](https://github.com/AncientStudying/vllm-grpc/pull/27#issuecomment-4468600646)) remains unresolved after M6.0a — it is out of M6.0a's scope (M6.0a is a dispatch correction, not a classifier redesign). **M6.1.1 Phase 2 stays pending until the checkpoint placement is revisited.**
+- **M6 and M6.1 main verdicts are dispatch-robust.** M6's "4 of 6 cells overturned M5.2 under real engine" and M6.1's "engine-path equivalence" hold under both dispatch modes — they read aggregate per-cell timings, not per-cohort spread. The M6.1 per-cohort drift sub-finding (14-17% on chat_stream cells, originally flagged as `engine_cost_drift_warning`) is the one sub-finding that is dispatch-sensitive; its narrative now carries a forward cross-link to [§ M6.0a Methodology Supersedence](docs/benchmarks/m6_1-real-prompt-embeds.md#methodology-supersedence-m60a--dispatch-correction).
+- **Wall-clock and cost.** Corrected re-run took 15.6 min wall-clock (~4.3 min cold-start + ~11.3 min for 18 cell × cohort pairs) at $0.29 Modal A10G `eu-west-1` — well under the M6.0a spec's SC-002 (≤ 45 min) and SC-006 (≤ $1) budgets.
+
+**Caveats — kept prominent:**
+
+- **The corrected-run JSON manifest carries a new top-level `dispatch_mode: "concurrent"` key** (strict-superset addition per FR-007; no `schema_version` bump). Pre-existing M6.1.1 / M6.2-aware readers ignore the unknown key; an absent `dispatch_mode` is read as `"sequential"`. The audit-baseline markdown does NOT receive a retroactive `dispatch_mode: "sequential"` annotation; it is preserved byte-identical to commit `b63947a` per FR-011, and the audit-callout header at the top of that file already documents the sequential-dispatch context.
+- **No new M6.1.1 Phase 2 verdict.** M6.0a removes the dispatch-correctness ambiguity but does not close M6.1.1's Phase 2 — the classifier-degeneracy issue blocks a clean `channel_dependent_batching` verdict. Operators should treat the M6.1.1 Phase 1 classification as data, not as a Phase 2(b) action recommendation, until the checkpoint placement is revisited in a separate sub-milestone.
+- **Two-PR sequence (FR-018), single-branch delivery in practice.** The original plan called for PR-1 (harness fix) to merge before PR-2 (corrected artifact + this note). In practice both PRs were committed to branch `024-m6-0a-concurrent-dispatch` and the operator deferred PR opening — the branch carries the complete M6.0a deliverable as commits `f3ad158` (PR-1 contents) plus the dispatch-correction note and FR-016 cross-link annotation as a follow-up commit.
+
+**Cross-milestone notes**:
+
+- **Dispatch-sensitive vs dispatch-robust finding classification.** See [`m6_0a-dispatch-correction.md § 5`](docs/benchmarks/m6_0a-dispatch-correction.md#5-implication-for-m6x-findings--dispatch-sensitive-vs-dispatch-robust) for the per-finding table. Short version: M6 main verdicts robust, M6.1 main verdicts robust, M6.1 per-cohort drift sub-finding sensitive (re-interpreted), M6.1.1 Phase 1 classification sensitive-but-degenerate (label survives, evidentiary weight does not).
+- **Future M6.x sub-milestones inherit the corrected dispatch automatically.** M6.2 (`max_tokens` axis) reuses M6.1's measurement loop, which now uses the corrected dispatch unconditionally (no parallel-fork code path, no `--m6-sequential-dispatch` flag — per FR-005 the corrected harness is the only harness). M6.2's manifests will emit `dispatch_mode: "concurrent"` from the first run.
+- **Lessons learned for future operators.** The FR-008 lockfile-parity command on macOS is `uv sync --frozen --all-groups` (not just `uv sync --frozen`); plain `--frozen` doesn't pull the `investigation` dependency group that supplies `transformers` and `vllm-metal`. This trap surfaced during the M6.0a re-run setup and is documented here so future re-runs (e.g., M6.2) don't repeat it.
+
+---
+
 ## Topology guide — which milestone result applies to your deployment
 
 The M5.1 and M5.2 findings are not redundant and neither supersedes the other. They measure two **different and equally valid deployment topologies**. Pick the milestone whose topology matches your deployment shape; both audiences are first-class.

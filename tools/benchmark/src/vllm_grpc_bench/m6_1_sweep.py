@@ -142,18 +142,28 @@ async def _run_warmup_m6_1(
     driver: RPCDriver,
     cell: M6_1Cell,
 ) -> dict[M6_1CohortKind, int]:
-    """Warmup phase per FR-015 — silently retry until 10 successes per cohort."""
+    """Warmup phase per FR-015 — silently retry until 10 successes per cohort.
+
+    M6.0a (FR-001 / FR-005a): mirrors :func:`m6_sweep._run_warmup` — within
+    a (cohort, c-batch) the ``size`` warmup attempts run concurrently via
+    ``asyncio.gather``; each attempt keeps its inner retry-until-success
+    loop intact. Cohort iteration stays sequential per FR-005.
+    """
     c = cell.concurrency
     successes: dict[M6_1CohortKind, int] = {k: 0 for k in M6_1_COHORTS}
     sizes = _c_batch_sizes_for_warmup(c)
+
+    async def _warmup_one(cohort_ref: M6_1CohortKind) -> int:
+        for _attempt in range(4):
+            result = await driver(cohort_ref, cell, 0)
+            if result.success:
+                return 1
+        return 0
+
     for size in sizes:
         for cohort in M6_1_COHORTS:
-            for _ in range(size):
-                for _attempt in range(4):
-                    result = await driver(cohort, cell, 0)
-                    if result.success:
-                        successes[cohort] += 1
-                        break
+            attempt_results = await asyncio.gather(*(_warmup_one(cohort) for _ in range(size)))
+            successes[cohort] += sum(attempt_results)
     return successes
 
 
@@ -163,10 +173,21 @@ async def _run_measurement_m6_1(
     rpc_indices: list[int],
     base_seed: int,
 ) -> dict[M6_1CohortKind, list[M6_1RPCMeasurement]]:
+    """M6.0a (FR-001 / FR-002): per-(cohort × c-batch) ``asyncio.gather``
+    dispatch — cohort iteration sequential; within a cohort, ``c``
+    concurrent RPCs. Mirrors :func:`m6_sweep._run_measurement`.
+    """
     c = cell.concurrency
     sizes = _c_batch_sizes_for_measurement(c)
     per_cohort: dict[M6_1CohortKind, list[M6_1RPCMeasurement]] = {k: [] for k in M6_1_COHORTS}
     rpc_iter = iter(rpc_indices)
+
+    async def _one(
+        cohort_ref: M6_1CohortKind, idx: int, seed: int
+    ) -> tuple[int, int, RPCResult, int]:
+        result, retry_count = await _run_one_rpc_with_retry(driver, cohort_ref, cell, seed)
+        return idx, seed, result, retry_count
+
     for size in sizes:
         batch_indices: list[int] = []
         for _ in range(size):
@@ -176,10 +197,15 @@ async def _run_measurement_m6_1(
                 break
         if not batch_indices:
             break
+        batch_seeds = [compute_rpc_seed(idx, base_seed) for idx in batch_indices]
         for cohort in M6_1_COHORTS:
-            for idx in batch_indices:
-                seed = compute_rpc_seed(idx, base_seed)
-                result, retry_count = await _run_one_rpc_with_retry(driver, cohort, cell, seed)
+            results = await asyncio.gather(
+                *(
+                    _one(cohort, idx, seed)
+                    for idx, seed in zip(batch_indices, batch_seeds, strict=True)
+                )
+            )
+            for idx, seed, result, retry_count in results:
                 per_cohort[cohort].append(
                     M6_1RPCMeasurement(
                         rpc_index=idx,

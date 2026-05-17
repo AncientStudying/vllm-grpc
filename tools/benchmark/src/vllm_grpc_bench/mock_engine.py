@@ -94,10 +94,20 @@ class _MockCompletion:
 
 @dataclass
 class MockRequestOutput:
-    """Quacks like vllm.RequestOutput for the surface our servicers consume."""
+    """Quacks like vllm.RequestOutput for the surface our servicers consume.
+
+    ``metrics`` mirrors :attr:`vllm.RequestOutput.metrics` (a
+    :class:`vllm.v1.metrics.stats.RequestStateStats` carrying
+    ``arrival_time`` / ``queued_ts`` / ``scheduled_ts`` / ``first_token_ts`` /
+    ``last_token_ts``) that the M6.1.1-expansion frontend instrumentation
+    reads at first-chunk and terminal-emit. Defaulting to ``None`` lets the
+    servicers' ``output.metrics is not None`` guard short-circuit cleanly
+    when MockEngine is the engine under test.
+    """
 
     prompt_token_ids: list[int]
     outputs: list[_MockCompletion]
+    metrics: Any = None
 
 
 @dataclass
