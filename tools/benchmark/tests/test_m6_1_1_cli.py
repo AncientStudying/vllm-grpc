@@ -169,16 +169,24 @@ def test_torch_pin_mismatch_exits_code_2(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_torch_pin_bypass_allows_dispatch_attempt(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     """With the torch-pin bypassed, _run_m6_1_1 reaches the orchestrator
-    and hits the FR-001 baseline-not-found gate (the test runs from the
-    bench cwd, so the default relative ``docs/benchmarks/...`` path
-    doesn't resolve). Exit code 1 confirms the dispatch chain reached the
-    orchestrator; the orchestrator-side exit codes 1 / 3 / 5 are fully
-    covered by test_m6_1_1_diagnose."""
+    and hits the FR-001 baseline-not-found gate. Exit code 1 confirms the
+    dispatch chain reached the orchestrator; the orchestrator-side exit
+    codes 1 / 3 / 5 are fully covered by test_m6_1_1_diagnose.
+
+    Passes an explicit guaranteed-missing baseline so the gate fires
+    regardless of pytest's CWD (CI runs from repo root where the
+    canonical baseline file *does* exist; without the override the
+    orchestrator would proceed past the gate and crash on the next-step
+    Modal import, which is a different code path)."""
     monkeypatch.setenv("MODAL_BENCH_TOKEN", "tok-xyz")
     _bypass_torch_pin(monkeypatch)
-    ns = _parse("--m6_1_1-diagnose")
+    ns = _parse(
+        "--m6_1_1-diagnose",
+        f"--m6_1_1-m6-1-baseline={tmp_path / 'missing-baseline.json'}",
+    )
     rc = _run_m6_1_1(ns)
     assert rc == 1
     err = capsys.readouterr().err
