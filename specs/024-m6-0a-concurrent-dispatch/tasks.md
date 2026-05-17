@@ -129,6 +129,7 @@ description: "Task list for M6.0a — Concurrent Dispatch Restoration"
 - [ ] T041 Verify SC-007 closed: a colleague (or self-test after a 5-minute break to simulate fresh reader) reads only `docs/benchmarks/m6_0a-dispatch-correction.md` and its cross-links and produces a correct dispatch-sensitive-vs-robust classification of M6 / M6.1 / M6.1.1 findings; if they cannot, revise the note's "Implication for M6.x findings" section
 - [ ] T042 [P] Update `~/.claude/projects/-Users-bsansom-projects-vllm-grpc/memory/project_status.md` (or whichever memory file tracks current state) to reflect M6.0a closure and M6.1.1 PR #27 merge status
 - [ ] T043 [P] Update `docs/PLAN.md` M6.0a section to mark the milestone delivered with the date both PRs merged
+- [ ] T044 [P] Verify FR-014 / FR-015 harness-only scope via `git diff main -- proxy/ frontend/ client/ proto/ scripts/python/modal_bench_rest_grpc_server.py packages/frontend/src/vllm_grpc_frontend/ docs/benchmarks/m6.md`; expect empty diff (no edits to engine / model / Modal endpoint / M6 main-verdict files). For `docs/benchmarks/m6_1-real-prompt-embeds.md` the diff is allowed but MUST contain only the FR-016 cross-link annotation block — review with `git diff main -- docs/benchmarks/m6_1-real-prompt-embeds.md` and confirm scope.
 
 ---
 
