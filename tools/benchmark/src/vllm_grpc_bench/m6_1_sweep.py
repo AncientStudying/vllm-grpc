@@ -67,8 +67,19 @@ _DEFAULT_SEQ_LEN_FALLBACK: int = 8
 # --- Progress reporter -------------------------------------------------------
 
 
+def _stderr_ts() -> str:
+    """ISO-8601 UTC bracket prefix for stderr progress lines, so log readers
+    can correlate emissions with wall-clock time during long sweeps
+    (spike/m6-1-roadmap-additions item #3). Matches the run_id timestamp
+    format used elsewhere in the project."""
+    return _datetime.datetime.now(_datetime.UTC).strftime("[%Y-%m-%dT%H:%M:%SZ]")
+
+
 class ProgressReporter:
-    """Mirrors :class:`m6_sweep.ProgressReporter` for M6.1 stderr lines."""
+    """Mirrors :class:`m6_sweep.ProgressReporter` for M6.1 stderr lines.
+
+    Each emission carries an ISO-8601 UTC timestamp prefix (item #3 from
+    spike/m6-1-roadmap-additions)."""
 
     def __init__(self) -> None:
         self.total_pairs: int = 18
@@ -85,7 +96,7 @@ class ProgressReporter:
     ) -> None:
         self.start_time = time.monotonic()
         print(
-            f"M6.1 sweep: 6 cells × 3 cohorts × n={M6_1_MEASUREMENT_N}, "
+            f"{_stderr_ts()} M6.1 sweep: 6 cells × 3 cohorts × n={M6_1_MEASUREMENT_N}, "
             f"runtime ETA ≤90 min, model={model}, region={region}, "
             f"torch={torch_version}, vllm={engine_version}",
             file=sys.stderr,
@@ -107,7 +118,7 @@ class ProgressReporter:
         else:
             eta_min = 0
         print(
-            f"[{self.completed_pairs}/{self.total_pairs}] {cell.path} × "
+            f"{_stderr_ts()} [{self.completed_pairs}/{self.total_pairs}] {cell.path} × "
             f"c={cell.concurrency} / {cohort} — {successes}/{M6_1_MEASUREMENT_N} succ — "
             f"{elapsed_ms:.0f} ms — ETA {eta_min}m",
             file=sys.stderr,
@@ -115,7 +126,7 @@ class ProgressReporter:
 
     def emit_completion(self, report_path: str, tally: str) -> None:
         print(
-            f"M6.1 sweep complete: verdict table at {report_path} ({tally})",
+            f"{_stderr_ts()} M6.1 sweep complete: verdict table at {report_path} ({tally})",
             file=sys.stderr,
         )
 

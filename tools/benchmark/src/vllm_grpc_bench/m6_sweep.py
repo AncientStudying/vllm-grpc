@@ -17,6 +17,7 @@ import sys
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from vllm_grpc_bench.ci import estimate
@@ -78,6 +79,14 @@ RPCDriver = Callable[[M6CohortKind, M6Cell, int], Awaitable[RPCResult]]
 # --- Progress reporter -------------------------------------------------------
 
 
+def _stderr_ts() -> str:
+    """ISO-8601 UTC bracket prefix for stderr progress lines, so log readers
+    can correlate emissions with wall-clock time during long sweeps
+    (spike/m6-1-roadmap-additions item #3). Matches the run_id timestamp
+    format used elsewhere in the project."""
+    return datetime.now(UTC).strftime("[%Y-%m-%dT%H:%M:%SZ]")
+
+
 @dataclass
 class ProgressReporter:
     """Emits stderr progress lines per contracts/cli.md.
@@ -86,6 +95,10 @@ class ProgressReporter:
     and a completion banner. Caller invokes :meth:`emit_startup` once,
     :meth:`emit_cell_cohort` after each (cell × cohort) measurement
     completes, and :meth:`emit_completion` at the end of the sweep.
+
+    Each emission carries an ISO-8601 UTC timestamp prefix (item #3 from
+    spike/m6-1-roadmap-additions) so multi-hour sweep logs are
+    timestamp-correlatable without external tooling.
     """
 
     total_pairs: int = 18
@@ -95,7 +108,7 @@ class ProgressReporter:
     def emit_startup(self, *, model: str, region: str) -> None:
         self.start_time = time.monotonic()
         print(
-            f"M6 sweep: 6 cells × 3 cohorts × n={M6_MEASUREMENT_N}, "
+            f"{_stderr_ts()} M6 sweep: 6 cells × 3 cohorts × n={M6_MEASUREMENT_N}, "
             f"runtime ETA ≤90 min, model={model}, region={region}",
             file=sys.stderr,
         )
@@ -116,7 +129,7 @@ class ProgressReporter:
         else:
             eta_min = 0
         print(
-            f"[{self.completed_pairs}/{self.total_pairs}] {cell.path} × "
+            f"{_stderr_ts()} [{self.completed_pairs}/{self.total_pairs}] {cell.path} × "
             f"c={cell.concurrency} / {cohort} — {successes}/{M6_MEASUREMENT_N} succ — "
             f"{elapsed_ms:.0f} ms — ETA {eta_min}m",
             file=sys.stderr,
@@ -124,7 +137,7 @@ class ProgressReporter:
 
     def emit_completion(self, report_path: str, tally: str) -> None:
         print(
-            f"M6 sweep complete: verdict table at {report_path} ({tally})",
+            f"{_stderr_ts()} M6 sweep complete: verdict table at {report_path} ({tally})",
             file=sys.stderr,
         )
 

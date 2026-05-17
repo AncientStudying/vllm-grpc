@@ -73,9 +73,24 @@ def test_smoke_summary_matches_quickstart_format() -> None:
 # --- Full-sweep stderr lines (quickstart Step 2, lines 69-76) ----------------
 
 
+# Pattern for the ISO-8601 UTC timestamp prefix added in
+# spike/m6-1-roadmap-additions item #3 (each progress line is now
+# ``[YYYY-MM-DDTHH:MM:SSZ] <quickstart-documented body>``).
+_TS_PREFIX_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\] ")
+
+
+def _strip_ts_prefix(line: str) -> str:
+    """Strip the timestamp prefix from a progress line; assert one is present.
+    Lets the existing exact-body assertions continue to read cleanly."""
+    match = _TS_PREFIX_RE.match(line)
+    assert match is not None, f"missing ISO-8601 timestamp prefix on line: {line!r}"
+    return line[match.end() :]
+
+
 def test_full_sweep_startup_banner_matches_quickstart() -> None:
     """quickstart.md Step 2 line 69:
     ``M6 sweep: 6 cells × 3 cohorts × n=100, runtime ETA ≤90 min, model=<id>, region=<region>``.
+    Body comes after the ISO-8601 timestamp prefix.
     """
     progress = ProgressReporter()
     stream = io.StringIO()
@@ -89,16 +104,18 @@ def test_full_sweep_startup_banner_matches_quickstart() -> None:
     finally:
         sys.stderr = original_stderr
     line = stream.getvalue().strip()
+    body = _strip_ts_prefix(line)
     expected = (
         "M6 sweep: 6 cells × 3 cohorts × n=100, runtime ETA ≤90 min, "
         "model=Qwen/Qwen3-8B, region=eu-west-1"
     )
-    assert line == expected
+    assert body == expected
 
 
 def test_full_sweep_progress_line_matches_quickstart() -> None:
     """quickstart.md Step 2 line 70:
     ``[1/18] embed × c=1 / rest_https_edge — 100/100 succ — 8230 ms — ETA 87m``.
+    Body comes after the ISO-8601 timestamp prefix.
     """
     progress = ProgressReporter()
     progress.emit_startup(model="Qwen/Qwen3-8B", region="eu-west-1")
@@ -117,17 +134,19 @@ def test_full_sweep_progress_line_matches_quickstart() -> None:
     finally:
         sys.stderr = original_stderr
     line = stream.getvalue().strip()
+    body = _strip_ts_prefix(line)
     # Pattern: [N/18] <path> × c=<c> / <cohort> — <succ>/100 succ — <ms> ms — ETA <m>m
     pattern = (
         r"^\[1/18\] embed × c=1 / rest_https_edge — 100/100 succ "
         r"— \d+ ms — ETA \d+m$"
     )
-    assert re.match(pattern, line), f"line did not match quickstart pattern: {line!r}"
+    assert re.match(pattern, body), f"body did not match quickstart pattern: {body!r}"
 
 
 def test_full_sweep_completion_banner_matches_quickstart() -> None:
     """quickstart.md Step 2 line 76: ``M6 sweep complete: verdict table
     at <path> (4 verdict_survives / 1 verdict_changed / 1 cell_incomplete)``.
+    Body comes after the ISO-8601 timestamp prefix.
     """
     progress = ProgressReporter()
     progress.emit_startup(model="Qwen/Qwen3-8B", region="eu-west-1")
@@ -144,12 +163,13 @@ def test_full_sweep_completion_banner_matches_quickstart() -> None:
     finally:
         sys.stderr = original_stderr
     line = stream.getvalue().strip()
+    body = _strip_ts_prefix(line)
     expected = (
         "M6 sweep complete: verdict table at "
         "docs/benchmarks/m6-real-engine-mini-validation.md "
         "(4 verdict_survives / 1 verdict_changed / 1 cell_incomplete)"
     )
-    assert line == expected
+    assert body == expected
 
 
 # --- Verdict tally ordering (priority-based, FR-014 enumeration) -------------

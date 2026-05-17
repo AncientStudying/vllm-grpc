@@ -133,8 +133,11 @@ async def main() -> int:
 
         # Run traceroute against each host in parallel via thread pool —
         # subprocess.run blocks, so we use asyncio.to_thread.
-        print(f"\n[probe] starting traceroutes (max {TRACE_HOPS_MAX} hops, "
-              f"{TRACE_PER_HOP_TIMEOUT_S}s/hop)…", flush=True)
+        print(
+            f"\n[probe] starting traceroutes (max {TRACE_HOPS_MAX} hops, "
+            f"{TRACE_PER_HOP_TIMEOUT_S}s/hop)…",
+            flush=True,
+        )
         results = await asyncio.gather(
             *(asyncio.to_thread(_traceroute, host) for _, (host, _) in hosts.items())
         )
