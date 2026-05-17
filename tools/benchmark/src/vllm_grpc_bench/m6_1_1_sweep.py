@@ -175,6 +175,37 @@ def aggregate_multi_point_timings(
         seg_cd = [(t["terminal_emit_ns"] - t["first_chunk_ns"]) * 1e-6 for t in timings]
         perturbation_us = [t["perturbation_audit_ns"] / 1000.0 for t in timings]
 
+        # M6.1.2 — engine-internal segments derived from vLLM RequestStateStats
+        # monotonic timestamps. Sample only timings where all four engine-core
+        # ts fields are populated (has_engine_stats); falls back to None when
+        # the upstream server doesn't emit the new keys.
+        engine_stats_timings = [
+            t
+            for t in timings
+            if t.get("engine_queued_ns", 0) > 0
+            and t.get("engine_scheduled_ns", 0) > 0
+            and t.get("engine_first_token_ns", 0) > 0
+            and t.get("engine_last_token_ns", 0) > 0
+        ]
+        if engine_stats_timings:
+            seg_queue = [
+                (t["engine_scheduled_ns"] - t["engine_queued_ns"]) * 1e-6
+                for t in engine_stats_timings
+            ]
+            seg_prefill = [
+                (t["engine_first_token_ns"] - t["engine_scheduled_ns"]) * 1e-6
+                for t in engine_stats_timings
+            ]
+            seg_queue_mean: float | None = _mean_or_zero(seg_queue)
+            seg_queue_ci: float | None = _ci_half_width(seg_queue)
+            seg_prefill_mean: float | None = _mean_or_zero(seg_prefill)
+            seg_prefill_ci: float | None = _ci_half_width(seg_prefill)
+        else:
+            seg_queue_mean = None
+            seg_queue_ci = None
+            seg_prefill_mean = None
+            seg_prefill_ci = None
+
         out.append(
             MultiPointTimings(
                 cohort=cohort,
@@ -189,6 +220,10 @@ def aggregate_multi_point_timings(
                     seg_cd_ms_mean=_mean_or_zero(seg_cd),
                     seg_cd_ms_ci_half_width=_ci_half_width(seg_cd),
                     n_samples=len(timings),
+                    seg_queue_ms_mean=seg_queue_mean,
+                    seg_queue_ms_ci_half_width=seg_queue_ci,
+                    seg_prefill_ms_mean=seg_prefill_mean,
+                    seg_prefill_ms_ci_half_width=seg_prefill_ci,
                 ),
                 perturbation_total_us_mean=_mean_or_zero(perturbation_us),
             )

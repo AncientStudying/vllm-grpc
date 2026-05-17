@@ -186,6 +186,13 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
             # path that sets ``first_token_at`` so the two are sampled at the
             # same instant.
             first_chunk_ns: int | None = None
+            # M6.1.2 — engine-internal RequestStateStats snapshots.
+            engine_arrival_ns: int = 0
+            engine_queued_ns: int = 0
+            engine_scheduled_ns: int = 0
+            engine_first_token_ns: int = 0
+            engine_last_token_ns: int = 0
+            last_chunk_for_metrics: Any = first_chunk
 
             def _format_chunk(chunk: Any) -> bytes:
                 completion = chunk.outputs[0] if chunk.outputs else None
@@ -204,25 +211,60 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
 
             async def _sse_body() -> AsyncIterator[bytes]:
                 nonlocal first_token_at, last_token_at, token_count, first_chunk_ns
+                nonlocal engine_arrival_ns, engine_queued_ns, engine_scheduled_ns
+                nonlocal engine_first_token_ns, engine_last_token_ns
+                nonlocal last_chunk_for_metrics
                 if first_chunk is not None:
+                    last_chunk_for_metrics = first_chunk
                     completion = first_chunk.outputs[0] if first_chunk.outputs else None
                     if completion is not None and completion.text:
                         now = time.perf_counter()
                         if first_token_at is None:
                             first_token_at = now
                             first_chunk_ns = time.perf_counter_ns()
+                            # M6.1.2 — snapshot engine RequestStateStats at first chunk.
+                            if (
+                                getattr(first_chunk, "metrics", None) is not None
+                                and first_chunk.metrics is not None
+                            ):
+                                m = first_chunk.metrics
+                                engine_arrival_ns = (
+                                    int(m.arrival_time * 1e9) if m.arrival_time else 0
+                                )
+                                engine_queued_ns = int(m.queued_ts * 1e9) if m.queued_ts else 0
+                                engine_scheduled_ns = (
+                                    int(m.scheduled_ts * 1e9) if m.scheduled_ts else 0
+                                )
+                                engine_first_token_ns = (
+                                    int(m.first_token_ts * 1e9) if m.first_token_ts else 0
+                                )
                         last_token_at = now
                         token_count = len(getattr(completion, "token_ids", []) or [])
                     payload = _format_chunk(first_chunk)
                     if payload:
                         yield payload
                 async for chunk in gen:
+                    last_chunk_for_metrics = chunk
                     completion = chunk.outputs[0] if chunk.outputs else None
                     if completion is not None and completion.text:
                         now = time.perf_counter()
                         if first_token_at is None:
                             first_token_at = now
                             first_chunk_ns = time.perf_counter_ns()
+                            # M6.1.2 — snapshot engine RequestStateStats at first chunk.
+                            chunk_metrics = getattr(chunk, "metrics", None)
+                            if chunk_metrics is not None:
+                                m = chunk_metrics
+                                engine_arrival_ns = (
+                                    int(m.arrival_time * 1e9) if m.arrival_time else 0
+                                )
+                                engine_queued_ns = int(m.queued_ts * 1e9) if m.queued_ts else 0
+                                engine_scheduled_ns = (
+                                    int(m.scheduled_ts * 1e9) if m.scheduled_ts else 0
+                                )
+                                engine_first_token_ns = (
+                                    int(m.first_token_ts * 1e9) if m.first_token_ts else 0
+                                )
                         last_token_at = now
                         token_count = len(getattr(completion, "token_ids", []) or [])
                     payload = _format_chunk(chunk)
@@ -241,6 +283,15 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
                 # M6.1.1 checkpoint (d): terminal_emit — captured just before
                 # the JSON payload is yielded onto the SSE stream.
                 terminal_emit_ns = time.perf_counter_ns()
+                # M6.1.2 — refresh last_token_ts from the most recently observed
+                # output's metrics (a live RequestStateStats reference).
+                if (
+                    last_chunk_for_metrics is not None
+                    and getattr(last_chunk_for_metrics, "metrics", None) is not None
+                    and last_chunk_for_metrics.metrics is not None
+                    and last_chunk_for_metrics.metrics.last_token_ts
+                ):
+                    engine_last_token_ns = int(last_chunk_for_metrics.metrics.last_token_ts * 1e9)
                 terminal = {
                     "id": completion_id,
                     "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}],
@@ -263,6 +314,12 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
                         ),
                         "terminal_emit_ns": terminal_emit_ns,
                         "perturbation_audit_ns": perturbation_audit_ns,
+                        # M6.1.2 — engine-internal RequestStateStats timestamps.
+                        "engine_arrival_ns": engine_arrival_ns,
+                        "engine_queued_ns": engine_queued_ns,
+                        "engine_scheduled_ns": engine_scheduled_ns,
+                        "engine_first_token_ns": engine_first_token_ns,
+                        "engine_last_token_ns": engine_last_token_ns,
                     },
                 }
                 yield f"data: {json.dumps(terminal)}\n\n".encode()
@@ -367,11 +424,26 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
         final_text = ""
         final_finish = "stop"
         first_chunk_ns: int | None = None
+        # M6.1.2 — engine-internal RequestStateStats snapshots.
+        engine_arrival_ns: int = 0
+        engine_queued_ns: int = 0
+        engine_scheduled_ns: int = 0
+        engine_first_token_ns: int = 0
+        engine_last_token_ns: int = 0
+        final_output: Any = None
         async for output in engine.generate(prompt, sampling, request_id=request_id):
+            final_output = output
             # M6.1.1 checkpoint (c): first_chunk — captured on the first
             # yielded output to mirror chat_stream's first-token semantics.
             if first_chunk_ns is None:
                 first_chunk_ns = time.perf_counter_ns()
+                # M6.1.2 — snapshot engine RequestStateStats.
+                if getattr(output, "metrics", None) is not None and output.metrics is not None:
+                    m = output.metrics
+                    engine_arrival_ns = int(m.arrival_time * 1e9) if m.arrival_time else 0
+                    engine_queued_ns = int(m.queued_ts * 1e9) if m.queued_ts else 0
+                    engine_scheduled_ns = int(m.scheduled_ts * 1e9) if m.scheduled_ts else 0
+                    engine_first_token_ns = int(m.first_token_ts * 1e9) if m.first_token_ts else 0
             if output.outputs:
                 comp = output.outputs[0]
                 final_text = comp.text
@@ -381,6 +453,14 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
         # M6.1.1 checkpoint (d): terminal_emit — captured just before the
         # JSONResponse is constructed.
         terminal_emit_ns = time.perf_counter_ns()
+        # M6.1.2 — refresh last_token_ts from the final output's metrics.
+        if (
+            final_output is not None
+            and getattr(final_output, "metrics", None) is not None
+            and final_output.metrics is not None
+            and final_output.metrics.last_token_ts
+        ):
+            engine_last_token_ns = int(final_output.metrics.last_token_ts * 1e9)
         response = JSONResponse(
             {
                 "model": "mock",
@@ -397,6 +477,12 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
                     ),
                     "terminal_emit_ns": terminal_emit_ns,
                     "perturbation_audit_ns": perturbation_audit_ns,
+                    # M6.1.2 — engine-internal RequestStateStats timestamps.
+                    "engine_arrival_ns": engine_arrival_ns,
+                    "engine_queued_ns": engine_queued_ns,
+                    "engine_scheduled_ns": engine_scheduled_ns,
+                    "engine_first_token_ns": engine_first_token_ns,
+                    "engine_last_token_ns": engine_last_token_ns,
                 },
             }
         )

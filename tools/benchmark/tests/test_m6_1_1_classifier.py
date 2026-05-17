@@ -1,10 +1,19 @@
 """M6.1.1 classifier — FR-010 magnitude-equivalence test coverage.
 
-All four classifications must be reachable from a hand-constructed
-``per_cohort`` input. Edge cases per spec Edge Cases lines 105 / 107:
+The classifier was upgraded in M6.1.2 to a 5-bucket scheme using
+engine-internal segments (``seg_queue``, ``seg_prefill``) derived from
+vLLM's :class:`RequestStateStats`. The original four-checkpoint scheme had
+``seg_bc ≡ engine_ttft`` by construction, making the attribution rule
+degenerate. The new classifier uses ``seg_queue`` (queue wait, from
+``scheduled_ts - queued_ts``) and ``seg_prefill`` (post-schedule engine
+compute, from ``first_token_ts - scheduled_ts``).
 
-* spread carried entirely by ``seg_cd`` (post-engine emit) → ``inconclusive``
-* non-monotonic cohort ordering → ``inconclusive``
+Coverage:
+
+* All 5 labels reachable from hand-constructed inputs.
+* Legacy data (no engine-internal segments) falls back to a 3-bucket
+  scheme that returns ``inconclusive`` when seg_ab doesn't dominate.
+* Threshold boundary behaviour at the 0.80 attribution ratio.
 """
 
 from __future__ import annotations
@@ -33,7 +42,19 @@ def _mpt(
     seg_ab_ms_mean: float,
     seg_bc_ms_mean: float,
     seg_cd_ms_mean: float,
+    seg_queue_ms_mean: float | None = 0.0,
+    seg_prefill_ms_mean: float | None = 0.0,
 ) -> MultiPointTimings:
+    """Build a synthetic :class:`MultiPointTimings` for one cohort.
+
+    ``seg_queue_ms_mean`` / ``seg_prefill_ms_mean`` default to 0.0 (engine
+    segments present, no variation across cohorts) so tests that don't care
+    about the M6.1.2 engine-internal attribution don't have to specify them.
+    Pass ``None`` explicitly to simulate legacy data without the M6.1.2
+    upgrade.
+    """
+    seg_queue_ci = None if seg_queue_ms_mean is None else 0.1
+    seg_prefill_ci = None if seg_prefill_ms_mean is None else 0.1
     return MultiPointTimings(
         cohort=cohort,
         cell=_CHAT_STREAM_C1,
@@ -47,6 +68,10 @@ def _mpt(
             seg_cd_ms_mean=seg_cd_ms_mean,
             seg_cd_ms_ci_half_width=0.1,
             n_samples=50,
+            seg_queue_ms_mean=seg_queue_ms_mean,
+            seg_queue_ms_ci_half_width=seg_queue_ci,
+            seg_prefill_ms_mean=seg_prefill_ms_mean,
+            seg_prefill_ms_ci_half_width=seg_prefill_ci,
         ),
         perturbation_total_us_mean=0.2,
     )
@@ -82,56 +107,11 @@ def test_drift_not_reproduced_short_circuits_when_ttft_spread_under_5pct() -> No
 
 
 def test_instrumentation_artifact_when_seg_ab_carries_spread() -> None:
-    """spread(seg_ab) ≥ 0.80 × spread(engine_ttft) → instrumentation_artifact."""
-    per_cohort = {
-        _COHORTS[0]: _mpt(
-            _COHORTS[0],
-            engine_ttft_ms_mean=43.5,
-            seg_ab_ms_mean=0.5,
-            seg_bc_ms_mean=41.0,
-            seg_cd_ms_mean=2.0,
-        ),
-        _COHORTS[1]: _mpt(
-            _COHORTS[1],
-            engine_ttft_ms_mean=47.5,
-            seg_ab_ms_mean=4.5,
-            seg_bc_ms_mean=41.0,
-            seg_cd_ms_mean=2.0,
-        ),
-        _COHORTS[2]: _mpt(
-            _COHORTS[2],
-            engine_ttft_ms_mean=41.5,
-            seg_ab_ms_mean=0.5,
-            seg_bc_ms_mean=39.0,
-            seg_cd_ms_mean=2.0,
-        ),
-    }
-    # spread_ttft = 47.5 - 41.5 = 6.0; spread_ab = 4.5 - 0.5 = 4.0; 4/6 = 0.67 < 0.80
-    # Adjust so spread_ab dominates:
-    per_cohort = {
-        _COHORTS[0]: _mpt(
-            _COHORTS[0],
-            engine_ttft_ms_mean=43.5,
-            seg_ab_ms_mean=0.5,
-            seg_bc_ms_mean=41.0,
-            seg_cd_ms_mean=2.0,
-        ),
-        _COHORTS[1]: _mpt(
-            _COHORTS[1],
-            engine_ttft_ms_mean=47.5,
-            seg_ab_ms_mean=5.0,
-            seg_bc_ms_mean=40.5,
-            seg_cd_ms_mean=2.0,
-        ),
-        _COHORTS[2]: _mpt(
-            _COHORTS[2],
-            engine_ttft_ms_mean=41.5,
-            seg_ab_ms_mean=0.5,
-            seg_bc_ms_mean=39.0,
-            seg_cd_ms_mean=2.0,
-        ),
-    }
-    # spread_ttft = 6.0; spread_ab = 5.0 - 0.5 = 4.5; 4.5 / 6.0 = 0.75 — still < 0.80
+    """spread(seg_ab) ≥ 0.80 × spread(engine_ttft) → instrumentation_artifact.
+
+    spread_ttft = 47.5 - 41.5 = 6.0
+    spread_ab = 5.5 - 0.5 = 5.0; 5.0 / 6.0 = 0.833 ≥ 0.80 ✓
+    """
     per_cohort = {
         _COHORTS[0]: _mpt(
             _COHORTS[0],
@@ -146,6 +126,8 @@ def test_instrumentation_artifact_when_seg_ab_carries_spread() -> None:
             seg_ab_ms_mean=5.5,
             seg_bc_ms_mean=40.0,
             seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=20.0,  # variation in engine segments but seg_ab dominates
+            seg_prefill_ms_mean=20.0,
         ),
         _COHORTS[2]: _mpt(
             _COHORTS[2],
@@ -155,41 +137,16 @@ def test_instrumentation_artifact_when_seg_ab_carries_spread() -> None:
             seg_cd_ms_mean=2.0,
         ),
     }
-    # spread_ttft = 6.0; spread_ab = 5.0; 5/6 = 0.833 ≥ 0.80 ✓
     assert classify_cell(_CHAT_STREAM_C1, per_cohort) == "instrumentation_artifact"
 
 
-def test_channel_dependent_batching_when_seg_bc_carries_spread() -> None:
-    """spread(seg_bc) ≥ 0.80 × spread(engine_ttft) → channel_dependent_batching."""
-    per_cohort = {
-        _COHORTS[0]: _mpt(
-            _COHORTS[0],
-            engine_ttft_ms_mean=43.5,
-            seg_ab_ms_mean=1.5,
-            seg_bc_ms_mean=40.0,
-            seg_cd_ms_mean=2.0,
-        ),
-        _COHORTS[1]: _mpt(
-            _COHORTS[1],
-            engine_ttft_ms_mean=47.5,
-            seg_ab_ms_mean=1.5,
-            seg_bc_ms_mean=44.0,
-            seg_cd_ms_mean=2.0,
-        ),
-        _COHORTS[2]: _mpt(
-            _COHORTS[2],
-            engine_ttft_ms_mean=41.5,
-            seg_ab_ms_mean=1.5,
-            seg_bc_ms_mean=38.0,
-            seg_cd_ms_mean=2.0,
-        ),
-    }
-    # spread_ttft = 6.0; spread_bc = 44 - 38 = 6.0; 6/6 = 1.0 ≥ 0.80 ✓
-    assert classify_cell(_CHAT_STREAM_C1, per_cohort) == "channel_dependent_batching"
+def test_channel_dependent_batching_when_seg_queue_carries_spread() -> None:
+    """spread(seg_queue) ≥ 0.80 × spread(engine_ttft) → channel_dependent_batching.
 
-
-def test_inconclusive_when_spread_evenly_split() -> None:
-    """spread(seg_ab) ≈ spread(seg_bc) ≈ 50% of spread(ttft) → inconclusive."""
+    M6.1.2 semantics: seg_queue = scheduled_ts - queued_ts (scheduler queue wait).
+    spread_ttft = 47.5 - 41.5 = 6.0
+    spread_queue = 6.0 - 0.5 = 5.5; 5.5 / 6.0 = 0.917 ≥ 0.80 ✓
+    """
     per_cohort = {
         _COHORTS[0]: _mpt(
             _COHORTS[0],
@@ -197,13 +154,17 @@ def test_inconclusive_when_spread_evenly_split() -> None:
             seg_ab_ms_mean=0.5,
             seg_bc_ms_mean=41.0,
             seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=2.0,
+            seg_prefill_ms_mean=39.0,
         ),
         _COHORTS[1]: _mpt(
             _COHORTS[1],
             engine_ttft_ms_mean=47.5,
-            seg_ab_ms_mean=3.5,
-            seg_bc_ms_mean=42.0,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=45.0,
             seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=6.0,
+            seg_prefill_ms_mean=39.0,
         ),
         _COHORTS[2]: _mpt(
             _COHORTS[2],
@@ -211,14 +172,126 @@ def test_inconclusive_when_spread_evenly_split() -> None:
             seg_ab_ms_mean=0.5,
             seg_bc_ms_mean=39.0,
             seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=0.5,
+            seg_prefill_ms_mean=39.0,
         ),
     }
-    # spread_ttft = 6.0; spread_ab = 3.0; spread_bc = 3.0 — both at 50%, neither ≥ 0.80
+    assert classify_cell(_CHAT_STREAM_C1, per_cohort) == "channel_dependent_batching"
+
+
+def test_engine_compute_variation_when_seg_prefill_carries_spread() -> None:
+    """spread(seg_prefill) ≥ 0.80 × spread(engine_ttft) → engine_compute_variation.
+
+    M6.1.2 new bucket. Queue wait is uniform; post-schedule engine compute
+    varies per cohort (likely KV-cache or prompt-length artifact).
+    spread_ttft = 47.5 - 41.5 = 6.0
+    spread_prefill = 44.0 - 38.0 = 6.0; 6.0 / 6.0 = 1.0 ≥ 0.80 ✓
+    """
+    per_cohort = {
+        _COHORTS[0]: _mpt(
+            _COHORTS[0],
+            engine_ttft_ms_mean=43.5,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=41.0,
+            seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=2.0,
+            seg_prefill_ms_mean=40.0,
+        ),
+        _COHORTS[1]: _mpt(
+            _COHORTS[1],
+            engine_ttft_ms_mean=47.5,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=45.0,
+            seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=2.0,
+            seg_prefill_ms_mean=44.0,
+        ),
+        _COHORTS[2]: _mpt(
+            _COHORTS[2],
+            engine_ttft_ms_mean=41.5,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=39.0,
+            seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=2.0,
+            seg_prefill_ms_mean=38.0,
+        ),
+    }
+    assert classify_cell(_CHAT_STREAM_C1, per_cohort) == "engine_compute_variation"
+
+
+def test_inconclusive_when_spread_split_between_engine_segments() -> None:
+    """seg_queue and seg_prefill each carry ~50% of engine_ttft spread → inconclusive."""
+    per_cohort = {
+        _COHORTS[0]: _mpt(
+            _COHORTS[0],
+            engine_ttft_ms_mean=43.5,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=41.0,
+            seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=1.0,
+            seg_prefill_ms_mean=40.0,
+        ),
+        _COHORTS[1]: _mpt(
+            _COHORTS[1],
+            engine_ttft_ms_mean=47.5,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=45.0,
+            seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=4.0,
+            seg_prefill_ms_mean=43.0,
+        ),
+        _COHORTS[2]: _mpt(
+            _COHORTS[2],
+            engine_ttft_ms_mean=41.5,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=39.0,
+            seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=1.0,
+            seg_prefill_ms_mean=38.0,
+        ),
+    }
+    # spread_ttft = 6.0; spread_queue = 3.0; spread_prefill = 5.0
+    # 3/6 = 0.50 < 0.80; 5/6 = 0.833 ≥ 0.80 → engine_compute_variation actually
+    # Adjust so neither dominates:
+    per_cohort = {
+        _COHORTS[0]: _mpt(
+            _COHORTS[0],
+            engine_ttft_ms_mean=43.5,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=41.0,
+            seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=1.0,
+            seg_prefill_ms_mean=40.0,
+        ),
+        _COHORTS[1]: _mpt(
+            _COHORTS[1],
+            engine_ttft_ms_mean=47.5,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=45.0,
+            seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=4.0,
+            seg_prefill_ms_mean=42.0,
+        ),
+        _COHORTS[2]: _mpt(
+            _COHORTS[2],
+            engine_ttft_ms_mean=41.5,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=39.0,
+            seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=1.0,
+            seg_prefill_ms_mean=39.0,
+        ),
+    }
+    # spread_ttft = 6.0; spread_queue = 3.0 → 0.5; spread_prefill = 3.0 → 0.5
+    # neither hits 0.80 → inconclusive
     assert classify_cell(_CHAT_STREAM_C1, per_cohort) == "inconclusive"
 
 
 def test_inconclusive_when_spread_carried_by_seg_cd() -> None:
-    """spread carried entirely by seg_cd (post-engine emit) → inconclusive (Edge Cases line 105)."""
+    """spread carried entirely by seg_cd (post-engine emit) is unphysical:
+    engine_ttft is measured at first_chunk, so seg_cd (first_chunk → terminal_emit)
+    cannot affect engine_ttft spread. Test the synthetic case anyway — classifier
+    correctly returns inconclusive when no tracked segment dominates."""
     per_cohort = {
         _COHORTS[0]: _mpt(
             _COHORTS[0],
@@ -226,6 +299,8 @@ def test_inconclusive_when_spread_carried_by_seg_cd() -> None:
             seg_ab_ms_mean=1.5,
             seg_bc_ms_mean=40.0,
             seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=2.0,
+            seg_prefill_ms_mean=38.0,
         ),
         _COHORTS[1]: _mpt(
             _COHORTS[1],
@@ -233,6 +308,8 @@ def test_inconclusive_when_spread_carried_by_seg_cd() -> None:
             seg_ab_ms_mean=1.5,
             seg_bc_ms_mean=40.0,
             seg_cd_ms_mean=6.0,
+            seg_queue_ms_mean=2.0,
+            seg_prefill_ms_mean=38.0,
         ),
         _COHORTS[2]: _mpt(
             _COHORTS[2],
@@ -240,97 +317,89 @@ def test_inconclusive_when_spread_carried_by_seg_cd() -> None:
             seg_ab_ms_mean=1.5,
             seg_bc_ms_mean=40.0,
             seg_cd_ms_mean=0.0,
+            seg_queue_ms_mean=2.0,
+            seg_prefill_ms_mean=38.0,
         ),
     }
-    # spread_ttft = 6.0; spread_ab = 0; spread_bc = 0; spread_cd = 6.
-    # Neither tracked segment (seg_ab / seg_bc) meets the 0.80 threshold.
+    # spread_ttft = 6.0; spread_ab = 0; spread_queue = 0; spread_prefill = 0.
+    # No tracked segment meets the 0.80 threshold → inconclusive.
     assert classify_cell(_CHAT_STREAM_C1, per_cohort) == "inconclusive"
 
 
-def test_inconclusive_when_non_monotonic_cohort_ordering() -> None:
-    """seg_ab and ttft order differently across cohorts → segment doesn't
-    dominate → inconclusive."""
-    # ttft: rest=43.5 < tuned=44.0 < default=47.5  (default highest)
-    # seg_ab: tuned=4.0 > rest=2.0 > default=1.0  (tuned highest, opposite ttft)
+def test_inconclusive_when_legacy_data_missing_engine_segments() -> None:
+    """Legacy data (pre-M6.1.2 instrumentation) has no seg_queue / seg_prefill.
+
+    When seg_ab doesn't dominate (the typical case for real data), the
+    classifier falls back to ``inconclusive`` rather than the degenerate
+    ``channel_dependent_batching`` via seg_bc. Raw numbers in the report
+    are the authoritative read.
+    """
     per_cohort = {
         _COHORTS[0]: _mpt(
             _COHORTS[0],
             engine_ttft_ms_mean=43.5,
-            seg_ab_ms_mean=2.0,
-            seg_bc_ms_mean=39.5,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=41.0,
             seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=None,  # legacy: M6.1.2 segments absent
+            seg_prefill_ms_mean=None,
         ),
         _COHORTS[1]: _mpt(
             _COHORTS[1],
             engine_ttft_ms_mean=47.5,
-            seg_ab_ms_mean=1.0,
-            seg_bc_ms_mean=44.5,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=45.0,
             seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=None,
+            seg_prefill_ms_mean=None,
         ),
         _COHORTS[2]: _mpt(
             _COHORTS[2],
-            engine_ttft_ms_mean=44.0,
-            seg_ab_ms_mean=4.0,
-            seg_bc_ms_mean=38.0,
+            engine_ttft_ms_mean=41.5,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=39.0,
             seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=None,
+            seg_prefill_ms_mean=None,
         ),
     }
-    # spread_ttft = 47.5 - 43.5 = 4.0; spread_ab = 4.0 - 1.0 = 3.0; 3/4 = 0.75 < 0.80
-    # spread_bc = 44.5 - 38 = 6.5; 6.5/4 = 1.625 → would trigger channel_dependent_batching!
-    # Fix: make seg_bc spread smaller too
+    # spread_ttft = 6.0; spread_ab = 0 < 0.80; no engine segments → inconclusive
+    assert classify_cell(_CHAT_STREAM_C1, per_cohort) == "inconclusive"
+
+
+def test_legacy_data_still_detects_instrumentation_artifact() -> None:
+    """Legacy data with seg_ab dominance still classifies correctly."""
     per_cohort = {
         _COHORTS[0]: _mpt(
             _COHORTS[0],
             engine_ttft_ms_mean=43.5,
-            seg_ab_ms_mean=2.0,
-            seg_bc_ms_mean=39.5,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=41.0,
             seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=None,
+            seg_prefill_ms_mean=None,
         ),
         _COHORTS[1]: _mpt(
             _COHORTS[1],
             engine_ttft_ms_mean=47.5,
-            seg_ab_ms_mean=1.0,
-            seg_bc_ms_mean=42.5,
-            seg_cd_ms_mean=4.0,
+            seg_ab_ms_mean=5.5,
+            seg_bc_ms_mean=40.0,
+            seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=None,
+            seg_prefill_ms_mean=None,
         ),
         _COHORTS[2]: _mpt(
             _COHORTS[2],
-            engine_ttft_ms_mean=44.0,
-            seg_ab_ms_mean=4.0,
-            seg_bc_ms_mean=37.0,
-            seg_cd_ms_mean=3.0,
+            engine_ttft_ms_mean=41.5,
+            seg_ab_ms_mean=0.5,
+            seg_bc_ms_mean=39.0,
+            seg_cd_ms_mean=2.0,
+            seg_queue_ms_mean=None,
+            seg_prefill_ms_mean=None,
         ),
     }
-    # spread_ttft = 4.0; spread_ab = 3.0; spread_bc = 5.5 — bc would dominate.
-    # Non-monotonic across-cohort ordering produces inconclusive when neither
-    # segment dominates. Tighter case below: spread_ttft = 6 with seg_ab
-    # carrying 42% and seg_bc carrying 58%.
-    per_cohort = {
-        _COHORTS[0]: _mpt(
-            _COHORTS[0],
-            engine_ttft_ms_mean=43.5,
-            seg_ab_ms_mean=2.0,
-            seg_bc_ms_mean=39.5,
-            seg_cd_ms_mean=2.0,
-        ),
-        _COHORTS[1]: _mpt(
-            _COHORTS[1],
-            engine_ttft_ms_mean=49.5,
-            seg_ab_ms_mean=4.5,
-            seg_bc_ms_mean=43.0,
-            seg_cd_ms_mean=2.0,
-        ),
-        _COHORTS[2]: _mpt(
-            _COHORTS[2],
-            engine_ttft_ms_mean=46.5,
-            seg_ab_ms_mean=2.0,
-            seg_bc_ms_mean=42.5,
-            seg_cd_ms_mean=2.0,
-        ),
-    }
-    # spread_ttft = 6.0; spread_ab = 2.5; spread_bc = 3.5
-    # 2.5/6 = 0.417 < 0.80; 3.5/6 = 0.583 < 0.80 → inconclusive
-    assert classify_cell(_CHAT_STREAM_C1, per_cohort) == "inconclusive"
+    # spread_ab = 5.0; spread_ttft = 6.0; 5/6 ≥ 0.80 → instrumentation_artifact
+    assert classify_cell(_CHAT_STREAM_C1, per_cohort) == "instrumentation_artifact"
 
 
 def test_classifier_is_pure() -> None:
@@ -363,55 +432,29 @@ def test_classifier_is_pure() -> None:
     assert first == second == "instrumentation_artifact"
 
 
-def test_classifier_reproduces_m6_1_baseline_observed_drift() -> None:
-    """Sanity-check against M6.1's published chat_stream c=1 numbers:
-    rest=43.7, default=47.1, tuned=41.3 → spread/mean ≈ 13% → NOT drift_not_reproduced;
-    without per-segment data the test only confirms the short-circuit didn't fire."""
-    per_cohort = {
-        _COHORTS[0]: _mpt(
-            _COHORTS[0],
-            engine_ttft_ms_mean=43.7,
-            seg_ab_ms_mean=4.5,
-            seg_bc_ms_mean=37.2,
-            seg_cd_ms_mean=2.0,
-        ),
-        _COHORTS[1]: _mpt(
-            _COHORTS[1],
-            engine_ttft_ms_mean=47.1,
-            seg_ab_ms_mean=8.6,
-            seg_bc_ms_mean=36.5,
-            seg_cd_ms_mean=2.0,
-        ),
-        _COHORTS[2]: _mpt(
-            _COHORTS[2],
-            engine_ttft_ms_mean=41.3,
-            seg_ab_ms_mean=2.7,
-            seg_bc_ms_mean=36.6,
-            seg_cd_ms_mean=2.0,
-        ),
-    }
-    # spread_ttft = 5.8; mean = 44.0; ratio = 0.132 > 0.05 → not drift_not_reproduced.
-    # spread_ab = 8.6 - 2.7 = 5.9; 5.9 / 5.8 = 1.017 ≥ 0.80 →
-    # instrumentation_artifact (hypothesised by spec).
-    assert classify_cell(_CHAT_STREAM_C1, per_cohort) == "instrumentation_artifact"
-
-
 @pytest.mark.parametrize(
     "ratios,expected",
     [
-        ((0.50, 0.50), "inconclusive"),
-        ((0.85, 0.10), "instrumentation_artifact"),
-        ((0.10, 0.85), "channel_dependent_batching"),
-        ((0.80, 0.20), "instrumentation_artifact"),  # exactly at threshold
-        ((0.20, 0.80), "channel_dependent_batching"),  # exactly at threshold
+        # (seg_ab_ratio, seg_queue_ratio, seg_prefill_ratio)
+        ((0.85, 0.10, 0.05), "instrumentation_artifact"),
+        ((0.80, 0.10, 0.10), "instrumentation_artifact"),  # seg_ab exactly at threshold
+        ((0.10, 0.85, 0.05), "channel_dependent_batching"),
+        ((0.10, 0.80, 0.10), "channel_dependent_batching"),  # seg_queue exactly at threshold
+        ((0.10, 0.10, 0.85), "engine_compute_variation"),
+        ((0.10, 0.10, 0.80), "engine_compute_variation"),  # seg_prefill exactly at threshold
+        ((0.30, 0.30, 0.30), "inconclusive"),
     ],
 )
-def test_classifier_threshold_boundary(ratios: tuple[float, float], expected: str) -> None:
-    """Classifier behaves correctly at the 0.80 attribution threshold boundary."""
-    seg_ab_ratio, seg_bc_ratio = ratios
+def test_classifier_threshold_boundary(ratios: tuple[float, float, float], expected: str) -> None:
+    """Classifier behaves correctly at the 0.80 attribution threshold boundary
+    across all three positive-attribution segments (seg_ab, seg_queue,
+    seg_prefill).
+    """
+    seg_ab_ratio, seg_queue_ratio, seg_prefill_ratio = ratios
     spread_ttft = 10.0
     seg_ab_high = seg_ab_ratio * spread_ttft
-    seg_bc_high = seg_bc_ratio * spread_ttft
+    seg_queue_high = seg_queue_ratio * spread_ttft
+    seg_prefill_high = seg_prefill_ratio * spread_ttft
     per_cohort = {
         _COHORTS[0]: _mpt(
             _COHORTS[0],
@@ -419,20 +462,26 @@ def test_classifier_threshold_boundary(ratios: tuple[float, float], expected: st
             seg_ab_ms_mean=0.0,
             seg_bc_ms_mean=0.0,
             seg_cd_ms_mean=0.0,
+            seg_queue_ms_mean=0.0,
+            seg_prefill_ms_mean=0.0,
         ),
         _COHORTS[1]: _mpt(
             _COHORTS[1],
             engine_ttft_ms_mean=50.0,
             seg_ab_ms_mean=seg_ab_high,
-            seg_bc_ms_mean=seg_bc_high,
+            seg_bc_ms_mean=0.0,
             seg_cd_ms_mean=0.0,
+            seg_queue_ms_mean=seg_queue_high,
+            seg_prefill_ms_mean=seg_prefill_high,
         ),
         _COHORTS[2]: _mpt(
             _COHORTS[2],
             engine_ttft_ms_mean=45.0,
             seg_ab_ms_mean=seg_ab_high / 2,
-            seg_bc_ms_mean=seg_bc_high / 2,
+            seg_bc_ms_mean=0.0,
             seg_cd_ms_mean=0.0,
+            seg_queue_ms_mean=seg_queue_high / 2,
+            seg_prefill_ms_mean=seg_prefill_high / 2,
         ),
     }
     assert classify_cell(_CHAT_STREAM_C1, per_cohort) == expected

@@ -232,15 +232,27 @@ def _render_multi_point_timing_tables(run: M6_1_1Run) -> str:
         out.append(f"\n### Run {idx + 1} — `{prun.run_id}` (n={prun.n_per_cohort})")
         out.append("")
         out.append(
-            "| cell | cohort | engine_ttft_ms (±CI) | seg_ab_ms (±CI) | "
+            "| cell | cohort | engine_ttft_ms (±CI) | "
+            "seg_ab_ms (±CI) | seg_queue_ms (±CI) | seg_prefill_ms (±CI) | "
             "seg_bc_ms (±CI) | seg_cd_ms (±CI) | perturbation µs | n |"
         )
         out.append(
-            "|------|--------|----------------------|------------------|------------------|------------------|------------------|---|"
+            "|------|--------|----------------------|"
+            "------------------|----------------------|----------------------|"
+            "------------------|------------------|------------------|---|"
         )
         for mpt in prun.multi_point_timings:
             out.append(_format_timing_row(mpt))
     return "\n".join(out)
+
+
+def _fmt_optional(mean: float | None, ci: float | None) -> str:
+    """Format an optional (mean, ci_half_width) pair as ``X.XX ± Y.YY`` or
+    ``n/a`` when either is None (legacy data without M6.1.2 engine timestamps).
+    """
+    if mean is None or ci is None:
+        return "n/a"
+    return f"{mean:.2f} ± {ci:.2f}"
 
 
 def _format_timing_row(mpt: MultiPointTimings) -> str:
@@ -250,6 +262,8 @@ def _format_timing_row(mpt: MultiPointTimings) -> str:
         f"| {cell_label} | {mpt.cohort} | "
         f"{mpt.engine_ttft_ms_mean:.2f} ± {mpt.engine_ttft_ms_ci_half_width:.2f} | "
         f"{seg.seg_ab_ms_mean:.2f} ± {seg.seg_ab_ms_ci_half_width:.2f} | "
+        f"{_fmt_optional(seg.seg_queue_ms_mean, seg.seg_queue_ms_ci_half_width)} | "
+        f"{_fmt_optional(seg.seg_prefill_ms_mean, seg.seg_prefill_ms_ci_half_width)} | "
         f"{seg.seg_bc_ms_mean:.2f} ± {seg.seg_bc_ms_ci_half_width:.2f} | "
         f"{seg.seg_cd_ms_mean:.2f} ± {seg.seg_cd_ms_ci_half_width:.2f} | "
         f"{mpt.perturbation_total_us_mean:.2f} | "
@@ -276,16 +290,27 @@ def _render_root_cause_attribution(run: M6_1_1Run) -> str:
 def _classification_narrative(classification: str) -> str:
     text = {
         "instrumentation_artifact": (
-            "The pre-engine bracket (`seg_ab`) carries ≥80% of the "
-            "`engine_ttft_ms` per-cohort spread. The per-cohort difference is "
-            "measurement-window asymmetry between transport paths, not engine cost. "
-            "Phase 2(a) symmetrisation will eliminate the asymmetry."
+            "The pre-engine bracket (`seg_ab`, handler-internal pre-engine "
+            "work) carries ≥80% of the `engine_ttft_ms` per-cohort spread. "
+            "The per-cohort difference is measurement-window asymmetry inside "
+            "the servicer, not engine cost. Phase 2(a) symmetrisation will "
+            "eliminate the asymmetry."
         ),
         "channel_dependent_batching": (
-            "The engine-internal first-token segment (`seg_bc`) carries ≥80% of "
-            "the spread. The engine itself sees different first-token latencies "
-            "per cohort — this is a real engine behaviour under continuous "
-            "batching. Phase 2(b) documents the interpretation rule."
+            "The engine queue-wait segment (`seg_queue` = "
+            "`scheduled_ts - queued_ts`, from vLLM's RequestStateStats) "
+            "carries ≥80% of the `engine_ttft_ms` per-cohort spread. The "
+            "engine's scheduler dispatches requests from different cohorts at "
+            "different relative times — the canonical continuous-batching "
+            "effect. Phase 2(b) documents the interpretation rule."
+        ),
+        "engine_compute_variation": (
+            "The post-schedule engine-compute segment (`seg_prefill` = "
+            "`first_token_ts - scheduled_ts`, from vLLM's RequestStateStats) "
+            "carries ≥80% of the `engine_ttft_ms` per-cohort spread. The "
+            "scheduler picked up requests promptly, but post-schedule compute "
+            "took per-cohort variable time — likely a KV-cache-state or "
+            "prompt-length artifact (not the canonical batching effect)."
         ),
         "drift_not_reproduced": (
             "Per-cohort `engine_ttft_ms` spread/mean < 5%. The M6.1 drift "
@@ -293,9 +318,11 @@ def _classification_narrative(classification: str) -> str:
             "second confirming run is required before closing."
         ),
         "inconclusive": (
-            "Neither `seg_ab` nor `seg_bc` carries ≥80% of the `engine_ttft_ms` "
-            "spread; the distribution is mixed. A second Phase 1 run is "
-            "required to disambiguate."
+            "Neither `seg_ab` nor the engine-internal segments (`seg_queue`, "
+            "`seg_prefill`) individually carry ≥80% of the `engine_ttft_ms` "
+            "spread, OR the M6.1.2 engine-internal segments are absent (legacy "
+            "data). Raw per-segment numbers in the table above are the "
+            "authoritative read; manual interpretation required."
         ),
     }
     return text.get(classification, "(unrecognised classification)")

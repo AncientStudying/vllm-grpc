@@ -53,11 +53,37 @@ CHAT_STREAM_DRIFT_CLEARED_TOLERANCE: float = 0.05
 
 # --- Literal types ----------------------------------------------------------
 
-CheckpointName = Literal["handler_entry", "pre_engine", "first_chunk", "terminal_emit"]
-SegmentName = Literal["seg_ab", "seg_bc", "seg_cd"]
+CheckpointName = Literal[
+    "handler_entry",
+    "pre_engine",
+    "first_chunk",
+    "terminal_emit",
+    # M6.1.2 — engine-internal timestamps from vLLM RequestStateStats
+    # (wall-clock for ``engine_arrival``; engine-core monotonic for the rest).
+    "engine_arrival",
+    "engine_queued",
+    "engine_scheduled",
+    "engine_first_token",
+    "engine_last_token",
+]
+SegmentName = Literal[
+    "seg_ab",
+    "seg_bc",
+    "seg_cd",
+    # M6.1.2 — engine-internal segments derived from vLLM RequestStateStats
+    # monotonic timestamps. seg_queue = scheduled_ts - queued_ts;
+    # seg_prefill = first_token_ts - scheduled_ts.
+    "seg_queue",
+    "seg_prefill",
+]
 Phase1Classification = Literal[
     "instrumentation_artifact",
     "channel_dependent_batching",
+    # M6.1.2 — new attribution bucket. Fires when post-schedule engine compute
+    # (``seg_prefill``) carries the engine_ttft spread; distinct from
+    # ``channel_dependent_batching`` (which fires on queue-wait variation, i.e.
+    # the canonical continuous-batching scheduler effect).
+    "engine_compute_variation",
     "drift_not_reproduced",
     "inconclusive",
 ]
@@ -87,11 +113,27 @@ M6_1_1ExitCode = Literal[0, 1, 2, 3, 4, 5]
 
 @dataclass(frozen=True)
 class TimingCheckpoint:
-    """Four per-RPC ``perf_counter_ns()`` timestamps captured server-side and
-    emitted on the wire (FR-006 / FR-007 / FR-008).
+    """Per-RPC timing checkpoints captured server-side and emitted on the wire.
+
+    The original four-checkpoint scheme (FR-006 / FR-007 / FR-008) uses
+    ``time.perf_counter_ns()`` for ``handler_entry_ns``, ``pre_engine_ns``,
+    ``first_chunk_ns``, ``terminal_emit_ns``. These are all on a single
+    monotonic clock and can be subtracted directly to derive ``seg_ab``,
+    ``seg_bc``, ``seg_cd``.
+
+    M6.1.2 adds five engine-internal timestamps pulled from
+    :class:`vllm.v1.metrics.stats.RequestStateStats` (populated on every
+    yielded ``RequestOutput.metrics``). ``engine_arrival_ns`` is wall-clock
+    and informational only; the four ``_ts``-suffixed fields are on vLLM's
+    engine-core monotonic clock and can be subtracted among themselves to
+    derive ``seg_queue`` and ``seg_prefill``. They CANNOT be subtracted
+    against the ``perf_counter_ns()`` checkpoints (different clock bases).
 
     ``perturbation_audit_ns`` is the server-measured total cost the 4 reads
-    themselves added to the request lifecycle (FR-012 hard gate input).
+    themselves added to the request lifecycle (FR-012 hard gate input). It
+    is NOT extended to cover the M6.1.2 reads because those reads are
+    simple attribute accesses on an already-built object, not new system
+    calls.
     """
 
     handler_entry_ns: int
@@ -99,28 +141,72 @@ class TimingCheckpoint:
     first_chunk_ns: int
     terminal_emit_ns: int
     perturbation_audit_ns: int
+    # M6.1.2 engine-internal timestamps. ``0`` means the upstream engine did
+    # not populate the corresponding ``RequestStateStats`` field (pre-vLLM
+    # 0.20.x backends, or non-streaming code paths that complete before the
+    # scheduler ts is recorded). Callers MUST check ``ckpt.has_engine_stats``
+    # before deriving seg_queue / seg_prefill.
+    engine_arrival_ns: int = 0
+    engine_queued_ns: int = 0
+    engine_scheduled_ns: int = 0
+    engine_first_token_ns: int = 0
+    engine_last_token_ns: int = 0
+
+    @property
+    def has_engine_stats(self) -> bool:
+        """True iff all four engine-core monotonic timestamps are populated.
+
+        ``engine_arrival_ns`` is excluded because it's on a different clock
+        and is informational only.
+        """
+        return (
+            self.engine_queued_ns > 0
+            and self.engine_scheduled_ns > 0
+            and self.engine_first_token_ns > 0
+            and self.engine_last_token_ns > 0
+        )
 
 
 @dataclass(frozen=True)
 class PerSegmentDelta:
-    """Three named per-RPC durations derived from the four checkpoints (FR-009)."""
+    """Per-RPC durations derived from the timing checkpoints (FR-009).
+
+    The original three segments (``seg_ab``, ``seg_bc``, ``seg_cd``) come
+    from the ``perf_counter_ns()`` checkpoints. The two M6.1.2 segments
+    (``seg_queue``, ``seg_prefill``) come from vLLM's engine-core monotonic
+    timestamps; they are ``None`` when ``ckpt.has_engine_stats`` is False.
+    """
 
     seg_ab_ms: float
     seg_bc_ms: float
     seg_cd_ms: float
+    seg_queue_ms: float | None = None
+    seg_prefill_ms: float | None = None
 
     @classmethod
     def from_checkpoint(cls, ckpt: TimingCheckpoint) -> PerSegmentDelta:
+        seg_queue_ms: float | None = None
+        seg_prefill_ms: float | None = None
+        if ckpt.has_engine_stats:
+            seg_queue_ms = (ckpt.engine_scheduled_ns - ckpt.engine_queued_ns) * 1e-6
+            seg_prefill_ms = (ckpt.engine_first_token_ns - ckpt.engine_scheduled_ns) * 1e-6
         return cls(
             seg_ab_ms=(ckpt.pre_engine_ns - ckpt.handler_entry_ns) * 1e-6,
             seg_bc_ms=(ckpt.first_chunk_ns - ckpt.pre_engine_ns) * 1e-6,
             seg_cd_ms=(ckpt.terminal_emit_ns - ckpt.first_chunk_ns) * 1e-6,
+            seg_queue_ms=seg_queue_ms,
+            seg_prefill_ms=seg_prefill_ms,
         )
 
 
 @dataclass(frozen=True)
 class PerSegmentAggregate:
-    """Mean + 95% CI half-width via bootstrap n_boot=10_000 (FR-009)."""
+    """Mean + 95% CI half-width via bootstrap n_boot=10_000 (FR-009).
+
+    ``seg_queue_*`` and ``seg_prefill_*`` are ``None`` when no sample
+    populated the corresponding M6.1.2 engine timestamps (e.g., upstream
+    server without the M6.1.2 instrumentation upgrade).
+    """
 
     seg_ab_ms_mean: float
     seg_ab_ms_ci_half_width: float
@@ -129,6 +215,10 @@ class PerSegmentAggregate:
     seg_cd_ms_mean: float
     seg_cd_ms_ci_half_width: float
     n_samples: int
+    seg_queue_ms_mean: float | None = None
+    seg_queue_ms_ci_half_width: float | None = None
+    seg_prefill_ms_mean: float | None = None
+    seg_prefill_ms_ci_half_width: float | None = None
 
 
 @dataclass(frozen=True)

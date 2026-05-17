@@ -26,6 +26,23 @@ from typing import Any
 from vllm_grpc_bench.m6_1_1_types import PerSegmentDelta, TimingCheckpoint
 
 
+def _opt_int(value: Any) -> int:
+    """Coerce a value to int, returning 0 on missing/invalid input.
+
+    Used for the M6.1.2 engine-internal fields: when an upstream server
+    pre-dates the M6.1.2 instrumentation upgrade (or vLLM didn't populate
+    the corresponding ``RequestStateStats`` field) the wire keys are
+    absent — the extractor returns a checkpoint with ``0`` for those
+    fields, and ``TimingCheckpoint.has_engine_stats`` returns False.
+    """
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def extract_rest_timings(sse_terminal_event: dict[str, Any]) -> TimingCheckpoint | None:
     """Read the ``m6_1_1_timings`` sub-object from a REST terminal payload.
 
@@ -36,9 +53,13 @@ def extract_rest_timings(sse_terminal_event: dict[str, Any]) -> TimingCheckpoint
 
     Returns ``None`` when:
     * the ``m6_1_1_timings`` sub-object is absent (M6 / M6.1 server), or
-    * any required field is missing or non-integer (partial extraction is
-      treated as a miss so the FR-010 classifier never sees half-populated
-      timings).
+    * any of the five original four-checkpoint fields is missing or
+      non-integer (partial extraction is treated as a miss so the FR-010
+      classifier never sees half-populated timings).
+
+    M6.1.2 engine-internal fields (``engine_*_ns``) are best-effort: when
+    absent, they default to 0 and ``ckpt.has_engine_stats`` returns False;
+    downstream consumers skip the queue/prefill segments accordingly.
     """
     sub = sse_terminal_event.get("m6_1_1_timings")
     if not isinstance(sub, dict):
@@ -50,17 +71,24 @@ def extract_rest_timings(sse_terminal_event: dict[str, Any]) -> TimingCheckpoint
             first_chunk_ns=int(sub["first_chunk_ns"]),
             terminal_emit_ns=int(sub["terminal_emit_ns"]),
             perturbation_audit_ns=int(sub["perturbation_audit_ns"]),
+            engine_arrival_ns=_opt_int(sub.get("engine_arrival_ns")),
+            engine_queued_ns=_opt_int(sub.get("engine_queued_ns")),
+            engine_scheduled_ns=_opt_int(sub.get("engine_scheduled_ns")),
+            engine_first_token_ns=_opt_int(sub.get("engine_first_token_ns")),
+            engine_last_token_ns=_opt_int(sub.get("engine_last_token_ns")),
         )
     except (KeyError, TypeError, ValueError):
         return None
 
 
 def extract_grpc_timings(trailing_md: dict[str, str]) -> TimingCheckpoint | None:
-    """Read the five ``m6_1_1_t_*`` keys from gRPC trailing metadata.
+    """Read the ``m6_1_1_t_*`` keys from gRPC trailing metadata.
 
     gRPC trailing metadata values are ASCII strings; we ``int()``-parse them.
-    Returns ``None`` when any required key is missing or non-numeric — same
-    best-effort semantics as :func:`extract_rest_timings`.
+    Returns ``None`` when any of the five original four-checkpoint keys is
+    missing or non-numeric — same best-effort semantics as
+    :func:`extract_rest_timings`. M6.1.2 engine-internal keys default to 0
+    when absent.
     """
     try:
         return TimingCheckpoint(
@@ -69,6 +97,11 @@ def extract_grpc_timings(trailing_md: dict[str, str]) -> TimingCheckpoint | None
             first_chunk_ns=int(trailing_md["m6_1_1_t_first_chunk"]),
             terminal_emit_ns=int(trailing_md["m6_1_1_t_terminal_emit"]),
             perturbation_audit_ns=int(trailing_md["m6_1_1_t_perturbation_audit_ns"]),
+            engine_arrival_ns=_opt_int(trailing_md.get("m6_1_1_t_engine_arrival_ns")),
+            engine_queued_ns=_opt_int(trailing_md.get("m6_1_1_t_engine_queued_ns")),
+            engine_scheduled_ns=_opt_int(trailing_md.get("m6_1_1_t_engine_scheduled_ns")),
+            engine_first_token_ns=_opt_int(trailing_md.get("m6_1_1_t_engine_first_token_ns")),
+            engine_last_token_ns=_opt_int(trailing_md.get("m6_1_1_t_engine_last_token_ns")),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -98,6 +131,11 @@ def timing_checkpoint_to_payload(
         "first_chunk_ns": ckpt.first_chunk_ns,
         "terminal_emit_ns": ckpt.terminal_emit_ns,
         "perturbation_audit_ns": ckpt.perturbation_audit_ns,
+        "engine_arrival_ns": ckpt.engine_arrival_ns,
+        "engine_queued_ns": ckpt.engine_queued_ns,
+        "engine_scheduled_ns": ckpt.engine_scheduled_ns,
+        "engine_first_token_ns": ckpt.engine_first_token_ns,
+        "engine_last_token_ns": ckpt.engine_last_token_ns,
     }
 
 

@@ -106,14 +106,45 @@ class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # t
         start = time.perf_counter()
         final = None
         first_chunk_ns: int | None = None
+        # M6.1.2 — engine-internal RequestStateStats snapshots.
+        engine_arrival_ns: int = 0
+        engine_queued_ns: int = 0
+        engine_scheduled_ns: int = 0
+        engine_first_token_ns: int = 0
+        engine_last_token_ns: int = 0
         async for output in self._engine.generate(engine_input, params, request_id=request_id):
             # M6.1.1 checkpoint (c): first_chunk — first yielded output.
             if first_chunk_ns is None:
                 first_chunk_ns = time.perf_counter_ns()
+                # M6.1.2 — snapshot engine RequestStateStats at first chunk.
+                if output.metrics is not None:
+                    engine_arrival_ns = (
+                        int(output.metrics.arrival_time * 1e9)
+                        if output.metrics.arrival_time
+                        else 0
+                    )
+                    engine_queued_ns = (
+                        int(output.metrics.queued_ts * 1e9)
+                        if output.metrics.queued_ts
+                        else 0
+                    )
+                    engine_scheduled_ns = (
+                        int(output.metrics.scheduled_ts * 1e9)
+                        if output.metrics.scheduled_ts
+                        else 0
+                    )
+                    engine_first_token_ns = (
+                        int(output.metrics.first_token_ts * 1e9)
+                        if output.metrics.first_token_ts
+                        else 0
+                    )
             final = output
         engine_forward_ms = (time.perf_counter() - start) * 1000.0
         # M6.1.1 checkpoint (d): terminal_emit — just before trailing metadata.
         terminal_emit_ns = time.perf_counter_ns()
+        # M6.1.2 — refresh last_token_ts at terminal-emit.
+        if final is not None and final.metrics is not None and final.metrics.last_token_ts:
+            engine_last_token_ns = int(final.metrics.last_token_ts * 1e9)
         first_chunk_for_md = first_chunk_ns if first_chunk_ns is not None else terminal_emit_ns
         context.set_trailing_metadata(
             (
@@ -123,6 +154,12 @@ class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # t
                 ("m6_1_1_t_first_chunk", str(first_chunk_for_md)),
                 ("m6_1_1_t_terminal_emit", str(terminal_emit_ns)),
                 ("m6_1_1_t_perturbation_audit_ns", str(perturbation_audit_ns)),
+                # M6.1.2 — engine-internal RequestStateStats timestamps.
+                ("m6_1_1_t_engine_arrival_ns", str(engine_arrival_ns)),
+                ("m6_1_1_t_engine_queued_ns", str(engine_queued_ns)),
+                ("m6_1_1_t_engine_scheduled_ns", str(engine_scheduled_ns)),
+                ("m6_1_1_t_engine_first_token_ns", str(engine_first_token_ns)),
+                ("m6_1_1_t_engine_last_token_ns", str(engine_last_token_ns)),
             )
         )
 
@@ -174,6 +211,12 @@ class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # t
         last_token_at: float | None = None
         token_count = 0
         first_chunk_ns: int | None = None
+        # M6.1.2 — engine-internal RequestStateStats snapshots.
+        engine_arrival_ns: int = 0
+        engine_queued_ns: int = 0
+        engine_scheduled_ns: int = 0
+        engine_first_token_ns: int = 0
+        engine_last_token_ns: int = 0
 
         prev_text = ""
         token_index = 0
@@ -188,6 +231,28 @@ class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # t
                         first_token_at = now
                         # M6.1.1 checkpoint (c): first_chunk.
                         first_chunk_ns = time.perf_counter_ns()
+                        # M6.1.2 — snapshot engine RequestStateStats.
+                        if output.metrics is not None:
+                            engine_arrival_ns = (
+                                int(output.metrics.arrival_time * 1e9)
+                                if output.metrics.arrival_time
+                                else 0
+                            )
+                            engine_queued_ns = (
+                                int(output.metrics.queued_ts * 1e9)
+                                if output.metrics.queued_ts
+                                else 0
+                            )
+                            engine_scheduled_ns = (
+                                int(output.metrics.scheduled_ts * 1e9)
+                                if output.metrics.scheduled_ts
+                                else 0
+                            )
+                            engine_first_token_ns = (
+                                int(output.metrics.first_token_ts * 1e9)
+                                if output.metrics.first_token_ts
+                                else 0
+                            )
                     last_token_at = now
                     token_count = len(completion.token_ids)
                     if not context.is_active():  # type: ignore[attr-defined]
@@ -210,6 +275,9 @@ class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # t
                         engine_tpot_ms = 0.0
                     # M6.1.1 checkpoint (d): terminal_emit.
                     terminal_emit_ns = time.perf_counter_ns()
+                    # M6.1.2 — refresh last_token_ts at terminal-emit.
+                    if output.metrics is not None and output.metrics.last_token_ts:
+                        engine_last_token_ns = int(output.metrics.last_token_ts * 1e9)
                     first_chunk_for_md = (
                         first_chunk_ns if first_chunk_ns is not None else terminal_emit_ns
                     )
@@ -225,6 +293,12 @@ class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # t
                                 "m6_1_1_t_perturbation_audit_ns",
                                 str(perturbation_audit_ns),
                             ),
+                            # M6.1.2 — engine-internal RequestStateStats timestamps.
+                            ("m6_1_1_t_engine_arrival_ns", str(engine_arrival_ns)),
+                            ("m6_1_1_t_engine_queued_ns", str(engine_queued_ns)),
+                            ("m6_1_1_t_engine_scheduled_ns", str(engine_scheduled_ns)),
+                            ("m6_1_1_t_engine_first_token_ns", str(engine_first_token_ns)),
+                            ("m6_1_1_t_engine_last_token_ns", str(engine_last_token_ns)),
                         )
                     )
                     yield completions_pb2.CompletionStreamChunk(

@@ -58,10 +58,16 @@ def test_constants_match_spec() -> None:
 
 
 def test_phase1_classification_literal_members() -> None:
-    """The four Phase 1 outcomes per FR-010 / round-1 Q1."""
+    """The five Phase 1 outcomes per FR-010 / M6.1.2 5-bucket upgrade.
+
+    ``engine_compute_variation`` was added when the classifier was upgraded
+    to use vLLM RequestStateStats-derived segments (seg_queue / seg_prefill)
+    instead of the degenerate seg_bc rule.
+    """
     assert set(get_args(Phase1Classification)) == {
         "instrumentation_artifact",
         "channel_dependent_batching",
+        "engine_compute_variation",
         "drift_not_reproduced",
         "inconclusive",
     }
