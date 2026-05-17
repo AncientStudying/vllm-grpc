@@ -30,6 +30,8 @@ from vllm_grpc_bench.m6_1_1_types import (
     M6_1_1Cell,
     M6_1_1Cohort,
     MultiPointTimings,
+    PerSegmentAggregate,
+    PerturbationAudit,
     Phase1Classification,
     Phase1RunRecord,
 )
@@ -492,23 +494,96 @@ def _existing_plus_new(
 def _rehydrate_phase_1_run(raw: dict[str, Any]) -> Phase1RunRecord:
     """Rehydrate a dict (as written by the reporter) back into Phase1RunRecord.
 
-    Only fields exercised by the gate evaluator are required —
-    multi_point_timings + perturbation_audit are not strictly needed for
-    gate logic so they're populated as empty/default if missing.
-    """
-    from vllm_grpc_bench.m6_1_1_types import PerturbationAudit
+    Symmetric with :func:`m6_1_1_reporter._phase_1_run_to_dict`: every field
+    written round-trips. Two consumers share this output — the gate evaluator
+    (only needs ``phase_1_classifications`` + metadata) and the reporter
+    (iterates ``multi_point_timings`` to render historical tables) — so all
+    fields must be reconstructed, not stubbed.
 
+    Legacy data without M6.1.1-expansion engine-internal segments parses
+    cleanly: ``seg_queue_ms_*`` / ``seg_prefill_ms_*`` default to ``None``
+    when absent on a per-segment record.
+    """
     classifications = {str(k): v for k, v in (raw.get("phase_1_classifications") or {}).items()}
     return Phase1RunRecord(
         run_id=str(raw.get("run_id", "")),
         run_started_at=str(raw.get("run_started_at", "")),
         run_completed_at=str(raw.get("run_completed_at", "")),
         wall_clock_s=float(raw.get("wall_clock_s", 0.0)),
-        multi_point_timings=[],
+        multi_point_timings=[
+            _rehydrate_multi_point_timings(mpt_raw)
+            for mpt_raw in (raw.get("multi_point_timings") or [])
+        ],
         phase_1_classifications=classifications,
-        perturbation_audit=PerturbationAudit(per_cohort_per_cell={}, exceeded=False),
+        perturbation_audit=_rehydrate_perturbation_audit(raw.get("perturbation_audit") or {}),
         n_per_cohort=int(raw.get("n_per_cohort", 50)),
     )
+
+
+def _rehydrate_multi_point_timings(raw: dict[str, Any]) -> MultiPointTimings:
+    """Reverse of ``dataclasses.asdict`` for :class:`MultiPointTimings`.
+
+    The legacy 4-field per_segment shape (``seg_ab`` / ``seg_bc`` / ``seg_cd``
+    + ``n_samples``) loads with the M6.1.1-expansion fields set to ``None``.
+    """
+    cell_raw = raw["cell"]
+    seg_raw = raw["per_segment"]
+    return MultiPointTimings(
+        cohort=raw["cohort"],
+        cell=M6_1_1Cell(
+            path=cell_raw["path"],
+            hidden_size=cell_raw["hidden_size"],
+            concurrency=cell_raw["concurrency"],
+        ),
+        engine_ttft_ms_mean=float(raw["engine_ttft_ms_mean"]),
+        engine_ttft_ms_ci_half_width=float(raw["engine_ttft_ms_ci_half_width"]),
+        per_segment=PerSegmentAggregate(
+            seg_ab_ms_mean=float(seg_raw["seg_ab_ms_mean"]),
+            seg_ab_ms_ci_half_width=float(seg_raw["seg_ab_ms_ci_half_width"]),
+            seg_bc_ms_mean=float(seg_raw["seg_bc_ms_mean"]),
+            seg_bc_ms_ci_half_width=float(seg_raw["seg_bc_ms_ci_half_width"]),
+            seg_cd_ms_mean=float(seg_raw["seg_cd_ms_mean"]),
+            seg_cd_ms_ci_half_width=float(seg_raw["seg_cd_ms_ci_half_width"]),
+            n_samples=int(seg_raw["n_samples"]),
+            seg_queue_ms_mean=_opt_float(seg_raw.get("seg_queue_ms_mean")),
+            seg_queue_ms_ci_half_width=_opt_float(seg_raw.get("seg_queue_ms_ci_half_width")),
+            seg_prefill_ms_mean=_opt_float(seg_raw.get("seg_prefill_ms_mean")),
+            seg_prefill_ms_ci_half_width=_opt_float(seg_raw.get("seg_prefill_ms_ci_half_width")),
+        ),
+        perturbation_total_us_mean=float(raw["perturbation_total_us_mean"]),
+    )
+
+
+def _rehydrate_perturbation_audit(raw: dict[str, Any]) -> PerturbationAudit:
+    """Reverse of :func:`m6_1_1_reporter._sanitize_for_json` for PerturbationAudit.
+
+    The on-disk shape carries ``per_cohort_per_cell`` keys collapsed by the
+    reporter sanitizer from ``(cohort, cell_str)`` tuples to ``"cohort|cell_str"``
+    strings; this routine re-splits them. ``exceeded_pairs`` values are
+    re-tuple'd from the lists that ``json.dumps`` produced.
+    """
+    per_cohort_per_cell: dict[tuple[str, str], float] = {}
+    for k, v in (raw.get("per_cohort_per_cell") or {}).items():
+        parts = str(k).split("|", 1)
+        if len(parts) != 2:
+            raise ValueError(
+                f"perturbation_audit per_cohort_per_cell key {k!r} not in 'cohort|cell_str' shape"
+            )
+        per_cohort_per_cell[(parts[0], parts[1])] = float(v)
+    exceeded_pairs = [
+        (str(pair[0]), str(pair[1])) for pair in (raw.get("exceeded_pairs") or [])
+    ]
+    return PerturbationAudit(
+        per_cohort_per_cell=per_cohort_per_cell,
+        exceeded=bool(raw.get("exceeded", False)),
+        exceeded_pairs=exceeded_pairs,
+        budget_us=float(raw.get("budget_us", 500.0)),
+    )
+
+
+def _opt_float(v: Any) -> float | None:
+    """Pass ``None`` through; coerce anything else to ``float``."""
+    return None if v is None else float(v)
 
 
 def cell_key(cell: M6_1_1Cell) -> str:

@@ -239,6 +239,9 @@ def test_json_has_all_top_level_keys_under_phase_2_pending() -> None:
         "embed_regression_check",
         "m6_1_baseline_pointer",
         "methodology_supersedence",
+        # M6.1.1-expansion: classifier provenance + decision-tree summary
+        # surfaced in the markdown's Methodology bullet. Additive top-level key.
+        "classifier_notes",
     }
     assert set(payload.keys()) == expected_keys
 

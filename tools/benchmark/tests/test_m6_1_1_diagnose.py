@@ -10,13 +10,18 @@ from pathlib import Path
 import pytest
 from vllm_grpc_bench.m6_1_1_diagnose import (
     M6_1_1BaselineError,
+    _rehydrate_phase_1_run,
     check_engine_version,
     evaluate_phase_1_gates,
     load_m6_1_baseline,
     read_existing_phase_1_runs,
     run_m6_1_1_diagnose,
 )
+from vllm_grpc_bench.m6_1_1_reporter import _phase_1_run_to_dict, _sanitize_for_json
 from vllm_grpc_bench.m6_1_1_types import (
+    M6_1_1Cell,
+    MultiPointTimings,
+    PerSegmentAggregate,
     PerturbationAudit,
     Phase1Classification,
     Phase1RunRecord,
@@ -140,6 +145,143 @@ def test_read_existing_phase_1_runs_missing_key_returns_empty(tmp_path: Path) ->
     p = tmp_path / "report.json"
     p.write_text(json.dumps({"schema_version": "m6_1_1.v1"}), encoding="utf-8")
     assert read_existing_phase_1_runs(p) == []
+
+
+def test_phase_1_run_record_round_trips_through_reporter_write_path() -> None:
+    """Regression: Phase1RunRecord must round-trip through the reporter's full
+    write path (asdict → _sanitize_for_json → json.dumps → json.loads →
+    _rehydrate_phase_1_run) with field-by-field equality.
+
+    The original _rehydrate_phase_1_run dropped multi_point_timings and
+    perturbation_audit because they "weren't needed for gate logic". That
+    silently broke the reporter's historical-table rendering once an existing
+    phase_1_runs[] entry was re-serialised on the next --m6_1_1-diagnose
+    invocation (Run 1's rows showed up as a bare table header). Two readers
+    (gate evaluator + reporter) share this rehydration; the contract has to
+    serve both.
+
+    Covers:
+    - new-shape per_segment (seg_queue / seg_prefill populated);
+    - legacy-shape per_segment (seg_queue / seg_prefill = None — pre-expansion);
+    - perturbation_audit with tuple-keyed per_cohort_per_cell (sanitiser
+      collapses to "cohort|cell_str" strings; rehydrator must re-split);
+    - non-empty exceeded_pairs (tuples-as-lists JSON round-trip).
+    """
+    new_shape = MultiPointTimings(
+        cohort="rest_https_edge",
+        cell=M6_1_1Cell(path="chat_stream", hidden_size=4096, concurrency=4),
+        engine_ttft_ms_mean=101.57,
+        engine_ttft_ms_ci_half_width=4.70,
+        per_segment=PerSegmentAggregate(
+            seg_ab_ms_mean=0.05,
+            seg_ab_ms_ci_half_width=0.01,
+            seg_bc_ms_mean=101.57,
+            seg_bc_ms_ci_half_width=4.70,
+            seg_cd_ms_mean=1802.16,
+            seg_cd_ms_ci_half_width=1.65,
+            n_samples=50,
+            seg_queue_ms_mean=0.01,
+            seg_queue_ms_ci_half_width=0.001,
+            seg_prefill_ms_mean=74.05,
+            seg_prefill_ms_ci_half_width=1.38,
+        ),
+        perturbation_total_us_mean=0.60,
+    )
+    legacy_shape = MultiPointTimings(
+        cohort="default_grpc",
+        cell=M6_1_1Cell(path="embed", hidden_size=4096, concurrency=1),
+        engine_ttft_ms_mean=341.84,
+        engine_ttft_ms_ci_half_width=0.14,
+        per_segment=PerSegmentAggregate(
+            seg_ab_ms_mean=1.04,
+            seg_ab_ms_ci_half_width=0.02,
+            seg_bc_ms_mean=42.75,
+            seg_bc_ms_ci_half_width=0.08,
+            seg_cd_ms_mean=299.09,
+            seg_cd_ms_ci_half_width=0.12,
+            n_samples=50,
+            # seg_queue_ms_* and seg_prefill_ms_* default to None
+        ),
+        perturbation_total_us_mean=0.63,
+    )
+    audit = PerturbationAudit(
+        per_cohort_per_cell={
+            ("rest_https_edge", "chat_stream_c4_h4096"): 0.60,
+            ("default_grpc", "embed_c1_h4096"): 0.63,
+        },
+        exceeded=True,
+        exceeded_pairs=[("rest_https_edge", "chat_stream_c4_h4096")],
+        budget_us=500.0,
+    )
+    original = Phase1RunRecord(
+        run_id="2026-05-17T10:48:36Z-c4645c3",
+        run_started_at="2026-05-17T10:48:36Z",
+        run_completed_at="2026-05-17T11:02:44Z",
+        wall_clock_s=848.26,
+        multi_point_timings=[new_shape, legacy_shape],
+        phase_1_classifications={
+            "chat_stream_c1_h4096": "engine_compute_variation",
+            "chat_stream_c4_h4096": "inconclusive",
+            "chat_stream_c8_h4096": "inconclusive",
+        },
+        perturbation_audit=audit,
+        n_per_cohort=50,
+    )
+
+    # Mirror the reporter's exact write path so the test catches any lossy step,
+    # not just an artificially-narrow asdict→rehydrate round-trip.
+    raw = _phase_1_run_to_dict(original)
+    on_disk = json.loads(json.dumps(_sanitize_for_json(raw)))
+    rehydrated = _rehydrate_phase_1_run(on_disk)
+
+    assert rehydrated == original
+
+
+def test_phase_1_run_record_rehydrates_legacy_dict_without_engine_segments() -> None:
+    """Legacy on-disk shape (no seg_queue / seg_prefill keys on per_segment)
+    rehydrates with those fields as None — does not raise KeyError. Mirrors
+    the situation when a pre-expansion artifact is appended to by a post-
+    expansion harness.
+    """
+    on_disk = {
+        "run_id": "legacy-run",
+        "run_started_at": "2026-05-16T00:00:00Z",
+        "run_completed_at": "2026-05-16T00:01:00Z",
+        "wall_clock_s": 60.0,
+        "multi_point_timings": [
+            {
+                "cohort": "rest_https_edge",
+                "cell": {"path": "embed", "hidden_size": 4096, "concurrency": 1},
+                "engine_ttft_ms_mean": 340.0,
+                "engine_ttft_ms_ci_half_width": 0.5,
+                "per_segment": {
+                    "seg_ab_ms_mean": 1.0,
+                    "seg_ab_ms_ci_half_width": 0.05,
+                    "seg_bc_ms_mean": 42.0,
+                    "seg_bc_ms_ci_half_width": 0.1,
+                    "seg_cd_ms_mean": 297.0,
+                    "seg_cd_ms_ci_half_width": 0.3,
+                    "n_samples": 50,
+                },
+                "perturbation_total_us_mean": 0.7,
+            },
+        ],
+        "phase_1_classifications": {"chat_stream_c1_h4096": "drift_not_reproduced"},
+        "perturbation_audit": {
+            "per_cohort_per_cell": {},
+            "exceeded": False,
+            "exceeded_pairs": [],
+            "budget_us": 500.0,
+        },
+        "n_per_cohort": 50,
+    }
+    rehydrated = _rehydrate_phase_1_run(on_disk)
+    assert len(rehydrated.multi_point_timings) == 1
+    seg = rehydrated.multi_point_timings[0].per_segment
+    assert seg.seg_queue_ms_mean is None
+    assert seg.seg_queue_ms_ci_half_width is None
+    assert seg.seg_prefill_ms_mean is None
+    assert seg.seg_prefill_ms_ci_half_width is None
 
 
 # --- FR-017 / FR-018 / round-2 Q4 gate evaluator ---------------------------

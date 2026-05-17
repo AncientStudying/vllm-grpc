@@ -458,6 +458,25 @@ class M6_1_1Run:
     # Pointers
     m6_1_baseline_pointer: str
     methodology_supersedence: str
+    # M6.1.1-expansion methodology metadata. Free-form text describing which
+    # FR-010 classifier version produced the verdicts in this artifact, why,
+    # and what (if any) per-run divergence is visible. Default captures the
+    # current 5-bucket classifier's contract; production builders MAY override
+    # with branch-specific context (e.g. "Run 1 used the pre-expansion
+    # classifier; Run 2 used the upgrade") when historical runs were classified
+    # by an earlier scheme. Additive to the JSON schema; pre-expansion readers
+    # ignore the unknown key cleanly.
+    classifier_notes: str = (
+        "5-bucket FR-010 classifier (M6.1.1-expansion). Engine-internal "
+        "`seg_queue` and `seg_prefill` derived from vLLM `RequestStateStats` "
+        "(`queued_ts → scheduled_ts → first_token_ts`). Decision tree: "
+        "`drift_not_reproduced` (spread/mean < 5%) → `instrumentation_artifact` "
+        "(seg_ab ≥ 80%) → `channel_dependent_batching` (seg_queue ≥ 80%) → "
+        "`engine_compute_variation` (seg_prefill ≥ 80%) → `inconclusive`. "
+        "Legacy data without engine-internal segments falls back to a 3-bucket "
+        "scheme returning `inconclusive` rather than resurrecting the retired "
+        "degenerate `seg_bc` rule."
+    )
 
     def __post_init__(self) -> None:
         if not self.phase_1_runs:

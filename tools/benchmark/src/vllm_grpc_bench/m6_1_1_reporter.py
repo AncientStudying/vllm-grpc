@@ -218,7 +218,8 @@ def _render_methodology(run: M6_1_1Run) -> str:
         f"- **Phase 1 sample size**: n={meta.phase_1_n} per cohort per cell\n"
         f"- **Base seed**: {meta.M6_1_1_BASE_SEED} (matches M6 / M6.1)\n"
         f"- **Seq len pinned at sweep start**: {meta.seq_len}\n"
-        f"- **Perturbation budget**: 500 µs per RPC (FR-012 hard gate, exit code 4)"
+        f"- **Perturbation budget**: 500 µs per RPC (FR-012 hard gate, exit code 4)\n"
+        f"- **Classifier**: {run.classifier_notes}"
     )
 
 
@@ -372,7 +373,9 @@ def _render_methodology_supersedence(run: M6_1_1Run) -> str:
         out.append("\nForward pointer written into M6.1's published markdown:")
         out.append(f"\n> {pointer}")
     else:
-        out.append("\n(no supersedence annotation written for this run state)")
+        out.append(
+            "\n_N/A — this artifact does not supersede an earlier published verdict._"
+        )
     return "\n".join(out)
 
 
@@ -445,6 +448,7 @@ def render_json(run: M6_1_1Run) -> dict[str, Any]:
         ),
         "m6_1_baseline_pointer": run.m6_1_baseline_pointer,
         "methodology_supersedence": run.methodology_supersedence,
+        "classifier_notes": run.classifier_notes,
     }
     sanitized = _sanitize_for_json(payload)
     assert isinstance(sanitized, dict)  # narrows for mypy — top-level is always dict
