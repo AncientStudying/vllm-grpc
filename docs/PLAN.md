@@ -185,7 +185,12 @@ Drive with `python -m vllm_grpc_bench --m6_1_1-diagnose --m6_1_1-modal-region=eu
 
 Out of scope: token-budget axis (deferred to M6.2 — Phase Discipline), real engine path changes (M6.1's prompt-embeds path is unchanged; M6.1.1 only adds instrumentation), corpus diversity (M7), multi-model (M8), changes to how `engine_forward_ms` (embed) is measured (the drift warning fired on chat_stream only; embed cells are unaffected and out of scope for this milestone).
 
-### M6.0a — Concurrent Dispatch Restoration (planned, blocks M6.1.1 closure)
+### M6.0a — Concurrent Dispatch Restoration (delivered 2026-05-17)
+
+> **Delivered.** Harness-only dispatch correction committed at `f3ad158` on branch `024-m6-0a-concurrent-dispatch`; corrected M6.1.1 Phase 1 re-run completed 2026-05-17 02:10 UTC (15.6 min wall-clock, $0.29 Modal A10G `eu-west-1`). Headline finding: c=4 / c=8 chat_stream per-cohort `engine_ttft_ms` spread grew from the audit baseline's 6.0% / 8.4% to 15.9% / 16.4% under real concurrency, disproving the "sequential-dispatch state-drift artifact" hypothesis. M6 / M6.1 main verdicts are dispatch-robust; only the M6.1 per-cohort drift sub-finding is dispatch-sensitive (annotated via cross-link). M6.1.1 Phase 2 remains pending — separately blocked by the FR-010 classifier degeneracy ([PR #27 comment 4468600646](https://github.com/AncientStudying/vllm-grpc/pull/27#issuecomment-4468600646)). Full bug / fix / before-after / per-finding sensitivity classification in [`docs/benchmarks/m6_0a-dispatch-correction.md`](benchmarks/m6_0a-dispatch-correction.md). The planning narrative below is preserved for historical context.
+
+#### Original planning narrative (pre-delivery)
+
 
 Methodology correction surfaced during M6.1.1's first live Phase 1 run (2026-05-16). The M6 harness silently dropped `asyncio.gather`-based concurrent dispatch when it inherited the M5.x cell-cohort matrix. M5.1 / M5.2's REST + gRPC cohort runners spawn `c` concurrent worker coroutines per cell (`asyncio.gather(*(_channel_worker(i) for i in range(concurrency)))` — see `m5_1_grpc_cohort.py:387` and `rest_cohort.py:484`); M6 / M6.1 / M6.1.1 replaced this with sequential `for idx in batch_indices: await driver(...)` loops in `m6_sweep._run_measurement_m6` (and inheritors). The cell's `concurrency` field became a metadata tag controlling round-robin batch indexing, not actual in-flight parallelism.
 

@@ -223,6 +223,8 @@ def test_json_has_all_top_level_keys_under_phase_2_pending() -> None:
     payload = render_json(_run("phase_2_pending"))
     expected_keys = {
         "schema_version",
+        # M6.0a FR-007: strict-superset top-level key. Absent ⇒ "sequential".
+        "dispatch_mode",
         "run_id",
         "run_started_at",
         "run_completed_at",
@@ -239,6 +241,13 @@ def test_json_has_all_top_level_keys_under_phase_2_pending() -> None:
         "methodology_supersedence",
     }
     assert set(payload.keys()) == expected_keys
+
+
+def test_json_dispatch_mode_is_concurrent_after_m6_0a() -> None:
+    """M6.0a FR-007: the corrected harness MUST emit ``dispatch_mode:
+    "concurrent"`` on every manifest."""
+    payload = render_json(_run("phase_2_pending"))
+    assert payload["dispatch_mode"] == "concurrent"
 
 
 def test_json_schema_version_is_m6_1_1_v1() -> None:
