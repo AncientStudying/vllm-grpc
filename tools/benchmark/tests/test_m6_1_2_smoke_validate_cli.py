@@ -161,3 +161,90 @@ def test_validate_sweep_end_to_end(tmp_path: Path) -> None:
     assert "M6.1.2 — Methodology Discipline" in md
     assert "Network paths" in md
     assert "Per-cell measurements" in md
+
+
+# --- Concurrency-bound regression (Modal sweep hang root cause) ------------
+
+
+def test_measurement_dispatch_respects_cell_concurrency(tmp_path: Path) -> None:
+    """The sweep orchestrator must enforce the cell's ``concurrency``
+    parameter via ``asyncio.Semaphore(c)`` so the engine sees a steady
+    c-in-flight stream.
+
+    Regression: an earlier version dispatched ALL n_measurement RPCs in
+    parallel via ``asyncio.gather`` regardless of ``cell.concurrency``,
+    bursting the engine with 50-in-flight at every cell and breaking
+    FR-024's "directly comparable cell-by-cell against M6.1.1's published
+    baseline" property. This test trips a stub driver that tracks max
+    in-flight count and asserts it never exceeds the cell's concurrency.
+    """
+    max_in_flight_by_c: dict[int, int] = {}
+    current_in_flight_by_c: dict[int, int] = {}
+
+    lock = asyncio.Lock()
+
+    async def driver(cohort: M6_1_2CohortKind, cell: M6_1Cell, seed: int) -> RPCResult:
+        c = cell.concurrency
+        async with lock:
+            current_in_flight_by_c[c] = current_in_flight_by_c.get(c, 0) + 1
+            max_in_flight_by_c[c] = max(max_in_flight_by_c.get(c, 0), current_in_flight_by_c[c])
+        try:
+            # Yield so other coroutines can race; if the semaphore is
+            # missing, we'll observe max_in_flight == n_measurement here.
+            await asyncio.sleep(0.001)
+            return RPCResult(
+                success=True,
+                wall_clock_ms=1.0,
+                ttft_ms=None,
+                engine_cost=None,
+                failure_reason=None,
+            )
+        finally:
+            async with lock:
+                current_in_flight_by_c[c] -= 1
+
+    config = M6_1_2SweepConfig(
+        sweep_mode="validate",
+        modal_region="eu-west-1",
+        base_seed=42,
+        model_identifier="Qwen/Qwen3-8B",
+        m6_1_1_baseline_pointer="docs/benchmarks/m6_1_1-engine-cost-instrumentation.json",
+        md_out=tmp_path / "m6_1_2.md",
+        json_out=tmp_path / "m6_1_2.json",
+        measurement_n=20,  # > max(c) = 8 so the bound matters
+        # warmup is INTENTIONALLY unbounded gather per M6.0a (matches
+        # M6.1.1's _measure_cell pattern); set warmup_n=0 here so the
+        # tracking dict only counts measurement-phase RPCs.
+        warmup_n=0,
+        skip_deploy=True,
+    )
+
+    asyncio.run(
+        run_m6_1_2_sweep(
+            config,
+            driver=driver,
+            handshake_dict=None,
+            network_probe_results=_canned_network_paths(),
+        )
+    )
+
+    # M6_1_CELLS covers c=1, 4, 8. Max in-flight per c MUST equal c.
+    # (Strictly: must be <= c. We assert == c because measurement_n=20
+    # is large enough that the semaphore will saturate at the bound.)
+    assert max_in_flight_by_c.get(1, 0) <= 1, (
+        f"c=1 saw {max_in_flight_by_c.get(1)} in-flight; must be <= 1"
+    )
+    assert max_in_flight_by_c.get(4, 0) <= 4, (
+        f"c=4 saw {max_in_flight_by_c.get(4)} in-flight; must be <= 4"
+    )
+    assert max_in_flight_by_c.get(8, 0) <= 8, (
+        f"c=8 saw {max_in_flight_by_c.get(8)} in-flight; must be <= 8"
+    )
+    # And saturating-up to the bound (i.e., the semaphore actually allows
+    # parallelism, not accidentally serializing everything).
+    assert max_in_flight_by_c.get(4, 0) >= 2, (
+        "c=4 never saw >= 2 in-flight — semaphore may be serializing"
+    )
+    assert max_in_flight_by_c.get(8, 0) >= 2, (
+        "c=8 never saw >= 2 in-flight — semaphore may be serializing"
+    )

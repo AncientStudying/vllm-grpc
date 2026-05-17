@@ -282,13 +282,48 @@ def _attribute_gcp(ip: str, gcp: dict[str, Any]) -> tuple[M6_1_2CloudProvider, s
     return None
 
 
-def _whois_lookup(ip: str, timeout: float = _WHOIS_TIMEOUT_S) -> str | None:
-    """Single-attempt ARIN whois query; no retry per round-3 Q1.
+# When ARIN's Organization field contains one of these substrings, the IP
+# is actually allocated to a different RIR — query that RIR for the real
+# owner. Per ARIN's documented referral pattern (e.g., a 20.x.x.x address
+# returns ``Organization: RIPE Network Coordination Centre (RIPE)`` because
+# the block was further-assigned by RIPE to e.g. Microsoft).
+_RIR_REFERRAL_HINTS: dict[str, str] = {
+    "RIPE Network Coordination": "whois.ripe.net",
+    "RIPE NCC": "whois.ripe.net",
+    "Asia Pacific Network": "whois.apnic.net",
+    "APNIC": "whois.apnic.net",
+    "African Network Information": "whois.afrinic.net",
+    "AFRINIC": "whois.afrinic.net",
+    "Latin American and Caribbean": "whois.lacnic.net",
+    "LACNIC": "whois.lacnic.net",
+}
 
-    Returns the OrgName line value when present, else None.
+# Field names that carry an owning org. Different RIRs use different field
+# names AND different casing conventions; matching is CASE-SENSITIVE so
+# ARIN's ``NetName: NET20`` (a CIDR-block label, not an org) doesn't
+# masquerade as RIPE's ``netname: MSFT`` (which IS the owner).
+#
+# ARIN: CamelCase OrgName / Organization (NetName is a label, NOT an org).
+# RIPE / APNIC / AFRINIC: lowercase org / descr / netname.
+# LACNIC: lowercase owner.
+_ORG_FIELDS: tuple[str, ...] = (
+    "OrgName:",
+    "Organization:",
+    "org:",
+    "org-name:",
+    "owner:",
+    "descr:",
+    "netname:",
+)
+
+
+def _query_whois_server(server: str, ip: str, timeout: float) -> str:
+    """Send ``<ip>\\r\\n`` to ``server:43`` and return the full response.
+
+    Returns empty string on any socket failure (caller treats as "no data").
     """
     try:
-        with socket.create_connection(("whois.arin.net", 43), timeout=timeout) as sock:
+        with socket.create_connection((server, 43), timeout=timeout) as sock:
             sock.sendall(f"{ip}\r\n".encode())
             chunks: list[bytes] = []
             sock.settimeout(timeout)
@@ -300,19 +335,75 @@ def _whois_lookup(ip: str, timeout: float = _WHOIS_TIMEOUT_S) -> str | None:
                 if not chunk:
                     break
                 chunks.append(chunk)
-        text = b"".join(chunks).decode("utf-8", errors="replace")
+        return b"".join(chunks).decode("utf-8", errors="replace")
     except OSError:
-        return None
-    for line in text.splitlines():
-        if line.startswith("OrgName:") or line.startswith("Organization:"):
-            return line.split(":", 1)[1].strip() or None
+        return ""
+
+
+def _extract_org(text: str) -> str | None:
+    """First non-empty value from any known org-carrying whois field.
+
+    Matches CASE-SENSITIVELY so ARIN's ``NetName:`` (CamelCase, a CIDR
+    label) doesn't collide with RIPE's ``netname:`` (lowercase, the
+    actual owner). See ``_ORG_FIELDS`` for the per-RIR conventions.
+    """
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(("#", "%")):
+            continue
+        for field in _ORG_FIELDS:
+            if line.startswith(field):
+                value = line[len(field) :].strip()
+                if value:
+                    return value
     return None
+
+
+def _whois_lookup(ip: str, timeout: float = _WHOIS_TIMEOUT_S) -> str | None:
+    """Resolve an IP to its owning org via whois, following RIR referrals.
+
+    Algorithm:
+
+    1. Query ``whois.arin.net``; extract org.
+    2. If the extracted org names a referral RIR (e.g.
+       ``"RIPE Network Coordination Centre"``), re-query the right RIR and
+       return its org instead. This is the Modal Azure West Europe case
+       (20.x IPs are ARIN-allocated to RIPE, then RIPE-assigned to
+       Microsoft — only RIPE's response carries the Microsoft owner).
+    3. Return whatever org we resolved, or None.
+
+    Per round-3 Q1: best-effort, single attempt per RIR, no rate-limit
+    handling. Worst-case 2 socket round-trips (≤ 2 × timeout).
+    """
+    arin_text = _query_whois_server("whois.arin.net", ip, timeout)
+    if not arin_text:
+        return None
+    org = _extract_org(arin_text)
+    if org is None:
+        return None
+    # Detect ARIN-returned-a-referral and follow.
+    for hint, server in _RIR_REFERRAL_HINTS.items():
+        if hint in org:
+            rir_text = _query_whois_server(server, ip, timeout)
+            if rir_text:
+                rir_org = _extract_org(rir_text)
+                if rir_org:
+                    return rir_org
+            # RIR query failed/empty — fall through with the ARIN referral
+            # text rather than returning None (caller still gets some signal).
+            return org
+    return org
 
 
 _WHOIS_ORG_TO_CSP: dict[str, M6_1_2CloudProvider] = {
     "amazon": "AWS",
+    "amzn": "AWS",
+    "aws": "AWS",
     "microsoft": "Microsoft Azure",
+    "msft": "Microsoft Azure",
+    "azure": "Microsoft Azure",
     "google": "GCP",
+    "gogl": "GCP",
 }
 
 

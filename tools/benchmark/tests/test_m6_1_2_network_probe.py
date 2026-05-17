@@ -250,3 +250,142 @@ def test_probe_runs_parallel_across_cohorts(
         "tuned_grpc_multiplexed",
     }
     assert all(isinstance(r, M6_1_2NetworkPath) for r in results.values())
+
+
+# --- Azure attribution via RIPE whois referral -----------------------------
+
+
+_ARIN_REFERRAL_FOR_RIPE = """\
+NetRange:       20.0.0.0 - 20.255.255.255
+NetName:        NET20
+NetHandle:      NET-20-0-0-0-0
+Parent:          ()
+NetType:        Allocated to RIPE NCC
+OriginAS:
+Organization:   RIPE Network Coordination Centre (RIPE)
+RegDate:        2017-05-12
+Updated:        2017-05-12
+Ref:            https://rdap.arin.net/registry/ip/20.0.0.0
+
+OrgName:        RIPE Network Coordination Centre
+OrgId:          RIPE
+Address:        P.O. Box 10096
+City:           Amsterdam
+"""
+
+_RIPE_RESPONSE_FOR_AZURE = """\
+% This is the RIPE Database query service.
+
+inetnum:        20.125.0.0 - 20.127.255.255
+netname:        MSFT
+descr:          Microsoft Limited
+country:        IE
+admin-c:        MAC110-RIPE
+tech-c:         MAC110-RIPE
+status:         ASSIGNED PA
+mnt-by:         MNT-MICROSOFT
+created:        2020-01-01T00:00:00Z
+last-modified:  2020-01-01T00:00:00Z
+source:         RIPE
+"""
+
+
+def test_whois_follows_arin_referral_to_ripe_for_azure_ip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: Modal's HTTPS edge endpoints resolve to 20.x.x.x IPs
+    that ARIN reports as ``Organization: RIPE Network Coordination Centre``.
+    Without following the referral to RIPE, attribution falls through to
+    ``unknown`` and FR-006 fires spuriously. The probe MUST follow the
+    referral and surface ``Microsoft`` (via RIPE's ``descr:`` field)."""
+    from vllm_grpc_bench.m6_1_2_network_probe import _whois_lookup
+
+    calls: list[tuple[str, str]] = []
+
+    def _fake_query(server: str, ip: str, timeout: float) -> str:
+        calls.append((server, ip))
+        if server == "whois.arin.net":
+            return _ARIN_REFERRAL_FOR_RIPE
+        if server == "whois.ripe.net":
+            return _RIPE_RESPONSE_FOR_AZURE
+        return ""
+
+    monkeypatch.setattr(
+        "vllm_grpc_bench.m6_1_2_network_probe._query_whois_server",
+        _fake_query,
+    )
+
+    org = _whois_lookup("20.125.113.97")
+    # The referral chain should land on RIPE's response. The first
+    # org-carrying field on RIPE is ``netname: MSFT``.
+    assert org is not None
+    assert "MSFT" in org or "Microsoft" in org
+    # Both servers were queried.
+    assert ("whois.arin.net", "20.125.113.97") in calls
+    assert ("whois.ripe.net", "20.125.113.97") in calls
+
+
+def test_attribute_cloud_provider_resolves_azure_via_referral(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: an Azure RIPE IP with no Azure IP-range JSON loaded
+    should still attribute to ``Microsoft Azure`` via the whois chain.
+
+    Regression: the live T037 sweep tripped FR-006 because ``rest_https_edge``
+    attributed to ``unknown`` — root cause was the missing referral follow.
+    """
+    from vllm_grpc_bench.m6_1_2_network_probe import attribute_cloud_provider
+
+    def _fake_query(server: str, ip: str, timeout: float) -> str:
+        if server == "whois.arin.net":
+            return _ARIN_REFERRAL_FOR_RIPE
+        if server == "whois.ripe.net":
+            return _RIPE_RESPONSE_FOR_AZURE
+        return ""
+
+    monkeypatch.setattr(
+        "vllm_grpc_bench.m6_1_2_network_probe._query_whois_server",
+        _fake_query,
+    )
+
+    csp, region = attribute_cloud_provider(
+        "20.125.113.97", ranges={"aws": {}, "azure": {}, "gcp": {}}
+    )
+    assert csp == "Microsoft Azure"
+    # Region is None because we resolved via whois, not the Azure IP-range
+    # JSON (which carries the region directly). That's acceptable per FR-007;
+    # only the cohort-level CSP enum is closed.
+    assert region is None
+
+
+def test_whois_arin_only_path_still_works(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When ARIN returns a non-referral OrgName, no RIPE follow-up fires
+    and the ARIN org is returned directly (the AWS path)."""
+    from vllm_grpc_bench.m6_1_2_network_probe import _whois_lookup
+
+    arin_aws_response = """\
+NetRange:       54.192.0.0 - 54.193.255.255
+OrgName:        Amazon Technologies Inc.
+Organization:   Amazon Technologies Inc. (AMAZON-4)
+"""
+
+    calls: list[str] = []
+
+    def _fake_query(server: str, ip: str, timeout: float) -> str:
+        calls.append(server)
+        if server == "whois.arin.net":
+            return arin_aws_response
+        return ""
+
+    monkeypatch.setattr(
+        "vllm_grpc_bench.m6_1_2_network_probe._query_whois_server",
+        _fake_query,
+    )
+
+    org = _whois_lookup("54.193.31.244")
+    assert org is not None
+    assert "Amazon" in org
+    # Only ARIN was queried — no referral follow.
+    assert calls == ["whois.arin.net"]

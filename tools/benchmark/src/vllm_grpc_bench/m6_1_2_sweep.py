@@ -214,13 +214,29 @@ async def run_m6_1_2_sweep(
         # c comes from M6_1_CELLS which is closed over Literal[1, 4, 8];
         # the cast is sound by construction.
         cell = M6_1Cell(path=path, hidden_size=4096, concurrency=c)  # type: ignore[arg-type]
-        # Warmup pass (results discarded).
-        warmup_seeds = [0] * config.warmup_n
-        for s in warmup_seeds:
-            await driver(cohort, cell, s)
-        # Measurement pass.
-        seeds = [config.base_seed + i for i in range(config.measurement_n)]
-        results = await asyncio.gather(*(driver(cohort, cell, s) for s in seeds))
+
+        # Warmup: concurrent gather at seed=0 per M6.0a (FR-001 / FR-005a)
+        # + smoke/warmup convention (feedback_smoke_warmup_seed_zero memory).
+        # Results discarded — purpose is engine warm-state stabilisation.
+        if config.warmup_n > 0:
+            await asyncio.gather(*(driver(cohort, cell, 0) for _ in range(config.warmup_n)))
+
+        # Measurement: c-in-flight bounded via asyncio.Semaphore(c) so the
+        # engine sees a steady c-in-flight stream, mirroring M6.1.1's
+        # _measure_cell pattern (m6_1_1_sweep.py:316-328). seed = base_seed + i
+        # so the SET of (cohort, seed) records is reproducible.
+        sem = asyncio.Semaphore(c)
+
+        async def _one(
+            i: int,
+            cohort_ref: M6_1_2CohortKind = cohort,
+            cell_ref: M6_1Cell = cell,
+            sem_ref: asyncio.Semaphore = sem,
+        ) -> RPCResult:
+            async with sem_ref:
+                return await driver(cohort_ref, cell_ref, config.base_seed + i)
+
+        results = await asyncio.gather(*(_one(i) for i in range(config.measurement_n)))
         measurements.append(_summarize_cell(path, c, cohort, list(results)))
         cohorts_actually_run.add(cohort)
         print(
