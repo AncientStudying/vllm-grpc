@@ -351,6 +351,30 @@ def _render_methodology_supersedence(run: M6_1_1Run) -> str:
 # --- JSON writer (FR-021 strict-superset; round-2 Q1 sentinel dispatch) ----
 
 
+def _sanitize_for_json(obj: Any) -> Any:
+    """Recursively convert non-JSON-serialisable values to JSON-safe shapes.
+
+    JSON requires string / int / float / bool / None keys; ``dict[tuple, ...]``
+    raises ``TypeError`` in ``json.dumps`` even though tuples are valid Python
+    dict keys. M6.1.1 has one such field today —
+    :class:`PerturbationAudit.per_cohort_per_cell` keyed by
+    ``(cohort, cell_str)`` — but this helper handles any future additions.
+
+    Tuple keys collapse to ``"part0|part1|..."`` strings. Tuple *values* (e.g.
+    :class:`DriftNotReproducedConfirmedOutcome.confirming_run_ids`) are left
+    alone — ``json.dumps`` already converts them to lists.
+    """
+    if isinstance(obj, dict):
+        out: dict[Any, Any] = {}
+        for k, v in obj.items():
+            key = "|".join(str(part) for part in k) if isinstance(k, tuple) else k
+            out[key] = _sanitize_for_json(v)
+        return out
+    if isinstance(obj, list):
+        return [_sanitize_for_json(item) for item in obj]
+    return obj
+
+
 def render_json(run: M6_1_1Run) -> dict[str, Any]:
     """Render the M6.1.1 JSON companion as a plain dict ready for json.dumps.
 
@@ -358,7 +382,7 @@ def render_json(run: M6_1_1Run) -> dict[str, Any]:
     expected top-level keys are present; new M6.1.1 keys are additive and
     namespaced so they don't collide.
     """
-    return {
+    payload = {
         "schema_version": run.schema_version,
         "run_id": run.run_id,
         "run_started_at": run.run_started_at,
@@ -387,6 +411,9 @@ def render_json(run: M6_1_1Run) -> dict[str, Any]:
         "m6_1_baseline_pointer": run.m6_1_baseline_pointer,
         "methodology_supersedence": run.methodology_supersedence,
     }
+    sanitized = _sanitize_for_json(payload)
+    assert isinstance(sanitized, dict)  # narrows for mypy — top-level is always dict
+    return sanitized
 
 
 def _phase_1_run_to_dict(prun: Phase1RunRecord) -> dict[str, Any]:

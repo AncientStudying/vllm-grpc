@@ -286,6 +286,60 @@ def test_json_round_trips_via_json_dumps() -> None:
     assert parsed["schema_version"] == "m6_1_1.v1"
 
 
+def test_json_serializes_perturbation_audit_with_tuple_keys() -> None:
+    """Regression test for the tuple-key bug that crashed the first live
+    Phase 1 run's JSON write. PerturbationAudit.per_cohort_per_cell is a
+    ``dict[tuple[str, str], float]`` — JSON requires string keys, so
+    render_json must collapse tuple keys to a '|'-joined string."""
+    cell = M6_1_1Cell(path="chat_stream", concurrency=1, hidden_size=4096)
+    audit_with_tuple_keys = PerturbationAudit(
+        per_cohort_per_cell={
+            ("rest_https_edge", "chat_stream_c1_h4096"): 0.81,
+            ("default_grpc", "chat_stream_c1_h4096"): 0.72,
+        },
+        exceeded=False,
+        exceeded_pairs=[],
+        budget_us=500.0,
+    )
+    prun = Phase1RunRecord(
+        run_id="run-1",
+        run_started_at="t",
+        run_completed_at="t",
+        wall_clock_s=1800.0,
+        multi_point_timings=[],
+        phase_1_classifications={"chat_stream_c1_h4096": "channel_dependent_batching"},
+        perturbation_audit=audit_with_tuple_keys,
+        n_per_cohort=50,
+    )
+    run = M6_1_1Run(
+        schema_version="m6_1_1.v1",
+        run_id="r",
+        run_started_at="t",
+        run_completed_at="t",
+        run_meta=_meta("phase_2_pending"),
+        phase_1_classifications=prun.phase_1_classifications,
+        phase_1_runs=[prun],
+        multi_point_timings=[],
+        phase_2_outcome=None,
+        phase_2_choice=None,
+        chat_stream_baseline_post_symmetrisation=build_sentinel("phase_2_pending"),
+        embed_baseline_post_symmetrisation=build_sentinel("phase_2_pending", is_embed=True),
+        embed_regression_check=None,
+        m6_1_baseline_pointer="docs/benchmarks/m6_1-real-prompt-embeds.json",
+        methodology_supersedence="",
+    )
+    payload = render_json(run)
+    # Must json.dumps cleanly — pre-fix this raised TypeError on tuple keys
+    blob = json.dumps(payload)
+    parsed = json.loads(blob)
+    # Tuple keys collapsed to '|'-joined strings
+    per_cohort = parsed["phase_1_runs"][0]["perturbation_audit"]["per_cohort_per_cell"]
+    assert "rest_https_edge|chat_stream_c1_h4096" in per_cohort
+    assert "default_grpc|chat_stream_c1_h4096" in per_cohort
+    assert per_cohort["rest_https_edge|chat_stream_c1_h4096"] == 0.81
+    del cell  # keep linter happy
+
+
 # --- write_m6_1_1_report end-to-end ----------------------------------------
 
 
