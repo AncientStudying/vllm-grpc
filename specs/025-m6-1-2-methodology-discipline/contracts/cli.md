@@ -84,17 +84,21 @@ M6.1.2 inherits M6.1.1's exit-code convention from `__main__.py`:
 
 ## Dispatch wiring
 
-M6.1.2 adds two new dispatch functions to `__main__.py` (parallel to M6.1.1's `run_m6_1_1_diagnose(...)` / `run_m6_1_1_phase_2(...)`):
+M6.1.2 adds **a single dispatch function** to `__main__.py` that handles both top-level mode flags. Per FR-024 the two flags ship the same sweep shape — the operator-intent distinction is captured in a `sweep_mode` argument and recorded in the artifact's `run_meta.sweep_mode` metadata. (This differs from M6.1.1's pattern, where `run_m6_1_1_diagnose(...)` and `run_m6_1_1_phase_2(...)` are semantically distinct sweeps; M6.1.2's flags differ only by operator-intent labelling.)
 
 ```python
 # In __main__.py, after argparse parsing:
+from vllm_grpc_bench.m6_1_2_validate import run_m6_1_2
+
 if args.m6_1_2:
-    return run_m6_1_2_sweep(args)  # imports from m6_1_2_sweep
+    return run_m6_1_2(args, sweep_mode="full")
 if args.m6_1_2_validate:
-    return run_m6_1_2_validate(args)  # imports from m6_1_2_validate
+    return run_m6_1_2(args, sweep_mode="validate")
 ```
 
-Both functions take the parsed `argparse.Namespace`; both return `int` (the exit code).
+The `run_m6_1_2(...)` function takes the parsed `argparse.Namespace` plus a keyword-only `sweep_mode: Literal["full", "validate"]`; returns `int` (the exit code per the table above). The `sweep_mode` value is recorded in `run_meta.sweep_mode` so downstream readers can distinguish PR-merge publishable artifacts from harness-wiring confidence-builder runs.
+
+**Rationale** (post-`/speckit-analyze` C1 remediation): A parallel `m6_1_2_full.py` module for the `--m6_1_2` flag would be a speculative abstraction (Constitution Principle III: "Speculative abstractions … are prohibited unless they appear in the current phase's deliverables") since the two flags have identical sweep shape per FR-024. One function + a `sweep_mode` parameter preserves the operator-visible distinction without duplicating code.
 
 ## Cross-references
 

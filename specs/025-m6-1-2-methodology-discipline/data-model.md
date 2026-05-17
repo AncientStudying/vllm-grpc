@@ -130,7 +130,10 @@ class M6_1_2SweepArtifact:
     run_id: str
     run_started_at: str
     run_completed_at: str
-    run_meta: dict
+    run_meta: dict  # M6.1.1-inherited shape PLUS a NEW `sweep_mode: Literal["full", "validate"]` field
+                   # recording which M6.1.2 mode flag launched the sweep (post-`/speckit-analyze` C1
+                   # remediation — the two mode flags share code, distinction lives in metadata).
+                   # Pre-M6.1.2 readers ignore the unknown nested key without parse error.
     phase_1_classifications: dict
     phase_1_runs: list[dict]
     multi_point_timings: dict
@@ -159,7 +162,7 @@ The five new files under `tools/benchmark/src/vllm_grpc_bench/`, with their enti
 | `m6_1_2_types.py` | `M6_1_2CohortKind`, `M6_1_2_COHORTS`, `M6_1_2CloudProvider`, `M6_1_2NetworkPathHop`, `M6_1_2NetworkPath`, `M6_1_2NetworkPathError`, `M6_1_2CohortOmissions`, `M6_1_2SweepArtifact` | All shared dataclasses + literals live here. Mirrors `m6_1_1_types.py`'s role. |
 | `m6_1_2_sweep.py` | `run_m6_1_2_sweep(...)`, `_stderr_ts()`, `_measure_cell_m6_1_2(...)` | Sweep orchestrator. Inherits M6.0a-corrected concurrent dispatch + M6.1.1 classifier instrumentation. Calls `m6_1_2_network_probe.run_topology_probe(...)` at sweep start. |
 | `m6_1_2_reporter.py` | `render_json(...)`, `render_markdown(...)`, `write_m6_1_2_report(...)`, `_sanitize_for_json(...)` | Mirrors `m6_1_1_reporter.py`. Adds the three new top-level keys to the serialized JSON. Pre-write validation of `cohort_set` ∪ `cohort_omissions` = canonical universe (FR-016 invariant). |
-| `m6_1_2_validate.py` | `run_m6_1_2_validate(...)` | Entry point for `--m6_1_2-validate`. Invokes `run_m6_1_2_sweep` at `n=50` with the full M6.1.1 6-cell matrix and the 4-cohort iteration. Writes the artifact to `docs/benchmarks/m6_1_2-methodology-discipline.{md,json}`. |
+| `m6_1_2_validate.py` | `run_m6_1_2(args, *, sweep_mode)` | **Single CLI entry function for BOTH `--m6_1_2` and `--m6_1_2-validate` mode flags** (post-`/speckit-analyze` C1 remediation: per FR-024 the two flags have identical sweep shape; one entry function handles both, with `sweep_mode: Literal["full", "validate"]` recorded in `run_meta.sweep_mode` artifact metadata). Invokes `run_m6_1_2_sweep` (from `m6_1_2_sweep.py`) at `n=50` with the full M6.1.1 6-cell matrix and the 4-cohort iteration. Writes the artifact to `docs/benchmarks/m6_1_2-methodology-discipline.{md,json}`. The module's filename retains `validate` for backward-compatibility with the spec's terminology; the function name `run_m6_1_2` accurately reflects that it serves both modes. |
 | `m6_1_2_network_probe.py` | `run_topology_probe(...)`, `attribute_cloud_provider(...)`, `parse_tcptraceroute_output(...)`, `_fetch_csp_ip_ranges(...)`, `_whois_lookup(...)` | Net-new module. Owns `tcptraceroute` subprocess invocation (R-5), CSP attribution (R-6), per-cohort 30s timeout (FR-002a), parallel-across-cohorts execution (FR-001a), loud-stderr warnings for FR-005a + FR-006. |
 
 ## Modified Files (non-additive)
