@@ -13,9 +13,9 @@ When working with Claude Code on this project, point it at this file plus the ac
 
 ---
 
-## Milestone Roadmap (canonical, M1–M8, with M6.1 / M6.1.1 / M6.0a / M6.2 follow-ups)
+## Milestone Roadmap (canonical, M1–M8, with M6.1 / M6.1.1 / M6.0a / M6.1.2 / M6.1.3 / M6.2 follow-ups)
 
-This section mirrors the milestone framing in [`README.md`](../README.md). M1 through M5.2 are delivered; M6 through M8 are upcoming research directions. As of Draft v7, the focused real-engine mini-validation (formerly a single line in M5.1/M5.2 caveats as "deferred to M7") is promoted to a canonical M6 milestone; what was previously M6 (Corpus Expansion) becomes M7 and what was previously M7 (Model Expansion) becomes M8. M6 has four narrow follow-ups: **M6.1** (real-prompt-embeds engine path — exactly one variable change vs M6), **M6.1.1** (engine-cost instrumentation diagnosis + symmetrisation — closes a measurement gap M6.1 surfaced before M6.2 builds on top), **M6.0a** (concurrent-dispatch restoration — corrective methodology fix discovered during M6.1.1's first live run; blocks M6.1.1's Phase 2 closure), and **M6.2** (token-budget characterization — `max_tokens` axis across the realistic-generation regime). The Phase 1–7 plan below this section is preserved as completed-work history (see the boundary heading further down) — it captures decisions and trade-offs that still inform future work, but the milestones above are the canonical forward view.
+This section mirrors the milestone framing in [`README.md`](../README.md). M1 through M5.2 are delivered; M6 through M8 are upcoming research directions. As of Draft v7, the focused real-engine mini-validation (formerly a single line in M5.1/M5.2 caveats as "deferred to M7") is promoted to a canonical M6 milestone; what was previously M6 (Corpus Expansion) becomes M7 and what was previously M7 (Model Expansion) becomes M8. M6 has six narrow follow-ups: **M6.1** (real-prompt-embeds engine path — exactly one variable change vs M6), **M6.1.1** (engine-cost instrumentation diagnosis + symmetrisation), **M6.0a** (concurrent-dispatch restoration — corrective methodology fix discovered during M6.1.1's first live run), **M6.1.2** (methodology discipline — topology proof + 3-cohort reintroduction + harness QoL; scoped by [`spike/m6-1-roadmap-additions`](../docs/spikes/m6-1-roadmap-additions/) items #1 + #2 + #3), **M6.1.3** (Phase 1 attribution closure — proxy-edge instrumentation gap + engine_compute_variation root-cause + run-to-run variance; scoped by the same spike items #4 + #5 + #6), and **M6.2** (token-budget characterization — `max_tokens` axis across the realistic-generation regime). The Phase 1–7 plan below this section is preserved as completed-work history (see the boundary heading further down) — it captures decisions and trade-offs that still inform future work, but the milestones above are the canonical forward view.
 
 ### M1 — Foundation (delivered)
 
@@ -230,6 +230,81 @@ Drive: `git pull` (after M6.0a code change lands) then re-run `python -m vllm_gr
 **Speckit cycle.** Run `/speckit-specify` → `/speckit-clarify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement` against this section. M6.1.1's PR #27 stays open during this fix; M6.1.1's Phase 2 dispatch happens after M6.0a's re-run produces a real classification.
 
 Out of scope: re-running M6 (its main verdict is dispatch-robust), re-running M6.1's full verdict-supersedes table (also dispatch-robust; the per-cohort drift sub-finding may be annotated with a methodology-supersedence note after M6.0a but the verdict table itself stands), real engine code changes (M6.0a is harness-only), corpus diversity (M7), multi-model (M8).
+
+### M6.1.2 — Methodology Discipline: Topology Proof + 3-Cohort Reintroduction + Harness QoL (planned, post-spike)
+
+Three methodology-discipline additions that land **before** M6.2 so M6.2 / M7 / M8 all inherit them as the new sweep convention. Scoped by [`spike/m6-1-roadmap-additions`](../docs/spikes/m6-1-roadmap-additions/) items #1 + #2 + #3; the spike-produced findings notes are the spec input. The bundle exists because the three items share the same set of touched files (sweep orchestrator, artifact JSON schema, reporter, stderr emitter) and ship together more efficiently than as separate milestones.
+
+**Why before M6.2.** M6.2 introduces the `max_tokens` axis as the new variable. Bundling methodology discipline into M6.2 would mix two changes in one verdict (axis change AND cohort/topology change) — exactly the methodological confound M6.1.1 was created to avoid. Per Phase Discipline (Constitution Principle III), M6.2's diff against M6.1.1 needs to be unambiguous, so the methodology changes ship as their own milestone first.
+
+**Concrete additions.** Three deliverables, all on the harness + report side; no engine-cost code changes:
+
+1. **Per-sweep traceroute probe** (item #1). The spike's [`01-topology-traceroute-findings.md`](../docs/spikes/m6-1-roadmap-additions/01-topology-traceroute-findings.md) proved (via live deploy + `traceroute` from a Mac client) that the cohorts enter Modal via **entirely different cloud providers**: `*.modal.run` (HTTPS-Edge cohort) routes through Microsoft Azure; `*.modal.host` (plain-TCP cohorts including gRPC) routes through AWS us-west-1 via Telia transit. This is stronger than ANALYSIS.md's "different network path" claim and changes how cohort-comparison results should be interpreted. Tunnel IDs are ephemeral per-deploy, so the only way to keep the topology assertion supported by data is to capture per-cohort hop-traces at sweep start and store them in the artifact JSON under a new `network_paths: {<cohort>: {endpoint_ip, hops: [...], cloud_provider, region}}` block. Probe should use `tcptraceroute` (TCP-SYN) rather than UDP/ICMP `traceroute` to get past the AWS/Azure ICMP firewall around hop 5. Single-shot per sweep (paths are stable for the duration of a deploy). ANALYSIS.md gets a one-line correction citing the multi-CSP finding.
+
+2. **Reintroduce `rest_plain_tcp` cohort** (item #2). The spike's [`02-cohort-reintroduction-disposition.md`](../docs/spikes/m6-1-roadmap-additions/02-cohort-reintroduction-disposition.md) confirms the 3-cohort split (`rest_https_edge`, `rest_plain_tcp`, `default_grpc`, `tuned_grpc_multiplexed`) is structurally load-bearing: with all three, `rest_plain_tcp` vs `default_grpc` isolates pure protocol cost (same CSP, region, path; only HTTP/1.1+REST vs HTTP/2+gRPC changes); either vs `rest_https_edge` isolates multi-cloud routing cost. Without `rest_plain_tcp`, M6.x cells conflate the two. M5.2 had this cohort wired (`m5_2_sweep.py`, `m5_2_symmetry.py`, the harness CLI); M6 / M6.1 / M6.1.1 dropped it during simplification. M6.1.2 ports the cohort definition forward with M6.0a-corrected concurrent dispatch and the M6.1.1-expansion classifier instrumentation already in place.
+
+3. **Timestamped progress lines** (item #3, **already implemented** on `spike/m6-1-roadmap-additions` at commit `3763687`). Each stderr emission from the M6 / M6.1 / M6.1.1 progress reporters carries an ISO-8601 UTC timestamp prefix (`[2026-05-17T12:34:56Z] [1/18] embed × c=1 / rest_https_edge — 50/50 succ — 29786 ms — ETA 75m`), matching the run_id timestamp convention used elsewhere. Code carries forward verbatim from the spike commit; only the spec/PLAN.md prose needs to reflect that this is now part of M6.1.2's bundle.
+
+**Output shape.** Validation sweep + ANALYSIS.md edit + spec note.
+
+- Validation sweep at n=50 against the new cohort + traceroute infrastructure — confirms `rest_plain_tcp` is reachable, traceroute captures populate cleanly, the JSON `network_paths` block parses. Cost: ~$0.30 Modal compute.
+- `ANALYSIS.md` updated to cite the multi-CSP finding instead of the looser "different network path" wording.
+- `contracts/instrumentation.md` (or equivalent) updated to document the per-sweep `network_paths` block as part of the M6.1.2-forward artifact schema.
+- All M6.x / M7 / M8 sweep artifacts from M6.1.2 forward carry `network_paths` and the full 4-cohort split (or document explicitly when a milestone uses a subset and why).
+
+**Speckit cycle.** Run `/speckit-specify` → `/speckit-clarify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement` against this section. Input data: the three spike notes under [`docs/spikes/m6-1-roadmap-additions/`](../docs/spikes/m6-1-roadmap-additions/).
+
+Out of scope: any per-sweep behaviour change beyond cohort restoration + traceroute capture (the M6.1.1-expansion classifier stays as-is; the M6.0a-corrected dispatch stays as-is); engine-cost decomposition changes (M6.1.3's territory); per-`max_tokens` axis (M6.2); model expansion (M8).
+
+### M6.1.3 — Phase 1 Attribution Closure: Proxy-Edge Probes + Drift Root-Cause + Variance Characterization (planned, post-spike)
+
+Bundle that closes M6.1.1's open Phase 2 verdicts. M6.1.1's published Phase 1 returned `engine_compute_variation` for chat_stream c=1 (reproducible) and `inconclusive` for chat_stream c=4 + c=8 (one or both of: unattributed proxy-edge budget; cohort signal not reproducible across runs). M6.1.3 ships three instrumentation/methodology additions that, in a single multi-run sweep, produce attributable verdicts on all three chat_stream cells — OR a defensible "this signal is noise-shaped at this concurrency" verdict if the data warrants it. Scoped by [`spike/m6-1-roadmap-additions`](../docs/spikes/m6-1-roadmap-additions/) items #4 + #5 + #6.
+
+**Why bundle.** All three items share the same Phase 1 sweep infrastructure (per the M6.0a-corrected dispatch + M6.1.1-expansion classifier already in place). One 5-run multi-sweep at n=50 produces, per cell × cohort:
+
+- 5 datapoints of proxy-edge attribution from the new probes (item #4 — ingress/egress segments of the unattributed budget).
+- 5 datapoints of per-cohort token-count + token-hash distribution from the new audit instrumentation (item #5-A — distinguishes prompt-content drift from other root-cause hypotheses).
+- 5 datapoints of `engine_ttft_ms` per cell × cohort for between-run variance estimation (item #6 — quantifies V2 run-state noise on top of V1 sample noise).
+
+Bundling is maximally informative per Modal dollar. Splitting items #4 / #5 / #6 into separate milestones would require 3+ separate Modal-deploy cycles for data that's all produced by one multi-run sweep.
+
+**Concrete additions.** Three instrumentation additions plus the multi-run scaffolding:
+
+1. **Proxy-edge probes** ([item #4 spike note](../docs/spikes/m6-1-roadmap-additions/03-proxy-edge-instrumentation-gap.md)). Two new optional checkpoints in the frontend servicers' streaming paths: `m6_1_1_t_pre_engine_wall_ns = time.time_ns()` alongside the existing `pre_engine_ns`, and `m6_1_1_t_first_chunk_mono_ns = time.monotonic_ns()` alongside the existing `first_chunk_ns`. The first gives a wall-clock anchor for comparison against vLLM's `RequestStateStats.arrival_time` (the ingress gap); the second gives a monotonic anchor for comparison against `RequestStateStats.first_token_ts` (the egress gap). Confirmed feasible without an upstream vLLM contribution — `vllm/v1/engine/__init__.py:152` shows vLLM's engine-core monotonic timestamps use `time.monotonic()`, and the engine runs in-process with our servicer so the clocks are comparable. Classifier extends from M6.1.1's 5-bucket decision tree to 7-bucket with `proxy_ingress_dominated` / `proxy_egress_dominated` labels.
+
+2. **Per-cohort prompt-content audit** ([item #5 spike note](../docs/spikes/m6-1-roadmap-additions/04-engine-compute-variation-rootcause.md)). Per-RPC tokenized prompt length + BLAKE2b-8 hash of the token id list captured on the wire (gRPC trailing metadata + REST SSE terminal event). Lets the classifier distinguish hypothesis H1 (prompt-content drift — most-likely root cause of the c=1 `engine_compute_variation`) from H2/H3/H4 (encoding drift, KV-cache prefix reuse, cohort-order warmup bias). The spike's investigation flagged a load-bearing context finding: M5.2 had prompt-symmetry enforcement (`m5_2_symmetry.py`); M6 / M6.1 / M6.1.1 dropped it. If the audit confirms H1, the M6.1.3 Phase B is to port M5.2's symmetric-prompts mode forward as the M6.x convention.
+
+3. **Multi-run sweep + between-run variance compute** ([item #6 spike note](../docs/spikes/m6-1-roadmap-additions/05-run-to-run-variance.md)). `--m6_1_1-diagnose-repeat=N` CLI flag runs the existing Phase 1 sweep N times back-to-back, appending each to the existing `phase_1_runs[]` accumulator (the rehydration path landed in M6.1.1's expansion already supports this). New `compute_between_run_variance(phase_1_runs)` produces per-cohort per-cell `(mean_of_means, stddev_of_means, n_runs)`; new reporter section "Between-Run Variance" rendered when `phase_1_runs[] >= 3`. Classifier augmented with an `inconclusive_high_variance` label when between-run |Δ| outstrips a configurable fraction of within-run spread.
+
+**Headline data motivating M6.1.3.** Computed directly from M6.1.1's two-run published artifact ([spike #6 note](../docs/spikes/m6-1-roadmap-additions/05-run-to-run-variance.md)):
+
+| Cell | Between-run mean \|Δ\| | Within-run spread | Noise ÷ Signal |
+|---|---:|---:|---:|
+| chat_stream c=1 | 0.37 ms | 5.8 ms | 6–10% ✓ reproducible |
+| chat_stream c=8 | 2.69 ms | 13–15 ms | 20–30% ⚠ marginal |
+| chat_stream c=4 | 10.53 ms | 13–26 ms | 50–100% ✗ not reproducible |
+
+The M6.1.1 published CIs capture sample noise only; they understate true cohort-comparison uncertainty at c=4. M6.1.3's multi-run characterization is what closes that gap.
+
+**Modal compute budget.**
+
+- Items #4 + #5-A baseline n=50 sweep, multi-run × 5: ~$1.45 (5 × ~$0.29).
+- Item #6 Phase B n=200 single sweep: ~$1.16 (~60 min × A10G eu-west-1).
+- **Total M6.1.3 Modal cost: ~$2.60**, comfortably under any reasonable per-milestone budget.
+
+Optional follow-ups (only if A + B don't resolve): multi-deploy variance (~$1.70 more), multi-seed variance (~$1.45 more). Hard cap at ~$5.75 for the full experimental matrix.
+
+**Output shape.** `docs/benchmarks/m6_1_3-attribution-closure.{md,json}` plus an updated `m6_1_1-engine-cost-instrumentation` annotation pointing forward.
+
+- Per-cell attributed Phase 1 verdicts on chat_stream c=1 / c=4 / c=8 (one of: `engine_compute_variation`, `channel_dependent_batching`, `proxy_ingress_dominated`, `proxy_egress_dominated`, `engine_compute_variation`, `inconclusive_high_variance`, `inconclusive`).
+- Per-cohort prompt-content audit table (token-count distribution per cohort; H1 confirmation or rejection).
+- Between-run variance block (per-cell per-cohort stddev_of_means from the 5-run multi-sweep).
+- `classifier_notes` field updated to the 7-bucket decision tree with multi-run augmentation.
+- Spec decision: whether symmetric prompts become the M6.x convention going forward (binds M6.2 / M7 / M8 spec assumptions).
+
+**Speckit cycle.** Run `/speckit-specify` → `/speckit-clarify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement` against this section. M6.1.3 depends on M6.1.2 having landed first (the new cohort + traceroute infrastructure is in place); M6.2 depends on M6.1.3's resolved verdicts (the `max_tokens` axis's null anchors validate against M6.1.3's attributable Phase 1 baseline, not M6.1.1's `inconclusive` placeholders).
+
+Out of scope: deeper attribution bisection if the proxy-edge probes show the remaining budget is, e.g., gRPC trailer-emit serialization (would become M6.1.4 territory); upstream vLLM contributions (the probes work entirely client-side); engine-config probes (prefix-caching disable, reversed cohort order) — only escalated to if items #4 / #5-A / #6-A multi-run doesn't resolve; corpus diversity (M7); multi-model (M8).
 
 ### M6.2 — Token-Budget Characterization (planned)
 

@@ -62,6 +62,14 @@ from vllm_grpc_bench.m6_sweep import RPCDriver, RPCResult
 # --- Progress reporter (stderr lines as the sweep advances) ----------------
 
 
+def _stderr_ts() -> str:
+    """ISO-8601 UTC bracket prefix for stderr progress lines, so log readers
+    can correlate emissions with wall-clock time during long sweeps
+    (spike/m6-1-roadmap-additions item #3). Matches the run_id timestamp
+    format used elsewhere in the project."""
+    return datetime.now(UTC).strftime("[%Y-%m-%dT%H:%M:%SZ]")
+
+
 class M6_1_1ProgressReporter:
     """Streams per-cell × per-cohort progress to stderr so the operator
     has visibility during the ~30–75 min sweep wall-clock.
@@ -69,6 +77,9 @@ class M6_1_1ProgressReporter:
     Total pair count is fixed at 18 (6 cells × 3 cohorts). Each
     ``emit_cell_cohort`` call updates the rolling ETA based on the
     measured per-pair wall-clock.
+
+    Each emission carries an ISO-8601 UTC timestamp prefix (item #3 from
+    spike/m6-1-roadmap-additions).
     """
 
     def __init__(self, *, phase: str, n: int, eta_minutes_total: int) -> None:
@@ -82,7 +93,7 @@ class M6_1_1ProgressReporter:
     def emit_startup(self, *, model: str, region: str, seq_len: int) -> None:
         self.start_time = time.monotonic()
         print(
-            f"M6.1.1 {self.phase} sweep: 6 cells × 3 cohorts × n={self.n}, "
+            f"{_stderr_ts()} M6.1.1 {self.phase} sweep: 6 cells × 3 cohorts × n={self.n}, "
             f"runtime ETA ≤{self.eta_minutes_total} min, model={model}, "
             f"region={region}, seq_len={seq_len}",
             file=sys.stderr,
@@ -105,7 +116,7 @@ class M6_1_1ProgressReporter:
         else:
             eta_min = 0
         print(
-            f"[{self.completed_pairs}/{self.total_pairs}] {cell.path} × "
+            f"{_stderr_ts()} [{self.completed_pairs}/{self.total_pairs}] {cell.path} × "
             f"c={cell.concurrency} / {cohort} — {successes}/{self.n} succ — "
             f"{elapsed_s * 1000:.0f} ms — ETA {eta_min}m",
             file=sys.stderr,
@@ -114,7 +125,7 @@ class M6_1_1ProgressReporter:
 
     def emit_cold_start(self, cold_start_s: float) -> None:
         print(
-            f"M6.1.1 cold-start (Modal deploy + model load): {cold_start_s:.1f} s",
+            f"{_stderr_ts()} M6.1.1 cold-start (Modal deploy + model load): {cold_start_s:.1f} s",
             file=sys.stderr,
             flush=True,
         )
@@ -122,7 +133,8 @@ class M6_1_1ProgressReporter:
     def emit_completion(self, report_path: str) -> None:
         elapsed_min = (time.monotonic() - self.start_time) / 60.0
         print(
-            f"M6.1.1 {self.phase} sweep complete in {elapsed_min:.1f} min; report at {report_path}",
+            f"{_stderr_ts()} M6.1.1 {self.phase} sweep complete in {elapsed_min:.1f} min; "
+            f"report at {report_path}",
             file=sys.stderr,
             flush=True,
         )
