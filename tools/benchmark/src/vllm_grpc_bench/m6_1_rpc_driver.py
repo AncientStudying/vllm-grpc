@@ -21,7 +21,7 @@ import json
 import os
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -32,6 +32,7 @@ from vllm_grpc.v1 import completions_pb2
 from vllm_grpc_bench.channel_config import M1_BASELINE, MAX_MSG_16MIB, ChannelConfig
 from vllm_grpc_bench.m3_sweep import _client_kwargs
 from vllm_grpc_bench.m3_types import RTTRecord
+from vllm_grpc_bench.m6_1_2_types import M6_1_2CohortKind
 from vllm_grpc_bench.m6_1_seed import build_torch_generator_for_rpc
 from vllm_grpc_bench.m6_1_types import (
     M6_1_CHAT_MAX_TOKENS,
@@ -59,6 +60,26 @@ from vllm_grpc_bench.rtt_probe import measure_rtt
 _DEFAULT_RTT_PROBE_N: int = 32
 
 
+def _normalize_rest_url_for_httpx(url: str) -> str:
+    """Convert Modal's published REST URLs into an httpx-compatible scheme.
+
+    Modal's ``modal.forward(unencrypted=True)`` publishes plain-TCP
+    tunnels as ``tcp+plaintext://host:port``; httpx only accepts HTTP or
+    HTTPS, so rewrite the scheme to ``http://`` (plain TCP without TLS
+    *is* plain HTTP from the client's perspective). HTTPS edge URLs and
+    bare ``host:port`` forms pass through unchanged or get an ``http://``
+    prefix respectively.
+
+    M5.2 documents the same transform at ``m5_2_sweep.py:1280-1283``.
+    """
+    if url.startswith("tcp+plaintext://"):
+        return "http://" + url[len("tcp+plaintext://") :]
+    if url.startswith(("http://", "https://")):
+        return url
+    # Bare host:port — assume plain HTTP. Matches the M5.2 fallback.
+    return "http://" + url
+
+
 def _resolve_rpc_index(seed: int, base_seed: int) -> int:
     """Convert a per-RPC sampling seed into a non-negative ``rpc_index``.
 
@@ -81,6 +102,7 @@ __all__ = [
     "_build_embed_grpc_request",
     "_build_embed_rest_payload_m6_1",
     "build_torch_save_bytes",
+    "provide_m6_1_2_rpc_driver",
     "provide_m6_1_rpc_driver",
 ]
 
@@ -366,3 +388,136 @@ async def provide_m6_1_rpc_driver(
 
 
 _ = (uuid, M6_1_CHAT_MAX_TOKENS, M6_1_PROMPT_EMBED_HIDDEN_SIZE)
+
+
+# --- M6.1.2 driver: 4-cohort dispatch (US2 / FR-017) -------------------------
+
+
+@asynccontextmanager
+async def provide_m6_1_2_rpc_driver(
+    endpoints: RESTGRPCEndpoints,
+    *,
+    seq_len: int,
+    base_seed: int = 42,
+    rtt_probe_n: int = _DEFAULT_RTT_PROBE_N,
+    rpc_timeout_s: float = 90.0,
+) -> AsyncIterator[
+    tuple[
+        Callable[[M6_1_2CohortKind, M6_1Cell, int], Awaitable[RPCResult]],
+        dict[M6_1_2CohortKind, RTTRecord],
+    ]
+]:
+    """M6.1.2 4-cohort driver — adds ``rest_plain_tcp`` to M6.1's 3 cohorts.
+
+    Mirrors :func:`provide_m6_1_rpc_driver` (M6.1) but accepts the wider
+    :data:`M6_1_2CohortKind` Literal and dispatches a 4th case for
+    ``rest_plain_tcp`` (Story 2, restored from M5.2). The 3 inherited
+    branches are byte-equivalent to the M6.1 driver's branches per FR-017.
+
+    Both REST cohorts share a single ``httpx.AsyncClient`` — they only
+    differ in the base URL passed to ``_drive_rest_embed_m6_1`` /
+    ``_drive_rest_chat_stream``. The REST shim path (``rest_cohort.py`` +
+    ``rest_shim.py``) handles the plain-TCP transport unchanged.
+    """
+    token = os.environ.get(endpoints.auth_token_env_var, "")
+    if not token:
+        raise RuntimeError(
+            f"environment variable {endpoints.auth_token_env_var!r} is not "
+            "set; the M6.1.2 RPC driver requires the bearer token to be "
+            "readable at RPC dispatch time"
+        )
+    grpc_metadata: tuple[tuple[str, str], ...] = (("authorization", f"Bearer {token}"),)
+    rest_auth = {"authorization": f"Bearer {token}"}
+
+    if endpoints.rest_https_edge_url is None:
+        raise RuntimeError(
+            "M6.1.2 RPC driver requires endpoints.rest_https_edge_url; "
+            "did the Modal deploy succeed?"
+        )
+    if endpoints.rest_plain_tcp_url is None:
+        raise RuntimeError(
+            "M6.1.2 RPC driver requires endpoints.rest_plain_tcp_url; "
+            "the Modal deploy must be launched with with_rest_plain_tcp=True"
+        )
+    rest_https_edge_base = _normalize_rest_url_for_httpx(endpoints.rest_https_edge_url)
+    # Modal publishes the plain-TCP tunnel as ``tcp+plaintext://host:port``
+    # (raw ``modal.forward(unencrypted=True)`` form); httpx only speaks
+    # HTTP/HTTPS, so rewrite the scheme to ``http://``. M5.2 documents
+    # the same transform at m5_2_sweep.py:1280-1283.
+    rest_plain_tcp_base = _normalize_rest_url_for_httpx(endpoints.rest_plain_tcp_url)
+
+    # M6.1.2 reuses M6.1.1's M1_BASELINE / MAX_MSG_16MIB wire shapes
+    # verbatim (FR-024 cell-by-cell comparability). A prior attempt to
+    # add 60s client keepalive failed in live testing — Modal's gRPC
+    # frontend rejected the pings with ENHANCE_YOUR_CALM GOAWAY. The
+    # tunnel-idle defense is the cohort-iteration reorder in
+    # cohorts_at_concurrency (gRPC FIRST within each cell), not keepalive.
+    # See channel_config.py for the full discussion.
+    default_channel = _open_grpc_channel(endpoints.grpc_url, M1_BASELINE)
+    tuned_channel = _open_grpc_channel(endpoints.grpc_url, MAX_MSG_16MIB)
+    rest_client = httpx.AsyncClient(
+        http2=False,
+        limits=httpx.Limits(max_keepalive_connections=8, max_connections=8),
+    )
+    try:
+        rtt: dict[M6_1_2CohortKind, RTTRecord] = {
+            "default_grpc": await measure_rtt(
+                default_channel, n=rtt_probe_n, metadata=grpc_metadata
+            ),
+            "tuned_grpc_multiplexed": await measure_rtt(
+                tuned_channel, n=rtt_probe_n, metadata=grpc_metadata
+            ),
+            "rest_https_edge": await _rest_rtt_probe(
+                rest_client, rest_https_edge_base, n=rtt_probe_n
+            ),
+            "rest_plain_tcp": await _rest_rtt_probe(
+                rest_client, rest_plain_tcp_base, n=rtt_probe_n
+            ),
+        }
+
+        async def driver(cohort: M6_1_2CohortKind, cell: M6_1Cell, seed: int) -> RPCResult:
+            rpc_index = _resolve_rpc_index(seed, base_seed)
+            if cohort in ("rest_https_edge", "rest_plain_tcp"):
+                rest_base = (
+                    rest_https_edge_base if cohort == "rest_https_edge" else rest_plain_tcp_base
+                )
+                if cell.path == "embed":
+                    return await _drive_rest_embed_m6_1(
+                        rest_client,
+                        rest_base,
+                        rest_auth,
+                        cell,
+                        seq_len,
+                        rpc_index,
+                        base_seed,
+                        rpc_timeout_s,
+                    )
+                return await _drive_rest_chat_stream(
+                    rest_client, rest_base, rest_auth, seed, rpc_timeout_s
+                )
+            channel = default_channel if cohort == "default_grpc" else tuned_channel
+            if cell.path == "embed":
+                return await _drive_grpc_embed_m6_1(
+                    channel,
+                    cell,
+                    seq_len,
+                    rpc_index,
+                    base_seed,
+                    grpc_metadata,
+                    rpc_timeout_s,
+                )
+            return await _drive_grpc_chat_stream(channel, seed, grpc_metadata, rpc_timeout_s)
+
+        yield driver, rtt
+    finally:
+        with contextlib.suppress(Exception):
+            await rest_client.aclose()
+        with contextlib.suppress(Exception):
+            await default_channel.close(grace=5.0)
+        with contextlib.suppress(Exception):
+            await tuned_channel.close(grace=5.0)
+
+
+# Type alias for the M6.1.2 driver callable. Mirrors :data:`RPCDriver` but
+# accepts the wider :data:`M6_1_2CohortKind` Literal.
+M6_1_2RPCDriver = Callable[[M6_1_2CohortKind, M6_1Cell, int], Awaitable[RPCResult]]

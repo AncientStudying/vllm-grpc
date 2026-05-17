@@ -168,6 +168,31 @@ HTTP2_BDP_PROBE = ChannelConfig(
 )
 
 
+# --- M6.1.2 channel-config note --------------------------------------------
+#
+# An earlier M6.1.2 attempt added M1_BASELINE_KEEPALIVE / MAX_MSG_16MIB_KEEPALIVE
+# variants with 60s client-side keepalive_time_ms to keep Modal's plain-TCP
+# gRPC tunnel alive during the REST-cohort phases of a 4-cohort sweep.
+# That attempt failed in live testing: Modal's gRPC frontend (or the
+# intervening proxy) rejected the 60s pings with
+# ``ENHANCE_YOUR_CALM: too_many_pings`` GOAWAY frames, killing the very
+# first ``default_grpc`` cell with 0/50 successes (the error log explicitly
+# cited ``Current keepalive time (before throttling): 60000ms``).
+#
+# gRPC's server-side default ``MIN_RECV_PING_INTERVAL_WITHOUT_DATA_MS`` is
+# 300000 (5 min), and any interval shorter than that triggers too_many_pings.
+# A 300s-or-longer interval is "safe" from too_many_pings but provides no
+# defense against tunnel idle timeouts shorter than 5 min — so keepalive
+# alone is not a workable defense for the Modal plain-TCP tunnel.
+#
+# M6.1.2's defense is instead the cohort-iteration reorder in
+# :func:`vllm_grpc_bench.m6_1_2_types.cohorts_at_concurrency` — gRPC
+# dispatches FIRST within each cell so the gRPC tunnel sees traffic
+# before the longer REST phases extend the idle window. The
+# gRPC-to-gRPC gap across cell boundaries is roughly the REST-phase
+# duration + the next cell's gRPC-phase duration, comparable to
+# M6.1.1's working 3-cohort pattern.
+
 ALL_PRESETS: tuple[ChannelConfig, ...] = (
     M1_BASELINE,
     MAX_MSG_16MIB,

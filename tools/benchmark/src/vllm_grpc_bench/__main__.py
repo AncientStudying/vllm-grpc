@@ -599,6 +599,83 @@ def _build_parser() -> argparse.ArgumentParser:
         "and the deployment (FR-004 escape hatch).",
     )
 
+    # ---- M6.1.2 mode (methodology discipline: topology probe + 4th cohort + timestamps) ----
+    parser.add_argument(
+        "--m6_1_2",
+        action="store_true",
+        help="M6.1.2 full sweep: per-sweep tcptraceroute topology probe + 4-cohort "
+        "(restored rest_plain_tcp) split + timestamped progress. "
+        "See specs/025-m6-1-2-methodology-discipline/contracts/cli.md.",
+    )
+    parser.add_argument(
+        "--m6_1_2-validate",
+        action="store_true",
+        help="M6.1.2 smoke-equivalent validation sweep (per FR-024 + round-1 Q4/Q5). "
+        "Same n=50, same 6-cell matrix, same 4-cohort set as --m6_1_2; intended for "
+        "PR-merge gate. Mutually exclusive with --m6_1_2 and all prior mode flags.",
+    )
+    parser.add_argument(
+        "--m6_1_2-modal-region",
+        default="eu-west-1",
+        help="M6.1.2: Modal region for the deploy (default eu-west-1, verbatim from M6.1.1).",
+    )
+    parser.add_argument(
+        "--m6_1_2-modal-token-env",
+        default="MODAL_BENCH_TOKEN",
+        help="M6.1.2: env-var name carrying the bearer token (mirrors M6.1.1).",
+    )
+    parser.add_argument(
+        "--m6_1_2-modal-endpoint",
+        default=None,
+        help="M6.1.2: pre-existing endpoint (advanced; implies --m6_1_2-skip-deploy).",
+    )
+    parser.add_argument(
+        "--m6_1_2-skip-deploy",
+        action="store_true",
+        help="M6.1.2: skip Modal deploy and reuse --m6_1_2-modal-endpoint.",
+    )
+    parser.add_argument(
+        "--m6_1_2-base-seed",
+        type=int,
+        default=42,
+        help="M6.1.2: base RNG seed (default 42, verbatim from M6.1.1 per FR-027 + round-3 Q2).",
+    )
+    parser.add_argument(
+        "--m6_1_2-model",
+        default="Qwen/Qwen3-8B",
+        help="M6.1.2: HuggingFace model identifier (default Qwen/Qwen3-8B, "
+        "verbatim from M6.1.1 per FR-027 + round-3 Q2).",
+    )
+    parser.add_argument(
+        "--m6_1_2-m6-1-1-baseline",
+        type=Path,
+        default=Path("docs/benchmarks/m6_1_1-engine-cost-instrumentation.json"),
+        help="M6.1.2: M6.1.1 baseline JSON path (FR-027 default).",
+    )
+    parser.add_argument(
+        "--m6_1_2-report-out",
+        type=Path,
+        default=Path("docs/benchmarks/m6_1_2-methodology-discipline.md"),
+        help="M6.1.2: markdown output path (FR-029 canonical path).",
+    )
+    parser.add_argument(
+        "--m6_1_2-report-json-out",
+        type=Path,
+        default=Path("docs/benchmarks/m6_1_2-methodology-discipline.json"),
+        help="M6.1.2: JSON companion output path (FR-029 canonical path).",
+    )
+    parser.add_argument(
+        "--m6_1_2-events-sidecar-out",
+        type=Path,
+        default=Path("docs/benchmarks/m6_1_2-events.jsonl"),
+        help="M6.1.2: per-RPC events sidecar (JSONL).",
+    )
+    parser.add_argument(
+        "--m6_1_2-allow-engine-mismatch",
+        action="store_true",
+        help="M6.1.2: acknowledge an engine_version divergence (FR-004 escape hatch).",
+    )
+
     # ---- M5.1 mode (REST vs gRPC head-to-head on real wire) ----
     parser.add_argument(
         "--m5_1",
@@ -2205,11 +2282,13 @@ def _validate_m6_1_1_args(args: argparse.Namespace) -> int:
         or getattr(args, "m6_smoke", False)
         or getattr(args, "m6_1", False)
         or getattr(args, "m6_1_smoke", False)
+        or getattr(args, "m6_1_2", False)
+        or getattr(args, "m6_1_2_validate", False)
     ):
         print(
             "Error: --m6_1_1-diagnose / --m6_1_1 are mutually exclusive with all "
-            "earlier mode flags (--m3, --m4, --m5, --m5_1, --m5_2, --m5_2-smoke, "
-            "--m6, --m6-smoke, --m6_1, --m6_1-smoke).",
+            "other mode flags (--m3, --m4, --m5, --m5_1, --m5_2, --m5_2-smoke, "
+            "--m6, --m6-smoke, --m6_1, --m6_1-smoke, --m6_1_2, --m6_1_2-validate).",
             file=sys.stderr,
         )
         return 2
@@ -2275,9 +2354,68 @@ def _run_m6_1_1(args: argparse.Namespace) -> int:
     return 0
 
 
+def _validate_m6_1_2_args(args: argparse.Namespace) -> int:
+    """Pre-flight validation for M6.1.2 mode. Returns exit code; 0 means OK.
+
+    See specs/025-m6-1-2-methodology-discipline/contracts/cli.md §"Exit
+    codes" and §"Mutual exclusion".
+    """
+    if getattr(args, "m6_1_2", False) and getattr(args, "m6_1_2_validate", False):
+        print(
+            "Error: --m6_1_2 and --m6_1_2-validate are mutually exclusive (pick one).",
+            file=sys.stderr,
+        )
+        return 1
+    if (
+        getattr(args, "m3", False)
+        or getattr(args, "m4", False)
+        or getattr(args, "m5", False)
+        or getattr(args, "m5_1", False)
+        or getattr(args, "m5_2", False)
+        or getattr(args, "m5_2_smoke", False)
+        or getattr(args, "m6", False)
+        or getattr(args, "m6_smoke", False)
+        or getattr(args, "m6_1", False)
+        or getattr(args, "m6_1_smoke", False)
+        or getattr(args, "m6_1_1", False)
+        or getattr(args, "m6_1_1_diagnose", False)
+    ):
+        print(
+            "Error: --m6_1_2 / --m6_1_2-validate are mutually exclusive with all "
+            "earlier mode flags (FR-026).",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def _run_m6_1_2(args: argparse.Namespace) -> int:
+    """Dispatch the M6.1.2 sweep.
+
+    Per ``contracts/cli.md`` "Dispatch wiring" + post-/speckit-analyze C1
+    remediation: both ``--m6_1_2`` and ``--m6_1_2-validate`` route to the
+    same :func:`vllm_grpc_bench.m6_1_2_validate.run_m6_1_2` function; the
+    distinction lives in the ``sweep_mode`` metadata argument.
+    """
+    rc = _validate_m6_1_2_args(args)
+    if rc != 0:
+        return rc
+
+    from vllm_grpc_bench.m6_1_2_validate import run_m6_1_2
+
+    if getattr(args, "m6_1_2", False):
+        return run_m6_1_2(args, sweep_mode="full")
+    if getattr(args, "m6_1_2_validate", False):
+        return run_m6_1_2(args, sweep_mode="validate")
+    return 0
+
+
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+
+    if getattr(args, "m6_1_2", False) or getattr(args, "m6_1_2_validate", False):
+        sys.exit(_run_m6_1_2(args))
 
     if getattr(args, "m6_1_1_diagnose", False) or getattr(args, "m6_1_1", False):
         sys.exit(_run_m6_1_1(args))
