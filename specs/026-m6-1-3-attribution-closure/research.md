@@ -126,6 +126,34 @@ Phase 0 captures the implementation-level research that complements the spec-lev
 - Emit the audit keys via initial metadata (the tokenized prompt IS available before the engine starts) — POSSIBLE but REJECTED for consistency; both key families ride the same wire mechanism (trailing metadata for gRPC; terminal event for REST) so the extractor logic is uniform.
 - Capture probe checkpoints in a middleware layer (interceptor) — REJECTED; the gRPC interceptor pattern would see the request but wouldn't have access to the engine's internal `RequestStateStats` instance. Capture has to happen in the handler function itself.
 
+### R-11 — Implementation methodology: copy-then-refactor vs from-scratch reimplementation
+
+**Decision**: Every new M6.1.3 module that has an M6.1.2 (or M6.1.1) analog MUST be implemented as a **copy-then-refactor**, NOT a from-scratch reimplementation. The implementer starts by `cp`-ing the prior-milestone module to the new file name, renames the type / function identifiers to M6.1.3 equivalents, and then applies the refactor delta (add / modify / keep) per the per-module table in [`plan.md`](./plan.md)'s "Implementation Methodology: Copy-Then-Refactor Pattern" section. Net-new modules (`m6_1_3_audit.py`, `m6_1_3_variance.py`, plus the integration test `test_m6_1_3_publish_multirun_cli.py`) have no copy source and are implemented from the contracts + data model directly.
+
+**Rationale**:
+
+The parallel-module pattern (`m6_1_1_*` / `m6_1_2_*` / `m6_1_3_*` siblings frozen per FR-037) is structurally correct — it guarantees the historical re-runnability guarantee that lets reviewers reproduce M6.1.1 / M6.1.2 baselines against the same harness commit that ships M6.1.3. But the **implementation procedure** of writing each new module from scratch (which has been the de-facto pattern through M6.1.1 → M6.1.2) loses information: bug fixes / improvements landed in M6.1.2's modules do NOT carry into M6.1.3 automatically. The implementer must remember every prior-milestone fix and re-derive it — error-prone, and the user observed several regressions during M6.1.2 from exactly this failure mode.
+
+Copy-then-refactor:
+- **Inherits every prior-milestone fix automatically** — the new module starts at the prior milestone's already-fixed state, not the original from-spec design.
+- **Constrains the diff to the refactor delta** — code review can verify exactly what changed and what stayed identical, rather than reviewing a full reimplementation.
+- **Reduces cognitive load** — the implementer reads M6.1.2's module and asks "what do I change for M6.1.3?" instead of "what does this milestone need from scratch?".
+- **Surfaces M6.1.2-specific design choices that should be preserved** — when the refactor delta is "keep X", the implementer is forced to read and understand X rather than re-deriving it.
+
+**Trade-off** (acknowledged in plan.md): code duplication accumulates across the milestone family. This is the explicit cost of the parallel-module pattern + FR-037's freeze. The duplication is bounded by the milestone count and by FR-037 (only the latest active milestone receives shared-bug-fix updates; M6.1.1 / M6.1.2 stay frozen). Future consolidation can extract truly-shared logic — the symmetric-prompts case (FR-019 + round-2 Q4) is the first such extraction.
+
+**Special cases**:
+
+- `m6_1_3_classifier.py` has no M6.1.2 analog (M6.1.2's FR-022 explicitly forbade classifier changes), so the copy source is `m6_1_1_classifier.py`. The refactor extends from 5-bucket to 7-bucket per FR-008 + FR-008a; the inherited 5-bucket logic is preserved per FR-008's "MUST be preserved unchanged" clause.
+- `symmetric_prompts.py` is a verbatim relocation from `m5_2_symmetry.py` per FR-019 + round-2 Q4 + R-6. The "refactor" is the relocation itself + the re-export shim at `m5_2_symmetry.py` for M5.2 back-compat.
+- Net-new modules (`m6_1_3_audit.py`, `m6_1_3_variance.py`, `test_m6_1_3_publish_multirun_cli.py`) have no copy source — their algorithmic spec lives in the contracts + data model. The mitigation is keeping those contracts comprehensive enough that the implementer doesn't have to derive the algorithm from first principles.
+- Modifications to **existing files** (frontend servicers, `rest_shim.py`, `m6_1_1_timing.py`, `__main__.py`) are in-place additive edits, NOT copy-then-refactor. The existing additive-only constraint stands.
+
+**Alternatives considered**:
+- **From-scratch reimplementation** (the de-facto status quo through M6.1.2) — REJECTED per the user's methodology critique at the close of `/speckit-plan` round. Documented regression evidence: bug fixes landed in M6.1.2's modules failed to carry into the next milestone's implementation.
+- **Extract a shared base module** (e.g., `m6_x_sweep_base.py` that all milestone sweeps inherit / import from) — REJECTED for this milestone; would break FR-037's freeze on prior milestones (any change to the shared module would change M6.1.1's / M6.1.2's behavior). A separate refactor to consolidate truly-shared logic is a candidate for a future milestone, but is out of scope for M6.1.3.
+- **Document the procedure outside the spec-kit artifacts** (e.g., in `CLAUDE.md` or as a constitution amendment) — DEFERRED. The constitution-amendment process per the Governance section (semver bump, Sync Impact Report, template review) is heavier than the M6.1.3 documentation lift; future M6.2 / M7 / M8 can either inherit the M6.1.3 documentation directly or promote this to a project-wide rule via the amendment process. Surfaced in plan.md's "Project-wide convention question" subsection.
+
 ## Cross-references
 
 - Spec: [`spec.md`](./spec.md) — the 45-FR + 13-SC + 18-Clarification contract this research informs.
