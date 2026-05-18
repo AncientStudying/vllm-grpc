@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -65,11 +66,26 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):  # type: ignore[misc]
         # M6 (FR-008 / R-2): track TTFT + TPOT for chat_stream path.
         # M6.1.1 checkpoint (b): pre_engine — just before engine.generate.
         pre_engine_ns = time.perf_counter_ns()
+        # M6.1.3 (FR-001 + FR-003): wall-clock anchor captured alongside the
+        # perf_counter pre_engine checkpoint so the client can compare it
+        # against vLLM's time.time()-sourced RequestStateStats.arrival_time.
+        # Streaming-only (FR-003); the unary chat.Complete path does NOT
+        # populate this key.
+        pre_engine_wall_ns = time.time_ns()
         start = time.perf_counter()
         first_token_at: float | None = None
         last_token_at: float | None = None
         token_count = 0
         first_chunk_ns: int | None = None
+        # M6.1.3 (FR-002 + FR-003): monotonic anchor captured alongside the
+        # perf_counter first_chunk checkpoint; comparable against vLLM's
+        # time.monotonic()-sourced RequestStateStats.first_token_ts.
+        first_chunk_mono_ns: int | None = None
+        # M6.1.3 (FR-012 + FR-013 + FR-014): per-RPC prompt-content audit
+        # values, captured once the first engine output yields prompt_token_ids
+        # (the exact token-id list the engine saw at prefill).
+        tokenized_prompt_length: int | None = None
+        tokenized_prompt_hash: str | None = None
         # M6.1.2 — engine-internal RequestStateStats snapshots, captured at
         # first-chunk (queued/scheduled/first_token) and refreshed at
         # terminal-emit (last_token). Default 0 means the upstream engine did
@@ -95,6 +111,18 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):  # type: ignore[misc]
                         # M6.1.1 checkpoint (c): first_chunk — captured on the
                         # same code path that sets first_token_at.
                         first_chunk_ns = time.perf_counter_ns()
+                        # M6.1.3 — monotonic anchor captured at the same site.
+                        first_chunk_mono_ns = time.monotonic_ns()
+                        # M6.1.3 — audit values computed from prompt_token_ids
+                        # on the first yielded output. prompt_token_ids is the
+                        # tokenized prompt the engine saw at prefill.
+                        prompt_token_ids = list(getattr(output, "prompt_token_ids", []) or [])
+                        if prompt_token_ids:
+                            tokenized_prompt_length = len(prompt_token_ids)
+                            tokenized_prompt_hash = hashlib.blake2b(
+                                b"".join(t.to_bytes(4, "little") for t in prompt_token_ids),
+                                digest_size=8,
+                            ).hexdigest()
                         # M6.1.2 — snapshot engine RequestStateStats. metrics
                         # is a live reference, so we materialise scalar values
                         # now (engine may keep mutating it).
@@ -142,30 +170,52 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):  # type: ignore[misc]
                     first_chunk_for_md = (
                         first_chunk_ns if first_chunk_ns is not None else terminal_emit_ns
                     )
-                    context.set_trailing_metadata(
+                    # M6.1.3 — assemble the trailing-metadata tuple. The 4 new
+                    # keys are appended only when their values are populated;
+                    # absent keys signal "instrumentation not active" to the
+                    # client extractor (strict-superset per FR-010).
+                    trailers: list[tuple[str, str]] = [
+                        # Existing M6 keys — preserved exactly.
+                        ("engine-ttft-ms", f"{engine_ttft_ms:.3f}"),
+                        ("engine-tpot-ms", f"{engine_tpot_ms:.3f}"),
+                        # M6.1.1 (FR-008): additive m6_1_1_t_* keys.
+                        ("m6_1_1_t_handler_entry", str(handler_entry_ns)),
+                        ("m6_1_1_t_pre_engine", str(pre_engine_ns)),
+                        ("m6_1_1_t_first_chunk", str(first_chunk_for_md)),
+                        ("m6_1_1_t_terminal_emit", str(terminal_emit_ns)),
                         (
-                            # Existing M6 keys — preserved exactly.
-                            ("engine-ttft-ms", f"{engine_ttft_ms:.3f}"),
-                            ("engine-tpot-ms", f"{engine_tpot_ms:.3f}"),
-                            # M6.1.1 (FR-008): additive m6_1_1_t_* keys.
-                            ("m6_1_1_t_handler_entry", str(handler_entry_ns)),
-                            ("m6_1_1_t_pre_engine", str(pre_engine_ns)),
-                            ("m6_1_1_t_first_chunk", str(first_chunk_for_md)),
-                            ("m6_1_1_t_terminal_emit", str(terminal_emit_ns)),
-                            (
-                                "m6_1_1_t_perturbation_audit_ns",
-                                str(perturbation_audit_ns),
-                            ),
-                            # M6.1.2 — engine-internal RequestStateStats
-                            # timestamps from vLLM. 0 when the engine didn't
-                            # populate the field.
-                            ("m6_1_1_t_engine_arrival_ns", str(engine_arrival_ns)),
-                            ("m6_1_1_t_engine_queued_ns", str(engine_queued_ns)),
-                            ("m6_1_1_t_engine_scheduled_ns", str(engine_scheduled_ns)),
-                            ("m6_1_1_t_engine_first_token_ns", str(engine_first_token_ns)),
-                            ("m6_1_1_t_engine_last_token_ns", str(engine_last_token_ns)),
+                            "m6_1_1_t_perturbation_audit_ns",
+                            str(perturbation_audit_ns),
+                        ),
+                        # M6.1.2 — engine-internal RequestStateStats
+                        # timestamps from vLLM. 0 when the engine didn't
+                        # populate the field.
+                        ("m6_1_1_t_engine_arrival_ns", str(engine_arrival_ns)),
+                        ("m6_1_1_t_engine_queued_ns", str(engine_queued_ns)),
+                        ("m6_1_1_t_engine_scheduled_ns", str(engine_scheduled_ns)),
+                        ("m6_1_1_t_engine_first_token_ns", str(engine_first_token_ns)),
+                        ("m6_1_1_t_engine_last_token_ns", str(engine_last_token_ns)),
+                        # M6.1.3 (FR-001 + FR-002 + FR-003): proxy-edge probes.
+                        # Streaming-only; the wall + monotonic anchors let the
+                        # client bisect frontend ↔ engine arrival/emit deltas.
+                        ("m6_1_1_t_pre_engine_wall_ns", str(pre_engine_wall_ns)),
+                        (
+                            "m6_1_1_t_first_chunk_mono_ns",
+                            str(first_chunk_mono_ns) if first_chunk_mono_ns is not None else "0",
+                        ),
+                    ]
+                    if tokenized_prompt_length is not None:
+                        # M6.1.3 (FR-012 + FR-013 + FR-014): prompt-content
+                        # audit. Emitted only when prompt_token_ids was
+                        # available on the first engine output (it always
+                        # should be under vLLM v1); absent if the engine
+                        # produced no output.
+                        trailers.append(
+                            ("m6_1_3_tokenized_prompt_length", str(tokenized_prompt_length))
                         )
-                    )
+                    if tokenized_prompt_hash is not None:
+                        trailers.append(("m6_1_3_tokenized_prompt_hash", tokenized_prompt_hash))
+                    context.set_trailing_metadata(tuple(trailers))
                     yield chat_pb2.ChatStreamChunk(
                         delta_content="",
                         finish_reason=completion.finish_reason,

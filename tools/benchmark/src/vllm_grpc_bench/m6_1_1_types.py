@@ -151,6 +151,18 @@ class TimingCheckpoint:
     engine_scheduled_ns: int = 0
     engine_first_token_ns: int = 0
     engine_last_token_ns: int = 0
+    # M6.1.3 proxy-edge probes (FR-001 + FR-002 + FR-003). ``None`` means the
+    # wire key was absent on this RPC — pre-M6.1.3 manifests, or unary RPC
+    # rows (streaming-only constraint per FR-003). Distinguishes "absent"
+    # from "zero" so the FR-006 negative-value clock-anomaly assertion only
+    # fires on populated rows.
+    pre_engine_wall_ns: int | None = None
+    first_chunk_mono_ns: int | None = None
+    # M6.1.3 prompt-content audit (FR-012 + FR-013 + FR-014). Emitted on
+    # EVERY RPC kind (streaming + unary) per FR-014; ``None`` only on
+    # pre-M6.1.3 manifests.
+    tokenized_prompt_length: int | None = None
+    tokenized_prompt_hash: str | None = None
 
     @property
     def has_engine_stats(self) -> bool:
@@ -165,6 +177,17 @@ class TimingCheckpoint:
             and self.engine_first_token_ns > 0
             and self.engine_last_token_ns > 0
         )
+
+    @property
+    def has_proxy_edge_probes(self) -> bool:
+        """True iff both M6.1.3 proxy-edge anchors are populated (FR-005).
+
+        The aggregator only derives ``seg_ingress_ms`` + ``seg_egress_ms``
+        when this is True; absent anchors leave the new segments at ``None``
+        and the classifier falls back to the M6.1.1 5-bucket logic (FR-010
+        strict-superset).
+        """
+        return self.pre_engine_wall_ns is not None and self.first_chunk_mono_ns is not None
 
 
 @dataclass(frozen=True)

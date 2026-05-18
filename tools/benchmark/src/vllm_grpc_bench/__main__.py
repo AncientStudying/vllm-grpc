@@ -676,6 +676,112 @@ def _build_parser() -> argparse.ArgumentParser:
         help="M6.1.2: acknowledge an engine_version divergence (FR-004 escape hatch).",
     )
 
+    # ---- M6.1.3 mode (Phase 1 attribution closure: proxy-edge + audit + variance) ----
+    parser.add_argument(
+        "--m6_1_3",
+        action="store_true",
+        help="M6.1.3 full sweep: 7-bucket classifier + proxy-edge probes + per-cohort "
+        "prompt-content audit + multi-run between-run variance. Defaults to repeat=5 "
+        "+ n=50 (Phase A). With --m6_1_3-diagnose-repeat=1 --m6_1_3-diagnose-n=200, "
+        "runs the Phase B n=200 power test. Mutually exclusive with all prior mode "
+        "flags. See specs/026-m6-1-3-attribution-closure/contracts/cli.md.",
+    )
+    parser.add_argument(
+        "--m6_1_3-validate",
+        action="store_true",
+        help="M6.1.3 smoke-equivalent validation sweep (per FR-022 + FR-023): "
+        "repeat=1 + n=50; writes validate-sibling artifact path. Intended as the "
+        "harness-wiring confidence-builder before committing the ~75 min publish run. "
+        "Mutually exclusive with --m6_1_3 and all prior mode flags.",
+    )
+    parser.add_argument(
+        "--m6_1_3-diagnose-repeat",
+        type=int,
+        default=None,
+        help="M6.1.3: multi-run loop count (FR-022). Default 5 under --m6_1_3 "
+        "(Phase A); default 1 under --m6_1_3-validate; pass 1 with "
+        "--m6_1_3-diagnose-n=200 to trigger the Phase B sibling path.",
+    )
+    parser.add_argument(
+        "--m6_1_3-diagnose-n",
+        type=int,
+        default=50,
+        help="M6.1.3: per-cohort sample size (FR-023). Default 50 (M6.1.1 baseline); "
+        "200 is the Phase B n=200 power test per FR-045.",
+    )
+    parser.add_argument(
+        "--m6_1_3-symmetric-prompts",
+        action="store_true",
+        help="M6.1.3: re-wire cohort prompt assignment to the shared "
+        "symmetric_prompts helper per FR-019 + round-2 Q4. Operator-invoked Phase B "
+        "for Story 2 when the pooled-distribution H1 verdict confirms prompt-content "
+        "drift.",
+    )
+    parser.add_argument(
+        "--m6_1_3-modal-region",
+        default="eu-west-1",
+        help="M6.1.3: Modal region for the deploy (default eu-west-1, verbatim from "
+        "M6.1.2 per FR-036).",
+    )
+    parser.add_argument(
+        "--m6_1_3-modal-token-env",
+        default="MODAL_BENCH_TOKEN",
+        help="M6.1.3: env-var name carrying the bearer token (mirrors M6.1.2).",
+    )
+    parser.add_argument(
+        "--m6_1_3-modal-endpoint",
+        default=None,
+        help="M6.1.3: pre-existing endpoint (advanced; implies --m6_1_3-skip-deploy).",
+    )
+    parser.add_argument(
+        "--m6_1_3-skip-deploy",
+        action="store_true",
+        help="M6.1.3: skip Modal deploy and reuse --m6_1_3-modal-endpoint.",
+    )
+    parser.add_argument(
+        "--m6_1_3-base-seed",
+        type=int,
+        default=42,
+        help="M6.1.3: base RNG seed (default 42, verbatim from M6.1.2 per FR-036).",
+    )
+    parser.add_argument(
+        "--m6_1_3-model",
+        default="Qwen/Qwen3-8B",
+        help="M6.1.3: HuggingFace model identifier (default Qwen/Qwen3-8B, "
+        "verbatim from M6.1.2 per FR-036).",
+    )
+    parser.add_argument(
+        "--m6_1_3-m6-1-1-baseline",
+        type=Path,
+        default=Path("docs/benchmarks/m6_1_1-engine-cost-instrumentation.json"),
+        help="M6.1.3: M6.1.1 baseline JSON path (per FR-031 + contracts/cli.md).",
+    )
+    parser.add_argument(
+        "--m6_1_3-report-out",
+        type=Path,
+        default=None,
+        help="M6.1.3: markdown output path (operator override; default inferred per "
+        "FR-038 + R-7 from the mode + modifier combination).",
+    )
+    parser.add_argument(
+        "--m6_1_3-report-json-out",
+        type=Path,
+        default=None,
+        help="M6.1.3: JSON companion output path (operator override; default "
+        "inferred per FR-038 + R-7).",
+    )
+    parser.add_argument(
+        "--m6_1_3-events-sidecar-out",
+        type=Path,
+        default=Path("docs/benchmarks/m6_1_3-events.jsonl"),
+        help="M6.1.3: per-RPC events sidecar (JSONL); extended with audit fields per FR-015 + R-9.",
+    )
+    parser.add_argument(
+        "--m6_1_3-allow-engine-mismatch",
+        action="store_true",
+        help="M6.1.3: acknowledge an engine_version divergence (FR-004 escape hatch).",
+    )
+
     # ---- M5.1 mode (REST vs gRPC head-to-head on real wire) ----
     parser.add_argument(
         "--m5_1",
@@ -2284,11 +2390,14 @@ def _validate_m6_1_1_args(args: argparse.Namespace) -> int:
         or getattr(args, "m6_1_smoke", False)
         or getattr(args, "m6_1_2", False)
         or getattr(args, "m6_1_2_validate", False)
+        or getattr(args, "m6_1_3", False)
+        or getattr(args, "m6_1_3_validate", False)
     ):
         print(
             "Error: --m6_1_1-diagnose / --m6_1_1 are mutually exclusive with all "
             "other mode flags (--m3, --m4, --m5, --m5_1, --m5_2, --m5_2-smoke, "
-            "--m6, --m6-smoke, --m6_1, --m6_1-smoke, --m6_1_2, --m6_1_2-validate).",
+            "--m6, --m6-smoke, --m6_1, --m6_1-smoke, --m6_1_2, --m6_1_2-validate, "
+            "--m6_1_3, --m6_1_3-validate).",
             file=sys.stderr,
         )
         return 2
@@ -2379,13 +2488,100 @@ def _validate_m6_1_2_args(args: argparse.Namespace) -> int:
         or getattr(args, "m6_1_smoke", False)
         or getattr(args, "m6_1_1", False)
         or getattr(args, "m6_1_1_diagnose", False)
+        or getattr(args, "m6_1_3", False)
+        or getattr(args, "m6_1_3_validate", False)
     ):
         print(
             "Error: --m6_1_2 / --m6_1_2-validate are mutually exclusive with all "
-            "earlier mode flags (FR-026).",
+            "earlier and later mode flags (FR-026 + M6.1.3 FR-034).",
             file=sys.stderr,
         )
         return 1
+    return 0
+
+
+def _normalize_m6_1_3_modifier_defaults(args: argparse.Namespace) -> None:
+    """Apply the mode-dependent default for ``--m6_1_3-diagnose-repeat``.
+
+    argparse can only register one default per flag; M6.1.3 needs different
+    repeat defaults per mode (5 under ``--m6_1_3`` Phase A; 1 under
+    ``--m6_1_3-validate``). This helper applies the mode-aware default
+    after parse-time when the user didn't pass the flag explicitly.
+
+    Called by :func:`_run_m6_1_3` before dispatch AND by the CLI surface
+    test ``test_m6_1_3_modifier_defaults_per_mode`` so the assertion shape
+    matches the contract.
+
+    Safe to call multiple times; idempotent.
+    """
+    if getattr(args, "m6_1_3_diagnose_repeat", None) is None:
+        if getattr(args, "m6_1_3_validate", False):
+            args.m6_1_3_diagnose_repeat = 1
+        else:
+            args.m6_1_3_diagnose_repeat = 5
+
+
+def _validate_m6_1_3_args(args: argparse.Namespace) -> int:
+    """Pre-flight validation for M6.1.3 mode. Returns exit code; 0 means OK.
+
+    Per ``specs/026-m6-1-3-attribution-closure/contracts/cli.md`` "Exit
+    codes" + "Mutual exclusion" (FR-034): both ``--m6_1_3`` and
+    ``--m6_1_3-validate`` are mutually exclusive with each other AND with
+    every prior mode flag the project supports.
+    """
+    if getattr(args, "m6_1_3", False) and getattr(args, "m6_1_3_validate", False):
+        print(
+            "Error: --m6_1_3 and --m6_1_3-validate are mutually exclusive (pick one).",
+            file=sys.stderr,
+        )
+        return 1
+    if (
+        getattr(args, "m3", False)
+        or getattr(args, "m4", False)
+        or getattr(args, "m5", False)
+        or getattr(args, "m5_1", False)
+        or getattr(args, "m5_1_smoke", False)
+        or getattr(args, "m5_2", False)
+        or getattr(args, "m5_2_smoke", False)
+        or getattr(args, "m6", False)
+        or getattr(args, "m6_smoke", False)
+        or getattr(args, "m6_1", False)
+        or getattr(args, "m6_1_smoke", False)
+        or getattr(args, "m6_1_1", False)
+        or getattr(args, "m6_1_1_diagnose", False)
+        or getattr(args, "m6_1_2", False)
+        or getattr(args, "m6_1_2_validate", False)
+    ):
+        print(
+            "Error: --m6_1_3 / --m6_1_3-validate are mutually exclusive with all "
+            "prior mode flags (FR-034).",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def _run_m6_1_3(args: argparse.Namespace) -> int:
+    """Dispatch the M6.1.3 sweep.
+
+    Per ``contracts/cli.md`` "Dispatch wiring" + round-2 Q2: both
+    ``--m6_1_3`` and ``--m6_1_3-validate`` route to the single entry
+    function :func:`vllm_grpc_bench.m6_1_3_validate.run_m6_1_3`. The
+    operator-intent distinction lives in the ``sweep_mode`` metadata
+    argument and is recorded in ``run_meta.sweep_mode``.
+    """
+    rc = _validate_m6_1_3_args(args)
+    if rc != 0:
+        return rc
+
+    _normalize_m6_1_3_modifier_defaults(args)
+
+    from vllm_grpc_bench.m6_1_3_validate import run_m6_1_3
+
+    if getattr(args, "m6_1_3", False):
+        return run_m6_1_3(args, sweep_mode="full")
+    if getattr(args, "m6_1_3_validate", False):
+        return run_m6_1_3(args, sweep_mode="validate")
     return 0
 
 
@@ -2416,6 +2612,9 @@ def main() -> None:
 
     if getattr(args, "m6_1_2", False) or getattr(args, "m6_1_2_validate", False):
         sys.exit(_run_m6_1_2(args))
+
+    if getattr(args, "m6_1_3", False) or getattr(args, "m6_1_3_validate", False):
+        sys.exit(_run_m6_1_3(args))
 
     if getattr(args, "m6_1_1_diagnose", False) or getattr(args, "m6_1_1", False):
         sys.exit(_run_m6_1_1(args))

@@ -43,6 +43,38 @@ def _opt_int(value: Any) -> int:
         return 0
 
 
+def _opt_int_or_none(md: dict[str, Any], key: str) -> int | None:
+    """M6.1.3 variant: returns ``None`` on missing/invalid input.
+
+    Distinguishes "absent" from "zero" so the FR-006 negative-value
+    clock-anomaly assertion only fires when both proxy-edge anchors were
+    actually emitted. Used for the M6.1.3 wire keys whose semantics treat
+    ``None`` and ``0`` differently (e.g., ``0`` is a legitimate small
+    ns-delta value while ``None`` means the upstream server didn't emit
+    the key at all — pre-M6.1.3 or unary RPC).
+    """
+    value = md.get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _opt_str_or_none(md: dict[str, Any], key: str) -> str | None:
+    """M6.1.3 variant: returns ``None`` on missing input.
+
+    Used for the M6.1.3 ``m6_1_3_tokenized_prompt_hash`` wire key. The
+    audit hash is a 16-char hex digest under vLLM v1; absence signals
+    pre-M6.1.3 wire vintage rather than an empty hash.
+    """
+    value = md.get(key)
+    if value is None:
+        return None
+    return str(value)
+
+
 def extract_rest_timings(sse_terminal_event: dict[str, Any]) -> TimingCheckpoint | None:
     """Read the ``m6_1_1_timings`` sub-object from a REST terminal payload.
 
@@ -76,6 +108,14 @@ def extract_rest_timings(sse_terminal_event: dict[str, Any]) -> TimingCheckpoint
             engine_scheduled_ns=_opt_int(sub.get("engine_scheduled_ns")),
             engine_first_token_ns=_opt_int(sub.get("engine_first_token_ns")),
             engine_last_token_ns=_opt_int(sub.get("engine_last_token_ns")),
+            # M6.1.3 (FR-001 + FR-002 + FR-012 + FR-013): proxy-edge + audit
+            # fields. Absent on pre-M6.1.3 wire vintage; absent on unary
+            # RPC rows for the proxy-edge anchors (streaming-only per
+            # FR-003); always present on M6.1.3 RPCs for the audit fields.
+            pre_engine_wall_ns=_opt_int_or_none(sub, "pre_engine_wall_ns"),
+            first_chunk_mono_ns=_opt_int_or_none(sub, "first_chunk_mono_ns"),
+            tokenized_prompt_length=_opt_int_or_none(sub, "tokenized_prompt_length"),
+            tokenized_prompt_hash=_opt_str_or_none(sub, "tokenized_prompt_hash"),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -102,6 +142,13 @@ def extract_grpc_timings(trailing_md: dict[str, str]) -> TimingCheckpoint | None
             engine_scheduled_ns=_opt_int(trailing_md.get("m6_1_1_t_engine_scheduled_ns")),
             engine_first_token_ns=_opt_int(trailing_md.get("m6_1_1_t_engine_first_token_ns")),
             engine_last_token_ns=_opt_int(trailing_md.get("m6_1_1_t_engine_last_token_ns")),
+            # M6.1.3 (FR-001 + FR-002 + FR-012 + FR-013): proxy-edge + audit
+            # fields. ``None`` on pre-M6.1.3 wire vintage and on unary RPC
+            # rows for the proxy-edge anchors (streaming-only per FR-003).
+            pre_engine_wall_ns=_opt_int_or_none(trailing_md, "m6_1_1_t_pre_engine_wall_ns"),
+            first_chunk_mono_ns=_opt_int_or_none(trailing_md, "m6_1_1_t_first_chunk_mono_ns"),
+            tokenized_prompt_length=_opt_int_or_none(trailing_md, "m6_1_3_tokenized_prompt_length"),
+            tokenized_prompt_hash=_opt_str_or_none(trailing_md, "m6_1_3_tokenized_prompt_hash"),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -115,13 +162,16 @@ def compute_per_segment_delta(ckpt: TimingCheckpoint) -> PerSegmentDelta:
 
 def timing_checkpoint_to_payload(
     ckpt: TimingCheckpoint | None,
-) -> dict[str, int] | None:
-    """Convert a :class:`TimingCheckpoint` to a ``dict[str, int]`` payload.
+) -> dict[str, int | str | None] | None:
+    """Convert a :class:`TimingCheckpoint` to a payload dict.
 
     Used by RPC drivers to populate ``RPCResult.m6_1_1_timing_payload``
     without introducing an m6_sweep / m6_types → m6_1_1_types import
     cycle. The dict shape mirrors :class:`TimingCheckpoint`'s fields so
     re-hydration via ``TimingCheckpoint(**payload)`` is mechanical.
+
+    M6.1.3: the value type widens to include ``str | None`` to carry the
+    new ``tokenized_prompt_hash`` field plus optional proxy-edge anchors.
     """
     if ckpt is None:
         return None
@@ -136,6 +186,12 @@ def timing_checkpoint_to_payload(
         "engine_scheduled_ns": ckpt.engine_scheduled_ns,
         "engine_first_token_ns": ckpt.engine_first_token_ns,
         "engine_last_token_ns": ckpt.engine_last_token_ns,
+        # M6.1.3 — proxy-edge anchors + audit fields. ``None`` on
+        # rehydrated pre-M6.1.3 manifests.
+        "pre_engine_wall_ns": ckpt.pre_engine_wall_ns,
+        "first_chunk_mono_ns": ckpt.first_chunk_mono_ns,
+        "tokenized_prompt_length": ckpt.tokenized_prompt_length,
+        "tokenized_prompt_hash": ckpt.tokenized_prompt_hash,
     }
 
 
