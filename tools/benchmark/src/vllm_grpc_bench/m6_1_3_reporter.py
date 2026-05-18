@@ -149,9 +149,16 @@ class M6_1_3SweepArtifact:
     # stay None so the reporter omits the audit section cleanly).
     audit: list[M6_1_3PerCellAuditAggregate] | None = None
     audit_per_run: list[M6_1_3PerRunAuditVerdict] | None = None
-    # M6.1.3 NEW (US3 T036/T037 wires these; for US1 they stay None).
+    # M6.1.3 NEW (US3 T036/T037 wires these; for US1/US2 they stay None).
     between_run_variance: M6_1_3BetweenRunVariance | None = None
     phase_b_trigger: M6_1_3PhaseBTriggerVerdict | None = None
+    # M6.1.3 NEW (US3 T036): per-run measurements accumulator for the
+    # multi-run sweep. ``None`` on US1/US2 single-run sweeps (the
+    # ``measurements`` field carries the single run's data). On multi-run
+    # publish sweeps, ``measurements`` is the LAST run's measurements
+    # (used as the representative classifier input) and ``phase_1_runs``
+    # carries all N runs for the variance compute + audit pooling.
+    phase_1_runs: list[list[M6_1_3CellMeasurement]] | None = None
 
 
 # --- Identifier legend (FR-009a + round-2 Q2) -------------------------------
@@ -296,6 +303,15 @@ def render_json(artifact: M6_1_3SweepArtifact) -> dict[str, Any]:
         payload["between_run_variance"] = _sanitize_for_json(artifact.between_run_variance)
     if artifact.phase_b_trigger is not None:
         payload["phase_b_trigger"] = _sanitize_for_json(artifact.phase_b_trigger)
+    if artifact.phase_1_runs is not None:
+        # Each per-run snapshot is a list of M6_1_3CellMeasurement; emit
+        # them via the same _per_cell_row helper so consumers see
+        # consistent shapes across the single-run ``measurements`` field
+        # and the multi-run ``phase_1_runs`` accumulator.
+        payload["phase_1_runs"] = [
+            [_per_cell_row(m) for m in run_measurements]
+            for run_measurements in artifact.phase_1_runs
+        ]
     return payload
 
 
@@ -635,10 +651,17 @@ def render_markdown(artifact: M6_1_3SweepArtifact) -> str:
             )
         )
 
-    # Between-run variance section (US3 T037 wires the full table; for US1
-    # we render a placeholder when the section is suppressed via
-    # ``variance_section_suppressed``).
-    if artifact.between_run_variance:
+    # Between-run variance section (FR-025: rendered only when ≥ 3 runs
+    # collected). The compute may have populated artifact.between_run_variance
+    # on a 2-run sweep for programmatic inspection, but per FR-025 the
+    # markdown section is suppressed; the FR-044 override fallback above
+    # carries the operator-facing signal in that case.
+    variance_should_render = (
+        artifact.between_run_variance is not None
+        and artifact.phase_b_trigger is not None
+        and not artifact.phase_b_trigger.variance_section_suppressed
+    )
+    if artifact.between_run_variance and variance_should_render:
         lines.append("## Between-Run Variance")
         lines.append("")
         lines.append("| Cell × Cohort | mean_of_means (ms) | stddev_of_means (ms) | n_runs |")

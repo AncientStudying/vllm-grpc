@@ -73,6 +73,13 @@ from vllm_grpc_bench.m6_1_3_types import (
     M6_1_3ClassifierThresholds,
     M6_1_3SweepMode,
 )
+from vllm_grpc_bench.m6_1_3_variance import (
+    compute_between_run_variance,
+    compute_cell_ci_halfwidth_ms,
+    compute_phase_b_trigger,
+    reduce_cell_variance,
+    should_render_variance_section,
+)
 from vllm_grpc_bench.m6_1_types import M6_1_CONCURRENCIES, M6_1Cell
 from vllm_grpc_bench.m6_sweep import RPCResult
 
@@ -84,6 +91,22 @@ _ = M6_1_CONCURRENCIES  # documents the c=1/4/8 domain that c is drawn from
 _DEFAULT_MEASUREMENT_N: int = 50
 _DEFAULT_WARMUP_N: int = 10
 _MAX_TOP_FAILURE_REASONS: int = 5
+
+# FR-028 round-3 Q3: the multi-run orchestrator allows up to 2 Modal tunnel
+# preemptions per multi-run sequence before aborting the remaining runs.
+# The third preemption triggers a "multi-run incomplete" warning.
+_MAX_PREEMPTIONS: int = 2
+
+# Substrings the orchestrator treats as Modal-tunnel-preemption signals.
+# When an exception's repr matches any of these, the multi-run loop
+# counts it as a preemption rather than re-raising.
+_MODAL_PREEMPTION_MARKERS: tuple[str, ...] = (
+    "modal.run",
+    "modal.host",
+    "UNAVAILABLE",
+    "Connection refused",
+    "tunnel rotated",
+)
 
 
 # --- _stderr_ts() ----------------------------------------------------------
@@ -386,6 +409,24 @@ def _summarize_cell(
     )
 
 
+# --- Modal preemption detection (FR-028 + R-5) ------------------------------
+
+
+def _is_modal_preemption(exc: BaseException) -> bool:
+    """Heuristic check: does this exception look like a Modal tunnel
+    preemption?
+
+    The M5.2 pattern detects preemption via connection errors against
+    Modal-hosted URLs (``*.modal.run`` / ``*.modal.host``) or specific
+    gRPC status strings (``UNAVAILABLE``). We match on either the
+    exception repr or its message text. Conservative: only counts
+    exceptions whose text clearly indicates a Modal-side connection
+    issue, so a programming error in the orchestrator still propagates.
+    """
+    text = f"{type(exc).__name__}: {exc}"
+    return any(marker in text for marker in _MODAL_PREEMPTION_MARKERS)
+
+
 # --- Cell iteration helper --------------------------------------------------
 
 
@@ -396,6 +437,70 @@ def _iter_cells_cohorts() -> list[tuple[M6_1Path, int, M6_1_2CohortKind]]:
         for cohort in cohorts_at_concurrency(c):
             pairs.append((path, c, cohort))
     return pairs
+
+
+# --- Single-run phase 1 measurement (extracted for multi-run wrapping) -----
+
+
+async def _run_phase1_once(
+    *,
+    config: M6_1_3SweepConfig,
+    driver: M6_1_3RPCDriver,
+    pairs: list[tuple[M6_1Path, int, M6_1_2CohortKind]],
+    run_idx: int,
+    cohorts_seen: set[M6_1_2CohortKind],
+) -> list[M6_1_3CellMeasurement]:
+    """Run one phase-1 sweep iteration (all cell × cohort pairs).
+
+    Returns the per-(cell, cohort) measurements for this run.
+    ``cohorts_seen`` is mutated as cohorts run (the caller uses it to
+    build ``cohort_set`` in the artifact). Preemption / connection
+    errors are NOT caught here — they propagate to the multi-run loop
+    in :func:`run_m6_1_3_sweep`.
+    """
+    measurements: list[M6_1_3CellMeasurement] = []
+    total_pairs = len(pairs)
+    for idx, (path, c, cohort) in enumerate(pairs, start=1):
+        cell = M6_1Cell(path=path, hidden_size=4096, concurrency=c)  # type: ignore[arg-type]
+
+        if config.warmup_n > 0:
+            await asyncio.gather(*(driver(cohort, cell, 0) for _ in range(config.warmup_n)))
+
+        sem = asyncio.Semaphore(c)
+
+        async def _one(
+            i: int,
+            cohort_ref: M6_1_2CohortKind = cohort,
+            cell_ref: M6_1Cell = cell,
+            sem_ref: asyncio.Semaphore = sem,
+        ) -> RPCResult:
+            async with sem_ref:
+                # Seed offset by run_idx × measurement_n so each run sees
+                # a non-overlapping seed range — preserves M6.1.2's per-RPC
+                # determinism while keeping per-run RPC content fresh.
+                seed = config.base_seed + run_idx * config.measurement_n + i
+                return await driver(cohort_ref, cell_ref, seed)
+
+        results = await asyncio.gather(*(_one(i) for i in range(config.measurement_n)))
+        summary = _summarize_cell(
+            path, c, cohort, list(results), thresholds=config.classifier_thresholds
+        )
+        measurements.append(summary)
+        cohorts_seen.add(cohort)
+
+        n_succ = summary.n_successes
+        n_att = summary.n_attempts
+        failure_tail = ""
+        if n_succ < n_att and summary.top_failure_reasons:
+            top_reason, top_count = next(iter(summary.top_failure_reasons.items()))
+            failure_tail = f" — top failure ({top_count}/{n_att - n_succ}): {top_reason}"
+        print(
+            f"{_stderr_ts()} [run {run_idx + 1}][{idx}/{total_pairs}] "
+            f"{path} × c={c} / {cohort} — {n_succ}/{n_att} succ{failure_tail}",
+            file=sys.stderr,
+            flush=True,
+        )
+    return measurements
 
 
 # --- Sweep orchestration ----------------------------------------------------
@@ -455,104 +560,180 @@ async def run_m6_1_3_sweep(
             for cohort in M6_1_2_COHORTS
         }
 
-    # Step 3: per-cell, per-cohort warmup + measurement (matches M6.1.2's
-    # semaphore-bounded measurement pattern + smoke/warmup seed=0 convention).
-    measurements: list[M6_1_3CellMeasurement] = []
+    # Step 3: multi-run loop per FR-022. Each run independently warms up
+    # + measures each (cell, cohort) pair; per-run measurements accumulate
+    # into ``phase_1_runs`` for the post-loop variance compute.
+    phase_1_runs: list[list[M6_1_3CellMeasurement]] = []
     cohorts_actually_run: set[M6_1_2CohortKind] = set()
     pairs = _iter_cells_cohorts()
     total_pairs = len(pairs)
+    n_runs_planned = max(1, config.diagnose_repeat)
     print(
-        f"{_stderr_ts()} M6.1.3 {config.sweep_mode} sweep: {total_pairs} (cell, cohort) "
-        f"pairs × n={config.measurement_n}, region={config.modal_region}, "
-        f"model={config.model_identifier}, repeat={config.diagnose_repeat}, "
+        f"{_stderr_ts()} M6.1.3 {config.sweep_mode} sweep: {n_runs_planned} run(s) × "
+        f"{total_pairs} (cell, cohort) pairs × n={config.measurement_n}, "
+        f"region={config.modal_region}, model={config.model_identifier}, "
+        f"repeat={config.diagnose_repeat}, "
         f"symmetric_prompts={config.symmetric_prompts}",
         file=sys.stderr,
         flush=True,
     )
 
-    for idx, (path, c, cohort) in enumerate(pairs, start=1):
-        cell = M6_1Cell(path=path, hidden_size=4096, concurrency=c)  # type: ignore[arg-type]
-
-        if config.warmup_n > 0:
-            await asyncio.gather(*(driver(cohort, cell, 0) for _ in range(config.warmup_n)))
-
-        sem = asyncio.Semaphore(c)
-
-        async def _one(
-            i: int,
-            cohort_ref: M6_1_2CohortKind = cohort,
-            cell_ref: M6_1Cell = cell,
-            sem_ref: asyncio.Semaphore = sem,
-        ) -> RPCResult:
-            async with sem_ref:
-                return await driver(cohort_ref, cell_ref, config.base_seed + i)
-
-        results = await asyncio.gather(*(_one(i) for i in range(config.measurement_n)))
-        summary = _summarize_cell(
-            path, c, cohort, list(results), thresholds=config.classifier_thresholds
-        )
-        measurements.append(summary)
-        cohorts_actually_run.add(cohort)
-
-        n_succ = summary.n_successes
-        n_att = summary.n_attempts
-        failure_tail = ""
-        if n_succ < n_att and summary.top_failure_reasons:
-            top_reason, top_count = next(iter(summary.top_failure_reasons.items()))
-            failure_tail = f" — top failure ({top_count}/{n_att - n_succ}): {top_reason}"
-        print(
-            f"{_stderr_ts()} [{idx}/{total_pairs}] {path} × c={c} / {cohort} "
-            f"— {n_succ}/{n_att} succ{failure_tail}",
-            file=sys.stderr,
-            flush=True,
-        )
+    preemption_count = 0
+    multi_run_incomplete = False
+    for run_idx in range(n_runs_planned):
+        if n_runs_planned > 1:
+            print(
+                f"{_stderr_ts()} M6.1.3 run {run_idx + 1}/{n_runs_planned} starting",
+                file=sys.stderr,
+                flush=True,
+            )
+        try:
+            run_measurements = await _run_phase1_once(
+                config=config,
+                driver=driver,
+                pairs=pairs,
+                run_idx=run_idx,
+                cohorts_seen=cohorts_actually_run,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # FR-028 + R-5: detect Modal tunnel preemption (connection errors
+            # against *.modal.run / *.modal.host URLs). The actual URL
+            # refresh is operator-driven (re-deploy + re-run the sweep);
+            # the orchestrator's responsibility is to count, log, and abort
+            # after the pinned threshold of 2 preemptions.
+            if _is_modal_preemption(exc):
+                preemption_count += 1
+                print(
+                    f"{_stderr_ts()} [FR-028] Modal tunnel preemption detected "
+                    f"on run {run_idx + 1}/{n_runs_planned} (count={preemption_count}/"
+                    f"{_MAX_PREEMPTIONS}): {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if preemption_count > _MAX_PREEMPTIONS:
+                    print(
+                        f"{_stderr_ts()} [FR-028] preemption count exceeded "
+                        f"threshold ({_MAX_PREEMPTIONS}); aborting remaining "
+                        "runs — multi-run incomplete",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    multi_run_incomplete = True
+                    break
+                continue
+            # Non-preemption exception: re-raise so the caller maps it to
+            # the appropriate exit code.
+            raise
+        phase_1_runs.append(run_measurements)
 
     run_completed_at = _now_iso_utc()
     elapsed_min = (time.monotonic() - started_mono) / 60.0
     print(
-        f"{_stderr_ts()} M6.1.3 {config.sweep_mode} sweep complete in {elapsed_min:.1f} min",
+        f"{_stderr_ts()} M6.1.3 {config.sweep_mode} sweep complete in {elapsed_min:.1f} min "
+        f"({len(phase_1_runs)}/{n_runs_planned} runs)",
         file=sys.stderr,
         flush=True,
     )
 
-    # Step 4: classifier — per cell, with the 7-bucket extension.
+    # Representative measurements: use the last successful run for the
+    # canonical per-cell view. For multi-run sweeps the variance signal
+    # is the headline output; the per-cell timings are a snapshot.
+    measurements: list[M6_1_3CellMeasurement] = phase_1_runs[-1] if phase_1_runs else []
+
+    # Step 4a: between-run variance per FR-024 (computed across all
+    # successful runs in phase_1_runs). The reporter suppresses the
+    # variance section on < 3 runs per FR-025; the compute itself still
+    # runs so other consumers can inspect partial data programmatically.
+    variance_section_suppressed = not should_render_variance_section(phase_1_runs)
+    between_run_variance = compute_between_run_variance(phase_1_runs) if phase_1_runs else {}
+
+    # Step 4b: classifier — per cell, with the 7-bucket extension + the
+    # FR-026 outer-override gate (between_run_variance + ci_halfwidth
+    # threaded through). The classifier uses the LAST-run per-cohort
+    # data as the representative inner-label input; the variance comes
+    # from the multi-run pool.
     classifications: dict[str, str] = {}
+    classifier_notes: list[str] = []
     cell_signatures_raw: set[tuple[str, int]] = {(m.path, m.concurrency) for m in measurements}
     cell_signatures: list[tuple[M6_1Path, int]] = [
         (cast(M6_1Path, p), c) for p, c in sorted(cell_signatures_raw)
     ]
     for path, c in cell_signatures:
         per_cohort = aggregate_per_cohort_for_cell(measurements, path, c)
+        cid = _cell_id(path, c)
         if not per_cohort:
-            # No cohort had successful instrumented samples → no verdict possible.
-            classifications[_cell_id(path, c)] = "inconclusive"
+            classifications[cid] = "inconclusive"
             continue
         cell = M6_1Cell(path=path, hidden_size=4096, concurrency=c)  # type: ignore[arg-type]
+
+        # Multi-run signal (variance suppressed on < 3 runs → outer-override
+        # gate cannot fire either; classifier receives ``None`` variance).
+        cell_variance_per_cohort = (
+            between_run_variance.get(cid, {}) if not variance_section_suppressed else {}
+        )
+        cell_variance = (
+            reduce_cell_variance(cell_variance_per_cohort) if cell_variance_per_cohort else None
+        )
+
+        # Within-run CI half-width: max across cohorts (most-conservative
+        # gate). Computed from the representative measurements.
+        per_cohort_cis = {
+            cohort_key: float(getattr(mpt, "engine_ttft_ms_ci_half_width", 0.0))
+            for cohort_key, mpt in per_cohort.items()
+        }
+        ci_halfwidth_ms = compute_cell_ci_halfwidth_ms(per_cohort_cis)
+
         label = classify_m6_1_3(
             cell,
             per_cohort,
+            between_run_variance=cell_variance,
+            ci_halfwidth_ms=ci_halfwidth_ms,
             thresholds=config.classifier_thresholds,
         )
-        classifications[_cell_id(path, c)] = label
+        classifications[cid] = label
 
-    # Step 4b: per-cohort prompt-content audit (FR-016 + FR-016a + round-1 Q5).
-    # Build the flat audit-sample list from the per-cell measurements; the
-    # sweep is single-run for US1/US2 (run_idx is always 0). US3's multi-run
-    # extension will accumulate samples across run_idx values before calling
-    # compute_pooled_verdict.
-    audit_flat: list[M6_1_3AuditSample] = []
-    for m in measurements:
-        cell_id_for_m = _cell_id(m.path, m.concurrency)
-        for length, prompt_hash in m.audit_samples:
-            audit_flat.append(
-                M6_1_3AuditSample(
-                    run_idx=0,
-                    cell_id=cell_id_for_m,
-                    cohort=m.cohort,
-                    tokenized_prompt_length=length,
-                    tokenized_prompt_hash=prompt_hash,
+        # FR-027 cohort-unhealthy note: surface a classifier note when
+        # any cohort dropped out of variance compute (mean_of_means_ms is
+        # None) so the operator sees the partial-data signal in the
+        # published artifact.
+        for cohort_name, variance_cell in cell_variance_per_cohort.items():
+            if variance_cell.mean_of_means_ms is None:
+                classifier_notes.append(
+                    f"cohort_unhealthy: cell {cid} cohort {cohort_name} "
+                    f"contributed only {variance_cell.n_runs} successful "
+                    f"run(s) of {len(phase_1_runs)} planned (FR-027)"
                 )
-            )
+
+    if multi_run_incomplete:
+        classifier_notes.append(
+            f"multi-run incomplete: {len(phase_1_runs)} of {n_runs_planned} "
+            "runs collected before preemption-threshold abort (FR-028)"
+        )
+
+    # Step 4c: Phase B trigger verdict per FR-043 / FR-044 / round-2 Q3.
+    phase_b_trigger = compute_phase_b_trigger(
+        classifications,
+        variance_section_suppressed=variance_section_suppressed,
+    )
+
+    # Step 4d: per-cohort prompt-content audit (FR-016 + FR-016a + round-1 Q5).
+    # Build the flat audit-sample list across ALL runs; the per-run grouping
+    # uses run_idx so the FR-016a conditional appendix can compare per-run
+    # verdicts against the pooled verdict.
+    audit_flat: list[M6_1_3AuditSample] = []
+    for run_idx, run_measurements in enumerate(phase_1_runs):
+        for m in run_measurements:
+            cell_id_for_m = _cell_id(m.path, m.concurrency)
+            for length, prompt_hash in m.audit_samples:
+                audit_flat.append(
+                    M6_1_3AuditSample(
+                        run_idx=run_idx,
+                        cell_id=cell_id_for_m,
+                        cohort=m.cohort,
+                        tokenized_prompt_length=length,
+                        tokenized_prompt_hash=prompt_hash,
+                    )
+                )
     audit_pooled = compute_pooled_verdict(audit_flat) if audit_flat else None
     audit_per_run = compute_per_run_verdicts(audit_flat) if audit_flat else None
 
@@ -587,12 +768,15 @@ async def run_m6_1_3_sweep(
         cohort_omissions=omissions,
         measurements=measurements,
         classifications=classifications,
-        classifier_notes=[],
-        # US2 wires audit; US3 T036/T037 wire between_run_variance + phase_b_trigger.
+        classifier_notes=classifier_notes,
         audit=audit_pooled,
         audit_per_run=audit_per_run,
-        between_run_variance=None,
-        phase_b_trigger=None,
+        # US3: variance + Phase B trigger wired. The reporter suppresses
+        # the variance section on < 3 runs per FR-025; the data is still
+        # present on the artifact so other consumers can inspect it.
+        between_run_variance=between_run_variance if between_run_variance else None,
+        phase_b_trigger=phase_b_trigger,
+        phase_1_runs=phase_1_runs,
     )
 
 

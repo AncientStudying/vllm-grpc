@@ -360,3 +360,124 @@ def test_drift_not_reproduced_returns_inconclusive() -> None:
     )
     result = classify_m6_1_3(None, per_cohort, thresholds=DEFAULT_THRESHOLDS)
     assert result == "inconclusive"
+
+
+# --- US3 T033: outer-override tests (FR-026 + round-2 Q3 unified threshold) -
+
+
+def test_outer_override_inconclusive_high_variance() -> None:
+    """FR-026 + round-2 Q3: between-run variance dominates attribution →
+    outer label ``inconclusive_high_variance`` overrides the inner label,
+    which is rendered as a parenthetical.
+
+    Setup: clear ``engine_compute_variation`` inner verdict + high
+    between-run variance (stddev_of_means_ms = 8.0, ci_halfwidth_ms =
+    4.0, threshold = 1.0 → 8 > 1 × 4 fires the override).
+    """
+    from vllm_grpc_bench.m6_1_3_types import M6_1_3BetweenRunVarianceCell
+
+    per_cohort = _build_per_cohort(
+        seg_prefill_means=_two_cohort_means(_share_to_spread(0.6), base=10.0),
+    )
+    variance = M6_1_3BetweenRunVarianceCell(
+        mean_of_means_ms=42.0,
+        stddev_of_means_ms=8.0,
+        n_runs=5,
+    )
+    result = classify_m6_1_3(
+        None,
+        per_cohort,
+        between_run_variance=variance,
+        ci_halfwidth_ms=4.0,
+        thresholds=DEFAULT_THRESHOLDS,
+    )
+    assert result == "inconclusive_high_variance (engine_compute_variation)"
+
+
+def test_outer_override_compound_inner() -> None:
+    """Outer override wraps a compound inner label correctly:
+    ``inconclusive_high_variance (multi_factor_engine_compute_proxy_egress)``."""
+    from vllm_grpc_bench.m6_1_3_types import M6_1_3BetweenRunVarianceCell
+
+    per_cohort = _build_per_cohort(
+        seg_egress_means=_two_cohort_means(_share_to_spread(0.45)),
+        seg_prefill_means=_two_cohort_means(_share_to_spread(0.43), base=10.0),
+    )
+    variance = M6_1_3BetweenRunVarianceCell(
+        mean_of_means_ms=50.0,
+        stddev_of_means_ms=10.0,
+        n_runs=5,
+    )
+    result = classify_m6_1_3(
+        None,
+        per_cohort,
+        between_run_variance=variance,
+        ci_halfwidth_ms=3.0,
+        thresholds=DEFAULT_THRESHOLDS,
+    )
+    assert result == "inconclusive_high_variance (multi_factor_engine_compute_proxy_egress)"
+
+
+def test_outer_override_absent_on_normal_variance() -> None:
+    """FR-026: when the between-run variance is well under the threshold,
+    the outer override does NOT fire — the inner label stands alone."""
+    from vllm_grpc_bench.m6_1_3_types import M6_1_3BetweenRunVarianceCell
+
+    per_cohort = _build_per_cohort(
+        seg_prefill_means=_two_cohort_means(_share_to_spread(0.6), base=10.0),
+    )
+    variance = M6_1_3BetweenRunVarianceCell(
+        mean_of_means_ms=42.0,
+        stddev_of_means_ms=2.0,  # well under threshold × ci_halfwidth (1.0 × 4.0)
+        n_runs=5,
+    )
+    result = classify_m6_1_3(
+        None,
+        per_cohort,
+        between_run_variance=variance,
+        ci_halfwidth_ms=4.0,
+        thresholds=DEFAULT_THRESHOLDS,
+    )
+    assert result == "engine_compute_variation"
+    assert "inconclusive_high_variance" not in result
+
+
+def test_outer_override_absent_when_variance_unavailable() -> None:
+    """When ``between_run_variance`` is None (e.g., single-run validate
+    sweep) the outer override doesn't fire even with a high-variance
+    classifier output — there's no signal to act on."""
+    per_cohort = _build_per_cohort(
+        seg_prefill_means=_two_cohort_means(_share_to_spread(0.6), base=10.0),
+    )
+    result = classify_m6_1_3(
+        None,
+        per_cohort,
+        between_run_variance=None,
+        ci_halfwidth_ms=4.0,
+        thresholds=DEFAULT_THRESHOLDS,
+    )
+    assert result == "engine_compute_variation"
+    assert "inconclusive_high_variance" not in result
+
+
+def test_outer_override_absent_when_ci_halfwidth_is_zero() -> None:
+    """Degenerate cell with zero within-run CI half-width → no
+    meaningful comparison; the override doesn't fire."""
+    from vllm_grpc_bench.m6_1_3_types import M6_1_3BetweenRunVarianceCell
+
+    per_cohort = _build_per_cohort(
+        seg_prefill_means=_two_cohort_means(_share_to_spread(0.6), base=10.0),
+    )
+    variance = M6_1_3BetweenRunVarianceCell(
+        mean_of_means_ms=42.0,
+        stddev_of_means_ms=8.0,
+        n_runs=5,
+    )
+    result = classify_m6_1_3(
+        None,
+        per_cohort,
+        between_run_variance=variance,
+        ci_halfwidth_ms=0.0,
+        thresholds=DEFAULT_THRESHOLDS,
+    )
+    assert result == "engine_compute_variation"

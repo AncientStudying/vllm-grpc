@@ -246,14 +246,23 @@ def classify_m6_1_3(
         else:
             inner_label = make_compound_label(top_id, runner_id)
 
-    # Step 6: outer override (US3 T035 wires the actual gate; US1 stub).
-    # TODO(US3 T035): when between_run_variance is not None and
-    # ci_halfwidth_ms is not None, call
-    # m6_1_3_variance.should_fire_inconclusive_high_variance(...) and, when
-    # True, return f"inconclusive_high_variance ({inner_label})". For US1
-    # the parameter is accepted but unused so the function signature
-    # stabilises ahead of US3 wiring.
-    _ = between_run_variance, ci_halfwidth_ms  # silence "unused" until US3.
+    # Step 6: outer override (FR-026 + FR-043 + round-2 Q3 unified threshold).
+    # When the multi-run variance signal exceeds threshold × within-run
+    # CI half-width, the cell's headline verdict becomes
+    # ``"inconclusive_high_variance (<inner>)"``. The inner label is
+    # preserved as a parenthetical so the reader sees both signals.
+    if between_run_variance is not None and ci_halfwidth_ms is not None and ci_halfwidth_ms > 0:
+        # Local import: ``m6_1_3_variance`` imports M6_1_3BetweenRunVarianceCell
+        # from m6_1_3_types, not from this classifier module, so there's no
+        # circular dependency at module load time.
+        from vllm_grpc_bench.m6_1_3_variance import should_fire_inconclusive_high_variance
+
+        if should_fire_inconclusive_high_variance(
+            between_run_variance,
+            cell_ci_halfwidth_ms=ci_halfwidth_ms,
+            threshold=thresholds.high_variance_ratio_threshold,
+        ):
+            return f"inconclusive_high_variance ({inner_label})"
 
     return inner_label
 
