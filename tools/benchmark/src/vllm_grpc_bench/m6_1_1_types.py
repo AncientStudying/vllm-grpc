@@ -242,6 +242,22 @@ class PerSegmentAggregate:
     seg_queue_ms_ci_half_width: float | None = None
     seg_prefill_ms_mean: float | None = None
     seg_prefill_ms_ci_half_width: float | None = None
+    # M6.1.3 proxy-edge segments (FR-005). ``None`` when the upstream RPC didn't
+    # populate the M6.1.3 proxy-edge wire keys (pre-M6.1.3 vintage, unary RPC
+    # rows per FR-003 streaming-only, or every per-RPC sample triggered the
+    # FR-006 negative-value clock-anomaly assertion).
+    seg_ingress_ms_mean: float | None = None
+    seg_ingress_ms_ci_half_width: float | None = None
+    seg_egress_ms_mean: float | None = None
+    seg_egress_ms_ci_half_width: float | None = None
+    # M6.1.3 clock-anomaly signal (FR-006). ``clock_anomaly_fraction`` is the
+    # fraction of per-RPC samples in this cell that fired the FR-006
+    # negative-value assertion; ``clock_anomaly_warning`` is True when that
+    # fraction exceeds the configurable cell-level threshold (default 0.5%
+    # per SC-013). The classifier downgrades the cell verdict to
+    # ``inconclusive`` when ``clock_anomaly_warning`` is True.
+    clock_anomaly_fraction: float = 0.0
+    clock_anomaly_warning: bool = False
 
 
 @dataclass(frozen=True)

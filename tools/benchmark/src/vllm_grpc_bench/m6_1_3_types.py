@@ -297,45 +297,77 @@ class M6_1_3PhaseBTriggerVerdict:
     variance_section_suppressed: bool
 
 
-# --- Top-level artifact entity (strict-superset of M6.1.2 + M6.1.1) ---------
+# Top-level artifact entity is defined in :mod:`m6_1_3_reporter` as a
+# concrete dataclass (``M6_1_3SweepArtifact``) — kept there rather than in
+# this types module so the orchestrator + reporter can pass a single
+# concrete object through the publish path. The wire-level JSON shape is
+# documented in ``specs/026-m6-1-3-attribution-closure/contracts/
+# artifact-schema.md`` and exercised by ``test_m6_1_3_artifact_schema.py``.
+
+
+# --- Classifier thresholds (per-rule dominance gates + tie-breaking margin) ---
 
 
 @dataclass(frozen=True)
-class M6_1_3SweepArtifact:
-    """Top-level M6.1.3 artifact. Strict-superset of the M6.1.2 / M6.1.1
-    artifact shapes per FR-010 + round-3 Q1.
+class M6_1_3ClassifierThresholds:
+    """Tunable thresholds for the 7-bucket classifier (FR-008 + FR-008a +
+    FR-006 + FR-026).
 
-    Pre-M6.1.3 readers parse this artifact, ignoring the
-    ``between_run_variance`` top-level field. ``schema_version`` stays at
-    ``"m6_1_1.v1"`` (the prefix is naming, not versioning, per FR-010
-    round-3 Q1).
+    Per FR-008a, the exact per-rule dominance thresholds are
+    ``/speckit-plan`` deliverables; these defaults follow the spec's
+    suggested starting points (~40% share for the 7-bucket rules per FR-008's
+    "spike-suggested" anchor; 5pp compound margin per FR-008a + R-8; 0.5%
+    clock-anomaly cell-level downgrade per SC-013; 1.0× high-variance
+    threshold per round-2 Q3's unified-threshold pin).
+
+    The classifier reads these thresholds at decision time; the orchestrator
+    passes a single shared instance per sweep so a future tuning round can
+    swap defaults via ``--m6_1_3`` modifier flags without rebuilding the
+    decision tree.
     """
 
-    schema_version: Literal["m6_1_1.v1"]
-    dispatch_mode: Literal["concurrent"]
-    run_id: str
-    run_started_at: str
-    run_completed_at: str
-    run_meta: dict[str, object]
-    phase_1_classifications: dict[str, object]
-    phase_1_runs: list[dict[str, object]]
-    multi_point_timings: dict[str, object]
-    phase_2_outcome: dict[str, object] | None
-    phase_2_choice: str | None
-    chat_stream_baseline_post_symmetrisation: dict[str, object]
-    embed_baseline_post_symmetrisation: dict[str, object]
-    embed_regression_check: dict[str, object] | None
-    m6_1_baseline_pointer: str
-    methodology_supersedence: dict[str, object]
-    classifier_notes: list[str]
-    network_paths: dict[str, object]
-    cohort_set: list[str]
-    cohort_omissions: dict[str, str] | None
-    # M6.1.3 NEW top-level field per FR-010 strict-superset (FR-024 + FR-025).
-    between_run_variance: M6_1_3BetweenRunVariance | None
+    # Per-rule dominance gates. A candidate label fires only when its
+    # driving segment's share of total ``engine_ttft_ms`` spread is at or
+    # above the corresponding threshold.
+    channel_share_min: float = 0.40  # seg_ab_ms → channel_dependent_batching
+    queue_share_min: float = 0.40  # seg_queue_ms → queue_dependent_batching
+    prefill_share_min: float = 0.40  # seg_prefill_ms → engine_compute_variation
+    ingress_share_min: float = 0.40  # seg_ingress_ms → proxy_ingress_dominated
+    egress_share_min: float = 0.40  # seg_egress_ms → proxy_egress_dominated
+
+    # Compound-label margin (FR-008a + R-8). When two or more candidates
+    # clear their per-rule gates and the gap between the top and runner-up
+    # is below this margin, the classifier emits a compound label
+    # ``multi_factor_<a>_<b>`` with alphabetical ordering.
+    compound_margin: float = 0.05  # 5 percentage points
+
+    # Clock-anomaly cell-level downgrade gate (FR-006 + SC-013). If the
+    # fraction of per-RPC rows in the cell that fired the FR-006 negative-
+    # value clock-anomaly assertion exceeds this threshold, the classifier
+    # downgrades the cell verdict to ``inconclusive`` regardless of
+    # segment-share signal.
+    clock_anomaly_max_fraction: float = 0.005  # 0.5%
+
+    # Drift-not-reproduced short-circuit (inherited from M6.1.1). If the
+    # per-cohort spread of ``engine_ttft_ms`` is below this fraction of the
+    # cross-cohort mean, the classifier returns ``inconclusive`` — there's
+    # no meaningful spread to attribute. M6.1.3 does not emit a separate
+    # ``drift_not_reproduced`` label (that's an M6.1.1 vocabulary item);
+    # the M6.1.3 classifier folds the case into ``inconclusive``.
+    drift_not_reproduced_threshold: float = 0.05  # 5% spread / mean
+
+    # Outer-override high-variance threshold (FR-026 + FR-043 + round-2 Q3).
+    # The ``inconclusive_high_variance`` outer label fires when the
+    # between-run ``stddev_of_means_ms`` exceeds this ratio times the
+    # within-run CI half-width. Wired by US3 T035.
+    high_variance_ratio_threshold: float = 1.0
+
+
+DEFAULT_THRESHOLDS = M6_1_3ClassifierThresholds()
 
 
 __all__ = [
+    "DEFAULT_THRESHOLDS",
     # Re-exports from m6_1_2_types (per FR-032 inheritance)
     "M6_1_2_COHORTS",
     "M6_1_2CloudProvider",
@@ -350,6 +382,7 @@ __all__ = [
     "M6_1_3AbbreviatedIdentifier",
     "M6_1_3AuditVerdictLine",
     "M6_1_3BaseLabel",
+    "M6_1_3ClassifierThresholds",
     "M6_1_3CompoundLabel",
     "M6_1_3OuterLabel",
     "M6_1_3PrimaryLabel",
@@ -363,7 +396,6 @@ __all__ = [
     "M6_1_3PerSegmentAggregateExtension",
     "M6_1_3PerSegmentDeltaExtension",
     "M6_1_3PhaseBTriggerVerdict",
-    "M6_1_3SweepArtifact",
     "M6_1_3TimingCheckpointExtension",
     "PerSegmentStat",
 ]
