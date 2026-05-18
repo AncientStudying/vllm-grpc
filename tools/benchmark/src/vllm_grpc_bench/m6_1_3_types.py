@@ -241,6 +241,25 @@ all runs in the sweep. The H1 / H2 / rejection criteria are documented in
 
 
 @dataclass(frozen=True)
+class M6_1_3AuditSample:
+    """Per-RPC audit sample input to :func:`m6_1_3_audit.compute_pooled_verdict`
+    and :func:`m6_1_3_audit.compute_per_run_verdicts`.
+
+    The sweep harness builds one sample per successful RPC whose timing
+    payload populated the M6.1.3 audit fields (FR-013 + FR-014). The
+    aggregator pools samples across cells / cohorts / runs to produce the
+    per-cell verdicts; the per-run grouping uses ``run_idx`` to bucket
+    samples for the FR-016a conditional appendix.
+    """
+
+    run_idx: int  # 0-indexed position in phase_1_runs
+    cell_id: str  # e.g. "chat_stream_c1", "embed_c4"
+    cohort: M6_1_2CohortKind
+    tokenized_prompt_length: int
+    tokenized_prompt_hash: str
+
+
+@dataclass(frozen=True)
 class M6_1_3PerCohortAuditDistribution:
     """Per-cohort distribution of audit fields for a single cell, pooled
     across all runs in ``phase_1_runs[]`` (FR-016 + round-1 Q5).
@@ -380,6 +399,7 @@ __all__ = [
     "M6_1_3SweepMode",
     # M6.1.3 classifier vocabulary
     "M6_1_3AbbreviatedIdentifier",
+    "M6_1_3AuditSample",
     "M6_1_3AuditVerdictLine",
     "M6_1_3BaseLabel",
     "M6_1_3ClassifierThresholds",

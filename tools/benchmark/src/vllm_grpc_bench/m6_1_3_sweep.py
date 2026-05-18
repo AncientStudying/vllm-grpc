@@ -39,7 +39,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from vllm_grpc_bench.m6_1_1_types import PerSegmentAggregate
 from vllm_grpc_bench.m6_1_2_network_probe import emit_probe_warnings, run_topology_probe
@@ -53,6 +53,10 @@ from vllm_grpc_bench.m6_1_2_types import (
     build_cohort_set_and_omissions,
     cohorts_at_concurrency,
 )
+from vllm_grpc_bench.m6_1_3_audit import (
+    compute_per_run_verdicts,
+    compute_pooled_verdict,
+)
 from vllm_grpc_bench.m6_1_3_classifier import classify_m6_1_3
 from vllm_grpc_bench.m6_1_3_reporter import (
     M6_1_3CellMeasurement,
@@ -65,6 +69,7 @@ from vllm_grpc_bench.m6_1_3_reporter import (
 )
 from vllm_grpc_bench.m6_1_3_types import (
     DEFAULT_THRESHOLDS,
+    M6_1_3AuditSample,
     M6_1_3ClassifierThresholds,
     M6_1_3SweepMode,
 )
@@ -353,6 +358,20 @@ def _summarize_cell(
 
     per_segment = _aggregate_per_segment(results, thresholds=thresholds)
 
+    # M6.1.3 — extract per-RPC audit samples (FR-013 + FR-014 + R-9). The
+    # samples are wire-canonical-sourced: they come directly from the
+    # extractor-populated timing payload, NOT a parallel emission path.
+    # Sidecar / audit-table renderings derive from this same list.
+    audit_samples: list[tuple[int, str]] = []
+    for r in results:
+        if not r.success or r.m6_1_1_timing_payload is None:
+            continue
+        length_raw = r.m6_1_1_timing_payload.get("tokenized_prompt_length")
+        hash_raw = r.m6_1_1_timing_payload.get("tokenized_prompt_hash")
+        if length_raw is None or hash_raw is None:
+            continue
+        audit_samples.append((int(length_raw), str(hash_raw)))
+
     return M6_1_3CellMeasurement(
         path=path,
         concurrency=concurrency,
@@ -363,6 +382,7 @@ def _summarize_cell(
         engine_ttft_ms_mean=statistics.fmean(ttfts) if ttfts else None,
         top_failure_reasons=top_failures,
         per_segment=per_segment,
+        audit_samples=audit_samples,
     )
 
 
@@ -497,11 +517,11 @@ async def run_m6_1_3_sweep(
 
     # Step 4: classifier — per cell, with the 7-bucket extension.
     classifications: dict[str, str] = {}
-    cell_signatures: set[tuple[M6_1Path, int]] = {
-        (m.path, m.concurrency)
-        for m in measurements  # type: ignore[misc]
-    }
-    for path, c in sorted(cell_signatures):
+    cell_signatures_raw: set[tuple[str, int]] = {(m.path, m.concurrency) for m in measurements}
+    cell_signatures: list[tuple[M6_1Path, int]] = [
+        (cast(M6_1Path, p), c) for p, c in sorted(cell_signatures_raw)
+    ]
+    for path, c in cell_signatures:
         per_cohort = aggregate_per_cohort_for_cell(measurements, path, c)
         if not per_cohort:
             # No cohort had successful instrumented samples → no verdict possible.
@@ -514,6 +534,27 @@ async def run_m6_1_3_sweep(
             thresholds=config.classifier_thresholds,
         )
         classifications[_cell_id(path, c)] = label
+
+    # Step 4b: per-cohort prompt-content audit (FR-016 + FR-016a + round-1 Q5).
+    # Build the flat audit-sample list from the per-cell measurements; the
+    # sweep is single-run for US1/US2 (run_idx is always 0). US3's multi-run
+    # extension will accumulate samples across run_idx values before calling
+    # compute_pooled_verdict.
+    audit_flat: list[M6_1_3AuditSample] = []
+    for m in measurements:
+        cell_id_for_m = _cell_id(m.path, m.concurrency)
+        for length, prompt_hash in m.audit_samples:
+            audit_flat.append(
+                M6_1_3AuditSample(
+                    run_idx=0,
+                    cell_id=cell_id_for_m,
+                    cohort=m.cohort,
+                    tokenized_prompt_length=length,
+                    tokenized_prompt_hash=prompt_hash,
+                )
+            )
+    audit_pooled = compute_pooled_verdict(audit_flat) if audit_flat else None
+    audit_per_run = compute_per_run_verdicts(audit_flat) if audit_flat else None
 
     # FR-016 invariant: cohorts_run ∪ omissions == canonical universe.
     intentional_omissions = _compute_omissions(cohorts_actually_run)
@@ -547,9 +588,9 @@ async def run_m6_1_3_sweep(
         measurements=measurements,
         classifications=classifications,
         classifier_notes=[],
-        # US2 T030 wires audit; US3 T036/T037 wire between_run_variance + phase_b_trigger.
-        audit=None,
-        audit_per_run=None,
+        # US2 wires audit; US3 T036/T037 wire between_run_variance + phase_b_trigger.
+        audit=audit_pooled,
+        audit_per_run=audit_per_run,
         between_run_variance=None,
         phase_b_trigger=None,
     )

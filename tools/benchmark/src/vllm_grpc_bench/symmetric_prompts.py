@@ -349,3 +349,63 @@ def assert_symmetry(
                         observed_a=head_digest,
                         observed_b=digest,
                     )
+
+
+# --- M6.1.3 — cohort-independent prompt assignment (FR-019 + round-2 Q4) ----
+
+
+def assign_symmetric_prompt(
+    iter_idx: int,
+    cohort: str,
+    corpus: list[str],
+) -> str:
+    """Return the prompt for ``iter_idx`` regardless of ``cohort``.
+
+    M6.1.3 FR-019 + round-2 Q4: when ``--m6_1_3-symmetric-prompts`` is set,
+    every cohort sees the SAME prompt at the SAME iteration index. The
+    deterministic assignment is ``corpus[iter_idx % len(corpus)]``;
+    ``cohort`` is accepted but intentionally ignored so the function
+    signature documents the symmetry guarantee at the call site.
+
+    Cross-milestone shared helper: also imported by M5.2 / M6.2 / M7 / M8
+    sweeps via this module's unprefixed name per R-6.
+    """
+    del cohort  # Symmetric-prompts mode: prompt is cohort-invariant by design.
+    if not corpus:
+        raise ValueError("assign_symmetric_prompt: corpus must be non-empty")
+    return corpus[iter_idx % len(corpus)]
+
+
+def validate_symmetric_invariant(
+    per_cohort_distributions: dict[str, dict[str, int]],
+) -> None:
+    """Assert per-cohort distributions are byte-identical (FR-020).
+
+    Input shape: ``{cohort_name: {prompt_or_hash: count}}``. The function
+    raises :class:`SymmetryAssertionFailed` (tier ``b``, field
+    ``symmetric_prompt_distribution``) when any two cohorts have divergent
+    distributions. Returns ``None`` on success.
+
+    Called by the M6.1.3 sweep after a ``--m6_1_3-symmetric-prompts`` run
+    to verify the runtime invariant held (each cohort actually saw the
+    same prompt set, no accidental per-cohort drift).
+    """
+    if len(per_cohort_distributions) < 2:
+        # Single cohort (or empty): nothing to compare against.
+        return
+    cohorts = sorted(per_cohort_distributions.keys())
+    head_cohort = cohorts[0]
+    head_dist = per_cohort_distributions[head_cohort]
+    for cohort in cohorts[1:]:
+        observed = per_cohort_distributions[cohort]
+        if observed != head_dist:
+            head_summary = json.dumps(head_dist, sort_keys=True, separators=(",", ":"))
+            observed_summary = json.dumps(observed, sort_keys=True, separators=(",", ":"))
+            raise SymmetryAssertionFailed(
+                tier="b",
+                field="symmetric_prompt_distribution",
+                cohort_a=head_cohort,
+                cohort_b=cohort,
+                observed_a=head_summary,
+                observed_b=observed_summary,
+            )

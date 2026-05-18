@@ -84,11 +84,19 @@ class M6_1_3CellMeasurement:
     Extends M6.1.2's M6_1_2CellMeasurement with a per-segment aggregate
     block (mirrors M6.1.1's MultiPointTimings shape) so the M6.1.3 reporter
     can render seg_ingress_ms / seg_egress_ms alongside the inherited
-    seg_ab / seg_queue / seg_prefill columns.
+    seg_ab / seg_queue / seg_prefill columns. M6.1.3 also persists the
+    per-RPC audit samples that feed
+    :func:`m6_1_3_audit.compute_pooled_verdict` (FR-016 + round-1 Q5).
 
     ``per_segment`` is ``None`` when no successful RPC in this (cell,
     cohort) populated the M6.1.1-vintage timing payload (legacy clients,
     or every RPC failed before the wire-emission point).
+
+    ``audit_samples`` is a list of ``(tokenized_prompt_length,
+    tokenized_prompt_hash)`` tuples — one entry per successful RPC whose
+    timing payload populated the M6.1.3 audit wire fields. Empty when no
+    sample carried the audit data (pre-M6.1.3 server vintage, or every
+    RPC failed before emission).
     """
 
     path: str  # "embed" | "chat_stream"
@@ -100,6 +108,7 @@ class M6_1_3CellMeasurement:
     engine_ttft_ms_mean: float | None
     top_failure_reasons: dict[str, int]
     per_segment: PerSegmentAggregate | None = None
+    audit_samples: list[tuple[int, str]] = field(default_factory=list)
 
 
 def _cell_id(path: str, concurrency: int) -> str:
@@ -414,6 +423,108 @@ def _render_classifier_narrative(
     return lines
 
 
+def _render_audit_section(
+    pooled: list[M6_1_3PerCellAuditAggregate],
+    per_run: list[M6_1_3PerRunAuditVerdict] | None,
+) -> list[str]:
+    """Render the Per-Cohort Prompt-Content Audit section + spec recommendation.
+
+    Three subsections per ``contracts/artifact-schema.md`` "The Per-Cohort
+    Prompt-Content Audit reporter section":
+
+    * Per-cell pooled distribution table (mean / stddev / n_rpcs /
+      unique_hash_count per cohort).
+    * One-line H1 / H2 / rejection verdict per cell.
+    * Spec-decision recommendation block drawn from chat_stream_c1's
+      pooled verdict (FR-017 / FR-018 / H2 note).
+    * Conditional per-run audit appendix per FR-016a + round-2 Q5 (when
+      any per-run verdict diverges from the pooled verdict for any cell).
+    """
+    from vllm_grpc_bench.m6_1_3_audit import (  # local import avoids cycle at module load
+        extract_h1_recommendation,
+        should_render_audit_appendix,
+    )
+
+    lines: list[str] = []
+    lines.append("## Per-Cohort Prompt-Content Audit")
+    lines.append("")
+
+    for cell_agg in pooled:
+        cell_id = cell_agg.cell_id
+        any_dist = next(iter(cell_agg.per_cohort.values()), None)
+        n_pooled = any_dist.n_rpcs if any_dist is not None else 0
+        lines.append(f"### {cell_id} (pooled n={n_pooled} per cohort)")
+        lines.append("")
+        lines.append(
+            "| Cohort | mean_tokenized_prompt_length | stddev | n_rpcs | unique_hash_count |"
+        )
+        lines.append(
+            "|--------|------------------------------:|-------:|-------:|-------------------:|"
+        )
+        for cohort in sorted(cell_agg.per_cohort.keys()):
+            dist = cell_agg.per_cohort[cohort]
+            lines.append(
+                f"| `{cohort}` | {dist.mean_tokenized_prompt_length:.2f} | "
+                f"{dist.stddev_tokenized_prompt_length:.2f} | {dist.n_rpcs} | "
+                f"{dist.unique_hash_count} |"
+            )
+        lines.append("")
+        lines.append("**H1 verdict** (per FR-016 + round-1 Q5):")
+        lines.append("")
+        lines.append(f"> {cell_agg.pooled_verdict}")
+        lines.append("")
+
+    # Spec-decision recommendation block (FR-017 / FR-018 / H2 note).
+    recommendation = extract_h1_recommendation(pooled)
+    lines.append("**Recommendation** (per FR-017 / FR-018):")
+    lines.append("")
+    lines.append(f"> {recommendation}")
+    lines.append("")
+
+    # Conditional per-run audit appendix (FR-016a + round-2 Q5).
+    if per_run is not None and should_render_audit_appendix(pooled, per_run):
+        lines.extend(_render_per_run_audit_appendix(pooled, per_run))
+
+    return lines
+
+
+def _render_per_run_audit_appendix(
+    pooled: list[M6_1_3PerCellAuditAggregate],
+    per_run: list[M6_1_3PerRunAuditVerdict],
+) -> list[str]:
+    """Render the per-run audit verdict appendix per FR-016a + round-2 Q5.
+
+    Per round-2 Q5: when one cell's per-run / pooled disagreement triggers
+    rendering, the appendix renders ALL cells (not just the disagreeing
+    ones) so a reader sees the full context.
+    """
+    lines: list[str] = []
+    lines.append(
+        "### Per-Run Audit Verdict Appendix (rendered because per-run / "
+        "pooled disagreement detected)"
+    )
+    lines.append("")
+
+    # Group per-run verdicts by cell_id.
+    by_cell: dict[str, list[M6_1_3PerRunAuditVerdict]] = {}
+    for v in per_run:
+        by_cell.setdefault(v.cell_id, []).append(v)
+
+    pooled_by_cell = {agg.cell_id: agg.pooled_verdict for agg in pooled}
+
+    for cell_id in sorted(pooled_by_cell.keys()):
+        lines.append(f"#### {cell_id}")
+        lines.append("")
+        lines.append("| Run | Per-run verdict |")
+        lines.append("|-----|------------------|")
+        for v in sorted(by_cell.get(cell_id, []), key=lambda x: x.run_idx):
+            lines.append(f"| {v.run_idx}   | {v.verdict} |")
+        lines.append(f"| **Pooled** | **{pooled_by_cell[cell_id]}** |")
+        lines.append("")
+
+    return lines
+
+
 def render_markdown(artifact: M6_1_3SweepArtifact) -> str:
     """Render the human-readable companion markdown."""
     lines: list[str] = []
@@ -514,6 +625,15 @@ def render_markdown(artifact: M6_1_3SweepArtifact) -> str:
         label = artifact.classifications[cell_id]
         shares = _compute_segment_shares(artifact.measurements, cell_id)
         lines.extend(_render_classifier_narrative(cell_id, label, shares))
+
+    # Per-Cohort Prompt-Content Audit (FR-016 + FR-016a + FR-017 + FR-018).
+    if artifact.audit:
+        lines.extend(
+            _render_audit_section(
+                artifact.audit,
+                artifact.audit_per_run,
+            )
+        )
 
     # Between-run variance section (US3 T037 wires the full table; for US1
     # we render a placeholder when the section is suppressed via
