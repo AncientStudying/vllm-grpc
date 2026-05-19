@@ -33,7 +33,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from vllm_grpc_bench.ci import estimate
 from vllm_grpc_bench.m6_1_1_classifier import classify_cell
@@ -163,7 +163,7 @@ def aggregate_multi_point_timings(
     for cohort in M6_1_COHORTS:
         results = per_cohort_results.get(cohort, [])
         timings: list[dict[str, int]] = [
-            r.m6_1_1_timing_payload
+            cast(dict[str, int], r.m6_1_1_timing_payload)
             for r in results
             if r.success and r.m6_1_1_timing_payload is not None
         ]

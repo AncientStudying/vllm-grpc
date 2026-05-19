@@ -53,7 +53,9 @@ from vllm_grpc_bench.m3_types import (
 )
 
 
-def _extract_m6_1_1_timing_from_sse_payload(payload: str | None) -> dict[str, int] | None:
+def _extract_m6_1_1_timing_from_sse_payload(
+    payload: str | None,
+) -> dict[str, int | str | None] | None:
     """Parse the M6.1.1 ``m6_1_1_timings`` sub-object from a chat_stream
     terminal SSE event JSON payload. Best-effort: returns None on missing or
     malformed sub-object (pre-M6.1.1 server)."""
@@ -81,7 +83,9 @@ def _extract_m6_1_1_timing_from_sse_payload(payload: str | None) -> dict[str, in
     }
 
 
-def _extract_m6_1_1_timing_from_body_json(body_json: dict[str, Any]) -> dict[str, int] | None:
+def _extract_m6_1_1_timing_from_body_json(
+    body_json: dict[str, Any],
+) -> dict[str, int | str | None] | None:
     """Parse the M6.1.1 ``m6_1_1_timings`` sub-object from a parsed embed
     JSONResponse body (FR-011 audit-only controls)."""
     from vllm_grpc_bench.m6_1_1_timing import extract_rest_timings
@@ -146,11 +150,13 @@ class RESTCohortSample:
     engine_cost_payload: dict[str, float] | None = None
     # M6.1.1 (FR-007): the four perf_counter_ns checkpoints parsed from the
     # ``m6_1_1_timings`` sub-object on the terminal SSE event (chat_stream)
-    # or the JSONResponse body (embed). Stored as dict[str, int] to keep
-    # the m3_types / rest_cohort modules free of an m6_1_1_types import
-    # cycle; M6.1.1 callers re-hydrate to ``TimingCheckpoint`` via
+    # or the JSONResponse body (embed). M6.1.3 widened the value type to
+    # ``int | str | None`` to carry ``tokenized_prompt_hash`` plus
+    # optional proxy-edge anchors. Stored as a dict to keep the m3_types
+    # / rest_cohort modules free of an m6_1_1_types import cycle; M6.1.1
+    # callers re-hydrate to ``TimingCheckpoint`` via
     # ``TimingCheckpoint(**payload)``. None on pre-M6.1.1 servers.
-    m6_1_1_timing_payload: dict[str, int] | None = None
+    m6_1_1_timing_payload: dict[str, int | str | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -361,7 +367,7 @@ async def _single_embed_request(
                 engine_cost_payload = None
     # M6.1.1 (FR-007 / FR-011): same sub-object shape on the embed
     # JSONResponse body; pre-M6.1.1 servers don't emit it.
-    m6_1_1_timing_payload: dict[str, int] | None = None
+    m6_1_1_timing_payload: dict[str, int | str | None] | None = None
     if isinstance(body_json, dict):
         m6_1_1_timing_payload = _extract_m6_1_1_timing_from_body_json(body_json)
     return RESTCohortSample(

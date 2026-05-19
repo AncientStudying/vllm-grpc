@@ -261,26 +261,26 @@ def _aggregate_per_segment(
 
     Returns ``None`` when no successful RPC populated the timing payload.
     """
-    timings = [
-        r.m6_1_1_timing_payload
+    timings: list[dict[str, int]] = [
+        cast(dict[str, int], r.m6_1_1_timing_payload)
         for r in results
         if r.success and r.m6_1_1_timing_payload is not None
     ]
     if not timings:
         return None
 
-    seg_ab = [(int(t["pre_engine_ns"]) - int(t["handler_entry_ns"])) * 1e-6 for t in timings]
-    seg_bc = [(int(t["first_chunk_ns"]) - int(t["pre_engine_ns"])) * 1e-6 for t in timings]
-    seg_cd = [(int(t["terminal_emit_ns"]) - int(t["first_chunk_ns"])) * 1e-6 for t in timings]
+    seg_ab = [(t["pre_engine_ns"] - t["handler_entry_ns"]) * 1e-6 for t in timings]
+    seg_bc = [(t["first_chunk_ns"] - t["pre_engine_ns"]) * 1e-6 for t in timings]
+    seg_cd = [(t["terminal_emit_ns"] - t["first_chunk_ns"]) * 1e-6 for t in timings]
 
     # M6.1.2 engine-internal segments. Skip rows where any engine field is 0.
     engine_stats_timings = [
         t
         for t in timings
-        if int(t.get("engine_queued_ns", 0)) > 0
-        and int(t.get("engine_scheduled_ns", 0)) > 0
-        and int(t.get("engine_first_token_ns", 0)) > 0
-        and int(t.get("engine_last_token_ns", 0)) > 0
+        if t.get("engine_queued_ns", 0) > 0
+        and t.get("engine_scheduled_ns", 0) > 0
+        and t.get("engine_first_token_ns", 0) > 0
+        and t.get("engine_last_token_ns", 0) > 0
     ]
     seg_queue_mean: float | None = None
     seg_queue_ci: float | None = None
@@ -288,11 +288,10 @@ def _aggregate_per_segment(
     seg_prefill_ci: float | None = None
     if engine_stats_timings:
         seg_queue = [
-            (int(t["engine_scheduled_ns"]) - int(t["engine_queued_ns"])) * 1e-6
-            for t in engine_stats_timings
+            (t["engine_scheduled_ns"] - t["engine_queued_ns"]) * 1e-6 for t in engine_stats_timings
         ]
         seg_prefill = [
-            (int(t["engine_first_token_ns"]) - int(t["engine_scheduled_ns"])) * 1e-6
+            (t["engine_first_token_ns"] - t["engine_scheduled_ns"]) * 1e-6
             for t in engine_stats_timings
         ]
         seg_queue_mean = _mean_or_zero(seg_queue)
