@@ -43,36 +43,24 @@ introduced by M6.2. The benchmark domain inherently couples the user-facing
 vocabulary, similar to how a payment-systems spec would use the term
 `ACH return code`.
 
-Open items expected to surface in `/speckit-clarify`:
+**Clarify round 1 resolved (Session 2026-05-19):**
 
-1. **Validate-mode subset of the `max_tokens` axis** (FR-001 deferral) — full
-   axis at smaller n=20, or a subset (e.g., `{10, 256, 2048}` for triangle
-   coverage)? Affects validate-sweep wall-clock and cost-per-RPC
-   extrapolation accuracy.
-2. **`network_paths` re-probe cadence at extended wall-clock** (FR-009
-   deferral) — fixed interval (e.g., every 4 hours), per-cohort-transition,
-   or operator-driven via flag?
-3. **Sweep-integrity warning threshold for null-anchor drift fraction**
-   (FR-014 deferral) — what fraction of cells must drift before the
-   sweep-level integrity warning fires (vs per-cell `control_drift_warning`
-   lines)?
-4. **Validate-mode per-point sample size** (FR-004 deferral) — n=20 is the
-   draft default; final value depends on the validate-mode goal (wiring
-   check vs preliminary cost-per-RPC datum).
-5. **Cohort-pair CI-overlap threshold for crossover** (US2 acceptance #1) —
-   ≥ 50% is the draft operational definition; M6.1.3's inline-threshold-
-   pinning precedent suggests pinning this in the spec at /speckit-clarify
-   time.
-6. **Forward-link annotation mechanism for M6.1.3's markdown body** (FR-019)
-   — repeating the M6.1.3 "one-line leading > Note:" pattern is the draft;
-   confirm at /speckit-clarify time so the M6.1.3 → M6.2 navigation is
-   symmetric with the M6.1.1 → M6.1.3 precedent.
-7. **Cost-cap symmetry with M6.1.3 SC-009 precedent** (FR-021 / FR-022 /
-   SC-001 / SC-002) — M6.1.3 hard-capped at $6.05; M6.2's projected $27-40
-   is ~5-7× larger but reflects 14,400 RPC count + high-cap tail. Confirm
-   the cap value before publish-sweep commit.
+1. **Harness inheritance discipline** (new FR-028) — user-directed: copy + refactor the M6.1.3 `m6_1_3_*` module family; regeneration from scratch FORBIDDEN.
+2. **Validate-mode `max_tokens` axis subset** (FR-001 pinned) — `{10, 50, 2048}` at n=20; interior caps rendered as `not_validated`.
+3. **Crossover-detection rule** (US2 acceptance #1, CrossoverThreshold entity pinned) — symmetric mean-in-CI at 95% CI half-width.
+4. **Sweep-integrity warning threshold** (FR-014, SC-004 pinned) — ≥ 3 of 48 anchor cells drift.
+5. **`network_paths` re-probe cadence** (FR-009, SC-010, Edge Cases pinned) — every 4 hours in publish mode; start + end only in validate (< 8 h).
+6. **Validate-mode crossover-section rendering** (FR-016, SC-005 amended) — render with axis-restricted disclaimer; coarse 4-value `crossover_max_tokens` vocabulary in validate.
 
-These deferrals are intentional — the M6.x family's clarify cycles
-iteratively pin spec-level constants once the validate sweep produces
-measured datums to extrapolate from. Per `feedback_thorough_clarify_cycles`,
-expect 2-3 clarify rounds before `/speckit-plan`.
+**Still open — expected to surface in /speckit-clarify round 2 (or defer to /speckit-plan):**
+
+- **Validate-mode per-point sample size** (FR-004 currently n=20 default) — confirm or revise based on validate-mode CI-width adequacy for FR-012 anchor comparison.
+- **Forward-link annotation mechanism for M6.1.3's markdown body** (FR-019) — `> **Note**:` one-liner is the M6.1.3-precedent default; confirm or amend.
+- **Cost-cap pin** (FR-021 / FR-022 / SC-001 / SC-002) — validate-sweep cost data should produce a measured cost-per-RPC datum that extrapolates to the publish cap; defer to post-validate clarify pass.
+- **`--m6_2-asymmetric-prompts` override flag disposition** (FR-008) — ship for diagnostic re-runs or treat as forward-reference per M6.1.3 Phase C/D pattern?
+- **Sweep partial-failure recovery contract** at the high-cap × c=8 cells — does multi-cohort failure at a single (cell, `max_tokens`) point trigger sweep-level integrity warning, or fire only the per-row `failed_<reason>` markers?
+
+Per `feedback_thorough_clarify_cycles`, the user typically runs 2-3 clarify
+rounds before `/speckit-plan`. Round 1 resolved 6 high-impact items; the
+remaining 5 are lower-impact (operational defaults + diagnostic-flag
+disposition).
