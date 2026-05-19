@@ -166,6 +166,10 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
             # event — no duplicate engine work.
             # M6.1.1 checkpoint (b): pre_engine — just before engine.generate.
             pre_engine_ns = time.perf_counter_ns()
+            # M6.1.3 (FR-001 + FR-003): wall-clock anchor captured alongside
+            # the perf_counter pre_engine checkpoint so REST cohorts can
+            # bisect frontend ↔ engine ingress the same way gRPC cohorts do.
+            pre_engine_wall_ns = time.time_ns()
             engine_start = time.perf_counter()
             gen = engine.generate(prompt, sampling, request_id=request_id)
             try:
@@ -186,6 +190,13 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
             # path that sets ``first_token_at`` so the two are sampled at the
             # same instant.
             first_chunk_ns: int | None = None
+            # M6.1.3 (FR-002 + FR-003): monotonic anchor captured at the same
+            # site; comparable against vLLM's monotonic-sourced first_token_ts.
+            first_chunk_mono_ns: int | None = None
+            # M6.1.3 (FR-012 + FR-013 + FR-014): prompt-content audit values,
+            # captured from the first engine output's ``prompt_token_ids``.
+            tokenized_prompt_length: int | None = None
+            tokenized_prompt_hash: str | None = None
             # M6.1.2 — engine-internal RequestStateStats snapshots.
             engine_arrival_ns: int = 0
             engine_queued_ns: int = 0
@@ -211,6 +222,7 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
 
             async def _sse_body() -> AsyncIterator[bytes]:
                 nonlocal first_token_at, last_token_at, token_count, first_chunk_ns
+                nonlocal first_chunk_mono_ns, tokenized_prompt_length, tokenized_prompt_hash
                 nonlocal engine_arrival_ns, engine_queued_ns, engine_scheduled_ns
                 nonlocal engine_first_token_ns, engine_last_token_ns
                 nonlocal last_chunk_for_metrics
@@ -222,6 +234,18 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
                         if first_token_at is None:
                             first_token_at = now
                             first_chunk_ns = time.perf_counter_ns()
+                            # M6.1.3 — monotonic anchor + audit values at the
+                            # same first-chunk site (FR-002 + FR-012 + FR-013).
+                            first_chunk_mono_ns = time.monotonic_ns()
+                            prompt_token_ids = list(
+                                getattr(first_chunk, "prompt_token_ids", []) or []
+                            )
+                            if prompt_token_ids:
+                                tokenized_prompt_length = len(prompt_token_ids)
+                                tokenized_prompt_hash = hashlib.blake2b(
+                                    b"".join(t.to_bytes(4, "little") for t in prompt_token_ids),
+                                    digest_size=8,
+                                ).hexdigest()
                             # M6.1.2 — snapshot engine RequestStateStats at first chunk.
                             if (
                                 getattr(first_chunk, "metrics", None) is not None
@@ -251,6 +275,16 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
                         if first_token_at is None:
                             first_token_at = now
                             first_chunk_ns = time.perf_counter_ns()
+                            # M6.1.3 — monotonic anchor + audit values, same
+                            # capture pattern as the first_chunk-on-prefetch path.
+                            first_chunk_mono_ns = time.monotonic_ns()
+                            prompt_token_ids = list(getattr(chunk, "prompt_token_ids", []) or [])
+                            if prompt_token_ids:
+                                tokenized_prompt_length = len(prompt_token_ids)
+                                tokenized_prompt_hash = hashlib.blake2b(
+                                    b"".join(t.to_bytes(4, "little") for t in prompt_token_ids),
+                                    digest_size=8,
+                                ).hexdigest()
                             # M6.1.2 — snapshot engine RequestStateStats at first chunk.
                             chunk_metrics = getattr(chunk, "metrics", None)
                             if chunk_metrics is not None:
@@ -320,6 +354,16 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
                         "engine_scheduled_ns": engine_scheduled_ns,
                         "engine_first_token_ns": engine_first_token_ns,
                         "engine_last_token_ns": engine_last_token_ns,
+                        # M6.1.3 — proxy-edge probes (FR-001 + FR-002 +
+                        # FR-003) and prompt-content audit (FR-012 + FR-013
+                        # + FR-014). All four are emitted on the chat_stream
+                        # path; ``None`` is preserved through JSON so the
+                        # client extractor can distinguish "not populated"
+                        # from "zero" per FR-006.
+                        "pre_engine_wall_ns": pre_engine_wall_ns,
+                        "first_chunk_mono_ns": first_chunk_mono_ns,
+                        "tokenized_prompt_length": tokenized_prompt_length,
+                        "tokenized_prompt_hash": tokenized_prompt_hash,
                     },
                 }
                 yield f"data: {json.dumps(terminal)}\n\n".encode()
@@ -424,6 +468,11 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
         final_text = ""
         final_finish = "stop"
         first_chunk_ns: int | None = None
+        # M6.1.3 (FR-012 + FR-013 + FR-014): prompt-content audit values for
+        # the embed (unary) path. Proxy-edge probes (FR-001 / FR-002) are NOT
+        # populated here — streaming-only per FR-003.
+        tokenized_prompt_length: int | None = None
+        tokenized_prompt_hash: str | None = None
         # M6.1.2 — engine-internal RequestStateStats snapshots.
         engine_arrival_ns: int = 0
         engine_queued_ns: int = 0
@@ -437,6 +486,14 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
             # yielded output to mirror chat_stream's first-token semantics.
             if first_chunk_ns is None:
                 first_chunk_ns = time.perf_counter_ns()
+                # M6.1.3 — audit values captured at the first-chunk site.
+                prompt_token_ids = list(getattr(output, "prompt_token_ids", []) or [])
+                if prompt_token_ids:
+                    tokenized_prompt_length = len(prompt_token_ids)
+                    tokenized_prompt_hash = hashlib.blake2b(
+                        b"".join(t.to_bytes(4, "little") for t in prompt_token_ids),
+                        digest_size=8,
+                    ).hexdigest()
                 # M6.1.2 — snapshot engine RequestStateStats.
                 if getattr(output, "metrics", None) is not None and output.metrics is not None:
                     m = output.metrics
@@ -483,6 +540,12 @@ def build_rest_shim(engine: Any, expected_token: str) -> FastAPI:
                     "engine_scheduled_ns": engine_scheduled_ns,
                     "engine_first_token_ns": engine_first_token_ns,
                     "engine_last_token_ns": engine_last_token_ns,
+                    # M6.1.3 (FR-014): audit fields emitted on the unary
+                    # embed path too. Proxy-edge anchors are deliberately
+                    # absent (streaming-only per FR-003); the client
+                    # extractor treats them as ``None``.
+                    "tokenized_prompt_length": tokenized_prompt_length,
+                    "tokenized_prompt_hash": tokenized_prompt_hash,
                 },
             }
         )

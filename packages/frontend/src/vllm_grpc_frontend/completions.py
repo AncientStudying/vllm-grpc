@@ -112,10 +112,24 @@ class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # t
         engine_scheduled_ns: int = 0
         engine_first_token_ns: int = 0
         engine_last_token_ns: int = 0
+        # M6.1.3 (FR-012 + FR-013 + FR-014): prompt-content audit values for
+        # the embed (unary) RPC. The proxy-edge probes (FR-001 / FR-002) are
+        # NOT emitted here — they are streaming-only per FR-003 (no
+        # first-chunk-vs-engine-emit delta exists on a unary RPC).
+        tokenized_prompt_length: int | None = None
+        tokenized_prompt_hash: str | None = None
         async for output in self._engine.generate(engine_input, params, request_id=request_id):
             # M6.1.1 checkpoint (c): first_chunk — first yielded output.
             if first_chunk_ns is None:
                 first_chunk_ns = time.perf_counter_ns()
+                # M6.1.3 — audit values from the first output's prompt_token_ids.
+                prompt_token_ids = list(getattr(output, "prompt_token_ids", []) or [])
+                if prompt_token_ids:
+                    tokenized_prompt_length = len(prompt_token_ids)
+                    tokenized_prompt_hash = hashlib.blake2b(
+                        b"".join(t.to_bytes(4, "little") for t in prompt_token_ids),
+                        digest_size=8,
+                    ).hexdigest()
                 # M6.1.2 — snapshot engine RequestStateStats at first chunk.
                 if output.metrics is not None:
                     engine_arrival_ns = (
@@ -140,22 +154,30 @@ class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # t
         if final is not None and final.metrics is not None and final.metrics.last_token_ts:
             engine_last_token_ns = int(final.metrics.last_token_ts * 1e9)
         first_chunk_for_md = first_chunk_ns if first_chunk_ns is not None else terminal_emit_ns
-        context.set_trailing_metadata(
-            (
-                ("engine-forward-ms", f"{engine_forward_ms:.3f}"),
-                ("m6_1_1_t_handler_entry", str(handler_entry_ns)),
-                ("m6_1_1_t_pre_engine", str(pre_engine_ns)),
-                ("m6_1_1_t_first_chunk", str(first_chunk_for_md)),
-                ("m6_1_1_t_terminal_emit", str(terminal_emit_ns)),
-                ("m6_1_1_t_perturbation_audit_ns", str(perturbation_audit_ns)),
-                # M6.1.2 — engine-internal RequestStateStats timestamps.
-                ("m6_1_1_t_engine_arrival_ns", str(engine_arrival_ns)),
-                ("m6_1_1_t_engine_queued_ns", str(engine_queued_ns)),
-                ("m6_1_1_t_engine_scheduled_ns", str(engine_scheduled_ns)),
-                ("m6_1_1_t_engine_first_token_ns", str(engine_first_token_ns)),
-                ("m6_1_1_t_engine_last_token_ns", str(engine_last_token_ns)),
-            )
-        )
+        # M6.1.3 — assemble the trailing-metadata tuple. The 2 new audit
+        # keys are appended only when prompt_token_ids was available; the
+        # proxy-edge keys are NOT emitted here (FR-003 streaming-only).
+        trailers: list[tuple[str, str]] = [
+            ("engine-forward-ms", f"{engine_forward_ms:.3f}"),
+            ("m6_1_1_t_handler_entry", str(handler_entry_ns)),
+            ("m6_1_1_t_pre_engine", str(pre_engine_ns)),
+            ("m6_1_1_t_first_chunk", str(first_chunk_for_md)),
+            ("m6_1_1_t_terminal_emit", str(terminal_emit_ns)),
+            ("m6_1_1_t_perturbation_audit_ns", str(perturbation_audit_ns)),
+            # M6.1.2 — engine-internal RequestStateStats timestamps.
+            ("m6_1_1_t_engine_arrival_ns", str(engine_arrival_ns)),
+            ("m6_1_1_t_engine_queued_ns", str(engine_queued_ns)),
+            ("m6_1_1_t_engine_scheduled_ns", str(engine_scheduled_ns)),
+            ("m6_1_1_t_engine_first_token_ns", str(engine_first_token_ns)),
+            ("m6_1_1_t_engine_last_token_ns", str(engine_last_token_ns)),
+        ]
+        if tokenized_prompt_length is not None:
+            # M6.1.3 (FR-014): audit fields emitted on the unary embed path
+            # too. Proxy-edge keys are deliberately absent (FR-003).
+            trailers.append(("m6_1_3_tokenized_prompt_length", str(tokenized_prompt_length)))
+        if tokenized_prompt_hash is not None:
+            trailers.append(("m6_1_3_tokenized_prompt_hash", tokenized_prompt_hash))
+        context.set_trailing_metadata(tuple(trailers))
 
         assert final is not None, "Engine produced no output"
         completion = final.outputs[0]
@@ -200,11 +222,17 @@ class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # t
         # path. Emit on the final stream chunk's trailing metadata.
         # M6.1.1 checkpoint (b): pre_engine.
         pre_engine_ns = time.perf_counter_ns()
+        # M6.1.3 (FR-001 + FR-003): wall-clock anchor for proxy-edge bisection.
+        pre_engine_wall_ns = time.time_ns()
         start = time.perf_counter()
         first_token_at: float | None = None
         last_token_at: float | None = None
         token_count = 0
         first_chunk_ns: int | None = None
+        # M6.1.3 (FR-002 + FR-003): monotonic anchor + audit values.
+        first_chunk_mono_ns: int | None = None
+        tokenized_prompt_length: int | None = None
+        tokenized_prompt_hash: str | None = None
         # M6.1.2 — engine-internal RequestStateStats snapshots.
         engine_arrival_ns: int = 0
         engine_queued_ns: int = 0
@@ -225,6 +253,17 @@ class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # t
                         first_token_at = now
                         # M6.1.1 checkpoint (c): first_chunk.
                         first_chunk_ns = time.perf_counter_ns()
+                        # M6.1.3 — monotonic anchor + audit values captured
+                        # at the same site so a single first-chunk path sets
+                        # all M6.1.3 streaming probes atomically.
+                        first_chunk_mono_ns = time.monotonic_ns()
+                        prompt_token_ids = list(getattr(output, "prompt_token_ids", []) or [])
+                        if prompt_token_ids:
+                            tokenized_prompt_length = len(prompt_token_ids)
+                            tokenized_prompt_hash = hashlib.blake2b(
+                                b"".join(t.to_bytes(4, "little") for t in prompt_token_ids),
+                                digest_size=8,
+                            ).hexdigest()
                         # M6.1.2 — snapshot engine RequestStateStats.
                         if output.metrics is not None:
                             engine_arrival_ns = (
@@ -275,26 +314,44 @@ class CompletionsServicer(completions_pb2_grpc.CompletionsServiceServicer):  # t
                     first_chunk_for_md = (
                         first_chunk_ns if first_chunk_ns is not None else terminal_emit_ns
                     )
-                    context.set_trailing_metadata(
+                    # M6.1.3 — assemble the trailing-metadata tuple with the
+                    # 4 new keys appended (proxy-edge + audit). Per FR-010
+                    # strict-superset: the keys are absent on the wire when
+                    # the underlying probe value is None.
+                    trailers: list[tuple[str, str]] = [
+                        ("engine-ttft-ms", f"{engine_ttft_ms:.3f}"),
+                        ("engine-tpot-ms", f"{engine_tpot_ms:.3f}"),
+                        ("m6_1_1_t_handler_entry", str(handler_entry_ns)),
+                        ("m6_1_1_t_pre_engine", str(pre_engine_ns)),
+                        ("m6_1_1_t_first_chunk", str(first_chunk_for_md)),
+                        ("m6_1_1_t_terminal_emit", str(terminal_emit_ns)),
                         (
-                            ("engine-ttft-ms", f"{engine_ttft_ms:.3f}"),
-                            ("engine-tpot-ms", f"{engine_tpot_ms:.3f}"),
-                            ("m6_1_1_t_handler_entry", str(handler_entry_ns)),
-                            ("m6_1_1_t_pre_engine", str(pre_engine_ns)),
-                            ("m6_1_1_t_first_chunk", str(first_chunk_for_md)),
-                            ("m6_1_1_t_terminal_emit", str(terminal_emit_ns)),
+                            "m6_1_1_t_perturbation_audit_ns",
+                            str(perturbation_audit_ns),
+                        ),
+                        # M6.1.2 — engine-internal RequestStateStats timestamps.
+                        ("m6_1_1_t_engine_arrival_ns", str(engine_arrival_ns)),
+                        ("m6_1_1_t_engine_queued_ns", str(engine_queued_ns)),
+                        ("m6_1_1_t_engine_scheduled_ns", str(engine_scheduled_ns)),
+                        ("m6_1_1_t_engine_first_token_ns", str(engine_first_token_ns)),
+                        ("m6_1_1_t_engine_last_token_ns", str(engine_last_token_ns)),
+                        # M6.1.3 — proxy-edge probes (streaming-only).
+                        ("m6_1_1_t_pre_engine_wall_ns", str(pre_engine_wall_ns)),
+                        (
+                            "m6_1_1_t_first_chunk_mono_ns",
+                            str(first_chunk_mono_ns) if first_chunk_mono_ns is not None else "0",
+                        ),
+                    ]
+                    if tokenized_prompt_length is not None:
+                        trailers.append(
                             (
-                                "m6_1_1_t_perturbation_audit_ns",
-                                str(perturbation_audit_ns),
-                            ),
-                            # M6.1.2 — engine-internal RequestStateStats timestamps.
-                            ("m6_1_1_t_engine_arrival_ns", str(engine_arrival_ns)),
-                            ("m6_1_1_t_engine_queued_ns", str(engine_queued_ns)),
-                            ("m6_1_1_t_engine_scheduled_ns", str(engine_scheduled_ns)),
-                            ("m6_1_1_t_engine_first_token_ns", str(engine_first_token_ns)),
-                            ("m6_1_1_t_engine_last_token_ns", str(engine_last_token_ns)),
+                                "m6_1_3_tokenized_prompt_length",
+                                str(tokenized_prompt_length),
+                            )
                         )
-                    )
+                    if tokenized_prompt_hash is not None:
+                        trailers.append(("m6_1_3_tokenized_prompt_hash", tokenized_prompt_hash))
+                    context.set_trailing_metadata(tuple(trailers))
                     yield completions_pb2.CompletionStreamChunk(
                         delta_text="",
                         finish_reason=completion.finish_reason or "stop",

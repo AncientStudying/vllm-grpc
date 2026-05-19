@@ -328,7 +328,7 @@ async def _drive_rest_chat_stream(
     wall_ms = (time.perf_counter() - t0) * 1000.0
     ttft_ms = (first_chunk_at - t0) * 1000.0 if first_chunk_at else None
     engine_cost: EngineCostSpan | None = None
-    m6_1_1_payload: dict[str, int] | None = None
+    m6_1_1_payload: dict[str, int | str | None] | None = None
     if last_data_payload:
         try:
             terminal = json.loads(last_data_payload)

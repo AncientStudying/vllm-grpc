@@ -23,6 +23,9 @@ Each milestone writes its sweep artifact to a canonical path under
 | M6.1.1 | `m6_1_1-engine-cost-instrumentation.{md,json}` | same | `m6_1_1-events.jsonl` (when written) |
 | M6.0a | `m6_0a-dispatch-correction.md` (analysis) + corrected M6.1.1 JSON | — | — |
 | M6.1.2 | `m6_1_2-methodology-discipline.{md,json}` | same | `m6_1_2-events.jsonl` |
+| M6.1.3 (publish) | `m6_1_3-attribution-closure.{md,json}` | same | `m6_1_3-events.jsonl` |
+| M6.1.3 (validate sibling) | `m6_1_3-attribution-closure-validate.{md,json}` | same | shared with publish |
+| M6.1.3 (Phase B sibling, conditional) | `m6_1_3-attribution-closure-phase-b.{md,json}` | same | shared with publish |
 
 The JSON is authoritative for downstream readers; the markdown is the
 human-readable companion.
@@ -237,6 +240,152 @@ by count. Empty dict when every RPC succeeded. Diagnoses 0/N-success
 cohorts from the published artifact alone — no need to re-run the sweep
 or read container logs.
 
+## M6.1.3 — Phase 1 Attribution Closure (additive)
+
+M6.1.3 closes the c=4 / c=8 `inconclusive` chat_stream verdicts inherited
+from M6.1.1 by adding three families of instrumentation: proxy-edge
+probes, per-cohort prompt-content audit, and multi-run between-run
+variance characterization. Every addition is **strict-superset** per
+the convention above — pre-M6.1.3 readers ignore the new keys without
+parse error and `schema_version` stays at `"m6_1_1.v1"` (the prefix is
+a naming convention distinguishing instrumentation categories within an
+extensible vocabulary, NOT a versioning signal — see
+[round-3 Q1](../specs/026-m6-1-3-attribution-closure/spec.md)).
+
+### 4 new wire keys (M6.1.3 round-3 Q1 versioning convention)
+
+| Wire key | Type | Source | Streaming-only? | Notes |
+|---|---|---|---|---|
+| `m6_1_1_t_pre_engine_wall_ns` | `int` ns since epoch (`time.time_ns()`) | Frontend servicer (gRPC trailing metadata + REST SSE terminal event) | YES (per FR-003) | Wall-clock anchor for comparison against vLLM's `RequestStateStats.arrival_time` (wall). |
+| `m6_1_1_t_first_chunk_mono_ns` | `int` ns (`time.monotonic_ns()`) | Same servicers | YES | Monotonic anchor for comparison against vLLM's `RequestStateStats.first_token_ts` (monotonic). |
+| `m6_1_3_tokenized_prompt_length` | `int` token count | Same servicers (all RPCs per FR-014) | NO | Exact `len(prompt_token_ids)` the engine saw at prefill. |
+| `m6_1_3_tokenized_prompt_hash` | `str` 16-char hex (BLAKE2b digest_size=8) | Same servicers (all RPCs per FR-014) | NO | `blake2b(b"".join(t.to_bytes(4, 'little') for t in token_ids), digest_size=8).hex()`. Collision-resistant within a multi-run sweep (≈ 10⁻¹² per R-4). |
+
+The proxy-edge keys are emitted ONLY on streaming RPCs (`CompleteStream`
+on both `chat.py` and `completions.py`) per FR-003 — the unary embed
+path has no first-chunk-vs-engine-emit delta to bisect. The audit keys
+are emitted on EVERY RPC (streaming + unary) per FR-014. Both M6.1.1 +
+M6.1.2 + M6.1.3 wire keys share the same vocabulary; the `m6_1_*` /
+`m6_1_3_*` prefixes are naming categories, not separate schemas.
+
+### 2 new derived segments (FR-005 + FR-006)
+
+| Segment | Derivation | Notes |
+|---|---|---|
+| `seg_ingress_ms` | `(engine_arrival_ns - pre_engine_wall_ns) * 1e-6` (wall-clock subtraction) | Frontend → engine handoff. |
+| `seg_egress_ms` | `(first_chunk_mono_ns - engine_first_token_ns) * 1e-6` (monotonic subtraction) | Engine → frontend yield. |
+
+Per FR-006, a negative value indicates a wall↔monotonic clock anomaly:
+the row is marked `is_clock_anomaly=True`, both new segments are set
+to `None`, and the raw `_ns` values are logged to stderr. The aggregator
+excludes anomalous rows from per-cell mean / CI compute. The cell
+verdict downgrades to `inconclusive` when the
+`clock_anomaly_fraction` exceeds the configurable per-cell threshold
+(default 0.5% per SC-013).
+
+### 7-bucket classifier + canonical 6-row mapping
+
+M6.1.3 extends M6.1.1's 5-bucket decision tree to 7 buckets per FR-008.
+The canonical mapping between classifier labels, abbreviated identifiers
+(used in compound-label suffixes), and driving segment fields is the
+load-bearing vocabulary for the M6.x family:
+
+| Classifier base label | Abbreviated identifier | Driving segment field |
+|---|---|---|
+| `channel_dependent_batching` | `channel_batching` | `seg_ab_ms` |
+| `queue_dependent_batching` | `queue_batching` | `seg_queue_ms` |
+| `engine_compute_variation` | `engine_compute` | `seg_prefill_ms` |
+| `frontend_arrival_jitter` | `frontend_arrival` | `seg_arrival_ms` (DORMANT in M6.1.3 per round-4 Q1) |
+| `proxy_ingress_dominated` | `proxy_ingress` | `seg_ingress_ms` |
+| `proxy_egress_dominated` | `proxy_egress` | `seg_egress_ms` |
+
+Plus `inconclusive` (no driving segment) — fires when no segment carries
+sufficient dominance share OR when the clock-anomaly cell-level gate
+trips per FR-006 + SC-013.
+
+### Compound-label vocabulary + 5pp dominance margin (FR-008a)
+
+When two or more labels clear their per-rule dominance gates AND the
+gap between the top and runner-up shares is below 5 percentage points,
+the classifier emits a compound label `multi_factor_<a>_<b>` where
+both abbreviated identifiers are sorted alphabetically (per R-8). The
+10 valid compound labels are listed in
+`specs/026-m6-1-3-attribution-closure/contracts/classifier.md`. The
+`frontend_arrival` identifier is dormant — it MUST NOT appear in any
+compound label per round-4 Q1. The `inconclusive` label is also
+non-compound-mappable; when one near-tie candidate would be
+`inconclusive`, the cell collapses to the other candidate's single
+label (FR-008a tail clause).
+
+### `inconclusive_high_variance` outer override (FR-026 + round-2 Q3)
+
+When the multi-run between-run stddev for a cell exceeds the unified
+high-variance threshold × within-run CI half-width, the classifier
+emits `inconclusive_high_variance (<inner>)` where `<inner>` is the
+7-bucket inner label rendered as a parenthetical. The unified
+threshold (round-2 Q3) drives both the outer-override (FR-026) and the
+Phase B publication requirement (FR-043) from a single `/speckit-plan`
+knob.
+
+### `between_run_variance` top-level block (FR-024)
+
+```jsonc
+"between_run_variance": {
+  "chat_stream_c4": {
+    "rest_https_edge": { "mean_of_means_ms": 89.5, "stddev_of_means_ms": 7.28, "n_runs": 5 },
+    "default_grpc":    { "mean_of_means_ms": 79.7, "stddev_of_means_ms": 4.63, "n_runs": 5 }
+  }
+  // ... per cell × cohort
+}
+```
+
+Rendered only when ≥ 3 runs collected (FR-025; validate sweeps and
+2-run operator overrides suppress the variance section and the
+reporter emits the FR-044 override-fallback message instead). FR-027
+cohort-unhealthy handling: cohorts with 0 successful RPCs in a run
+drop from the variance estimate; ≥ 3 failures emit `null` for
+`mean_of_means_ms` / `stddev_of_means_ms` and surface a
+`cohort_unhealthy` warning in `classifier_notes`.
+
+### `frontend_arrival_jitter` dormancy (round-4 Q1)
+
+The label is preserved in M6.1.3's vocabulary for legacy compatibility
+(rehydration of pre-M6.1.3 manifests via the 5-bucket fallback per
+FR-008 + FR-010) but MUST NOT fire as the primary attribution in the
+7-bucket native tree. The dormancy is structurally enforced by the
+absence of a `seg_arrival_ms` field on the M6.1.3 per-cell
+aggregate — the canonical 5-segment sum invariant per SC-002 is
+`seg_ab + seg_queue + seg_prefill + seg_ingress + seg_egress ≈
+engine_ttft` within ±1 ms.
+
+### Audit-section reporter (FR-016 + FR-016a)
+
+The per-cohort prompt-content audit pools per-RPC samples across runs
+and produces one of three verdicts per cell:
+
+* `H1 confirmed: per-cohort token-count means diverge by >2σ` → FR-017
+  (symmetric prompts becomes the M6.x convention).
+* `H2 candidate: token-counts identical but hash distributions differ`
+  → text note (operator-investigate prompt-content fanout).
+* `H1 rejected: per-cohort distributions statistically identical` →
+  FR-018 (proceed to Phase C engine-config probes).
+
+The pooled verdict at `chat_stream_c1` drives the FR-017 / FR-018
+recommendation block on the published artifact. Per-run verdicts are
+computed separately for the FR-016a conditional appendix (rendered
+when any per-run verdict diverges from the pooled verdict for any
+cell — round-2 Q5).
+
+### Additive-strict-superset versioning convention (round-3 Q1)
+
+The convention binds future milestones: **new optional wire keys leave
+`schema_version` unchanged** regardless of prefix. M6.2 adding a
+`max_tokens` axis (`m6_2_*` prefix) does NOT bump `schema_version`;
+neither does M7's corpus diversity (`m7_*` prefix) nor M8's
+multi-model. The only legitimate reason to bump is a **wire-breaking
+change** — a value type changes from `int` to `str`, or an existing
+key is removed. M6.1.3 does neither.
+
 ## Strict-superset evolution rule
 
 New top-level keys are added without bumping `schema_version` PROVIDED:
@@ -256,6 +405,13 @@ The contract precedents are:
 - M6.1.2 (`specs/025-m6-1-2-methodology-discipline/contracts/{network-paths,artifact-schema}.md`)
   — added `network_paths` + `cohort_set` + `cohort_omissions` +
   `run_meta.sweep_mode` + `measurements[*].top_failure_reasons`.
+- M6.1.3 (`specs/026-m6-1-3-attribution-closure/contracts/{wire-vocabulary,classifier,artifact-schema}.md`)
+  — added 4 wire keys + 2 derived segments + 7-bucket classifier
+  extension + `inconclusive_high_variance` outer override +
+  `between_run_variance` top-level block + audit reporter sections
+  per FR-001 / FR-002 / FR-005 / FR-008 / FR-008a / FR-016 / FR-024
+  / FR-026 + round-3 Q1 (the additive-strict-superset convention
+  binding future M6.2 / M7 / M8 milestones).
 
 ## Cross-references
 
@@ -267,6 +423,17 @@ The contract precedents are:
   — `cohort_set` / `cohort_omissions` wire shape.
 - [`specs/025-m6-1-2-methodology-discipline/data-model.md`](../specs/025-m6-1-2-methodology-discipline/data-model.md)
   — Python dataclasses behind the wire shapes.
+- [`specs/026-m6-1-3-attribution-closure/contracts/wire-vocabulary.md`](../specs/026-m6-1-3-attribution-closure/contracts/wire-vocabulary.md)
+  — M6.1.3 wire keys + extractor mapping + additive-strict-superset
+  versioning convention.
+- [`specs/026-m6-1-3-attribution-closure/contracts/classifier.md`](../specs/026-m6-1-3-attribution-closure/contracts/classifier.md)
+  — 7-bucket decision tree + FR-008a tie-breaking + compound vocabulary
+  + `inconclusive_high_variance` outer override.
+- [`specs/026-m6-1-3-attribution-closure/contracts/artifact-schema.md`](../specs/026-m6-1-3-attribution-closure/contracts/artifact-schema.md)
+  — three-path publishing scheme + `between_run_variance` + Phase B
+  trigger verdict.
+- [`specs/026-m6-1-3-attribution-closure/data-model.md`](../specs/026-m6-1-3-attribution-closure/data-model.md)
+  — Python dataclasses for M6.1.3 additions.
 - [`ANALYSIS.md § M6.1.2`](../ANALYSIS.md) — the methodology
   implications of the per-sweep topology evidence (the spike-era
   multi-cloud topology vs the 2026-05-17 single-AWS consolidation).

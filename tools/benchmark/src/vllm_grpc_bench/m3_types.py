@@ -114,11 +114,13 @@ class Sample:
     engine_cost_payload: dict[str, float] | None = None
     # M6.1.1 (FR-007 / FR-008): the four perf_counter_ns checkpoints
     # (handler_entry / pre_engine / first_chunk / terminal_emit) + the
-    # perturbation_audit_ns self-measurement. Stored as a dict[str, int] to
-    # avoid an m6_1_1_types import cycle (m3_types is at the bottom of the
+    # perturbation_audit_ns self-measurement. M6.1.3 widened the value
+    # type to ``int | str | None`` to carry ``tokenized_prompt_hash``
+    # (str) plus optional proxy-edge anchors. Stored as a dict to avoid
+    # an m6_1_1_types import cycle (m3_types is at the bottom of the
     # dependency graph); M6.1.1 callers re-hydrate to a ``TimingCheckpoint``
     # via ``TimingCheckpoint(**payload)``. None on pre-M6.1.1 servers.
-    m6_1_1_timing_payload: dict[str, int] | None = None
+    m6_1_1_timing_payload: dict[str, int | str | None] | None = None
 
 
 @dataclass(frozen=True)

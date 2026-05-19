@@ -91,7 +91,9 @@ def _parse_engine_cost_from_md(
         return None
 
 
-def _parse_m6_1_1_timing_from_md(md: dict[str, str] | None) -> dict[str, int] | None:
+def _parse_m6_1_1_timing_from_md(
+    md: dict[str, str] | None,
+) -> dict[str, int | str | None] | None:
     """Parse the M6.1.1 timing checkpoints from a flat trailing-metadata
     dict. Returns ``None`` when the m6_1_1_t_* keys are absent (pre-M6.1.1
     server) or any value is non-numeric. Re-hydrates back to ``dict[str, int]``
@@ -131,7 +133,7 @@ async def _read_engine_cost_trailing_metadata(
 async def _read_call_trailing_extractions(
     call: Any,
     path: Path_,
-) -> tuple[dict[str, float] | None, dict[str, int] | None]:
+) -> tuple[dict[str, float] | None, dict[str, int | str | None] | None]:
     """Single trailing-metadata read; both engine_cost (M6) and m6_1_1
     timing (M6.1.1) parsed from the same dict."""
     md = await _read_trailing_metadata_dict(call)
@@ -212,7 +214,7 @@ async def _send_chat_rpc(
     error: str | None = None
     error_kind = None
     engine_cost_payload: dict[str, float] | None = None
-    m6_1_1_timing_payload: dict[str, int] | None = None
+    m6_1_1_timing_payload: dict[str, int | str | None] | None = None
     try:
         call = stub.CompleteStream(req, timeout=timeout_s, metadata=metadata)
         async for chunk in call:
@@ -266,7 +268,7 @@ async def _send_embed_rpc(
     error_kind = None
     response_bytes = 0
     engine_cost_payload: dict[str, float] | None = None
-    m6_1_1_timing_payload: dict[str, int] | None = None
+    m6_1_1_timing_payload: dict[str, int | str | None] | None = None
     try:
         # M6 (T014): read trailing metadata for ``engine-forward-ms``
         # (contracts/instrumentation.md §1) without changing the response

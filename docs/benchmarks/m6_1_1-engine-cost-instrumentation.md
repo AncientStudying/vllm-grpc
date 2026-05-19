@@ -1,3 +1,5 @@
+> **Note**: This milestone's c=4 / c=8 verdicts were updated by [M6.1.3](m6_1_3-attribution-closure.md). See that artifact for attributed labels and Phase B variance characterization.
+
 # M6.1.1 — Engine-Cost Instrumentation Diagnosis & Symmetrisation
 
 **Run**: `2026-05-17T10:48:36Z-c4645c3` | **Phase 2 path**: `phase_2_pending` ⏳
