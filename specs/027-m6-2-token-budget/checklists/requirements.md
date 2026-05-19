@@ -52,15 +52,20 @@ vocabulary, similar to how a payment-systems spec would use the term
 5. **`network_paths` re-probe cadence** (FR-009, SC-010, Edge Cases pinned) — every 4 hours in publish mode; start + end only in validate (< 8 h).
 6. **Validate-mode crossover-section rendering** (FR-016, SC-005 amended) — render with axis-restricted disclaimer; coarse 4-value `crossover_max_tokens` vocabulary in validate.
 
-**Still open — expected to surface in /speckit-clarify round 2 (or defer to /speckit-plan):**
+**Clarify round 2 resolved (Session 2026-05-19 round 2):**
 
-- **Validate-mode per-point sample size** (FR-004 currently n=20 default) — confirm or revise based on validate-mode CI-width adequacy for FR-012 anchor comparison.
+7. **Publish-sweep `n` and wall-clock budget — why 30-40 h?** — Deferred to clarify round 3, gated on validate-sweep within-cohort variance at chat_stream c=1 × max_tokens=2048. FR-004 / FR-021 / FR-023 / SC-001 now carry provisional ranges across n=100 (~40 h, ~$40) / adaptive-n (~26-28 h, ~$22-25) / n=50 (~20 h, ~$20). Publish run is BLOCKED until round 3 closes; orchestrator refuses to start `--m6_2` if `n` knob is unset.
+
+**Still open — expected to surface in /speckit-clarify round 3 (after validate completes):**
+
+- **Publish-mode `n` selection** (FR-004 round-3 gate) — uniform-100, adaptive-100/50, or uniform-50 — pinned against measured validate-sweep stddev at chat_stream c=1 × max_tokens=2048.
+- **Validate-mode per-point sample size confirmation** (FR-004 currently n=20 pinned) — if validate-sweep CIs come back wider than expected, may need to bump validate n upward (this would also bump round-2 cost / wall-clock estimates).
 - **Forward-link annotation mechanism for M6.1.3's markdown body** (FR-019) — `> **Note**:` one-liner is the M6.1.3-precedent default; confirm or amend.
-- **Cost-cap pin** (FR-021 / FR-022 / SC-001 / SC-002) — validate-sweep cost data should produce a measured cost-per-RPC datum that extrapolates to the publish cap; defer to post-validate clarify pass.
 - **`--m6_2-asymmetric-prompts` override flag disposition** (FR-008) — ship for diagnostic re-runs or treat as forward-reference per M6.1.3 Phase C/D pattern?
 - **Sweep partial-failure recovery contract** at the high-cap × c=8 cells — does multi-cohort failure at a single (cell, `max_tokens`) point trigger sweep-level integrity warning, or fire only the per-row `failed_<reason>` markers?
 
 Per `feedback_thorough_clarify_cycles`, the user typically runs 2-3 clarify
-rounds before `/speckit-plan`. Round 1 resolved 6 high-impact items; the
-remaining 5 are lower-impact (operational defaults + diagnostic-flag
-disposition).
+rounds before `/speckit-plan`. Round 1 resolved 6 high-impact items; round 2
+resolved the runtime-budget question by deferring `n` to round 3 with a
+clear gate. Round 3 is naturally post-validate and post-`/speckit-plan`-may-not-be-needed-before — the user can run `/speckit-plan` to scaffold tasks
+that BLOCK on the round-3 `n` decision, or wait until round 3 closes.
