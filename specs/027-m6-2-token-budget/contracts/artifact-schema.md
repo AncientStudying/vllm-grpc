@@ -4,9 +4,14 @@
 
 ## Schema versioning
 
-`schema_version` MUST stay at `"m6_1_1.v1"` per FR-011. M6.2 makes **strict-superset additive** evolution: all M6.2 additions are new top-level keys (`null_anchor_validation`, `max_tokens_axis`, `protocol_crossover`, `kv_pressure_observation`, `anchor_latency_trajectory`, `failure_summary`, `integrity_warnings`), new per-row fields (`max_tokens`, `block_start_utc`, `block_end_utc`, `retry_attempted`), and new `run_meta` fields (`iteration_order`, `iteration_discipline_verified`, `n_per_point`, `validate_axis_subset`, `wall_clock_start_utc`, `wall_clock_end_utc`, `total_sweep_hours`, `modal_spend_usd_estimate`). M6.1.3-vintage readers parse the M6.2 artifact without exception per the JSON-decode default ignore-unknown-keys behavior.
+`schema_version` MUST stay at `"m6_1_1.v1"` per FR-011. M6.2 makes **strict-superset additive** evolution. Round-5 extends the additions:
 
-Test enforcement: `test_m6_2_artifact_schema.py::test_strict_superset_compat_with_m6_1_3` synthesizes an M6.2 artifact JSON and parses it with the M6.1.3 deserializer.
+- New top-level keys (unchanged from round-4): `null_anchor_validation`, `max_tokens_axis`, `protocol_crossover`, `kv_pressure_observation`, `anchor_latency_trajectory`, `failure_summary`, `integrity_warnings`.
+- New per-row fields on `M6_2MeasurementPoint`: `max_tokens`, `block_start_utc`, `block_end_utc`, `retry_attempted` (round-4), **`prompt_source`, `measurement_regime`, `prompt_corpus_idx`** (round-5).
+- New fields on `M6_2KVPressureObservation` (round-5): `sub_probe_n_rpcs`, `sub_probe_prompt_source`, `sub_probe_measurement_regime`.
+- New `run_meta` fields: `iteration_order`, `iteration_discipline_verified`, `n_per_point`, `validate_axis_subset`, `wall_clock_start_utc`, `wall_clock_end_utc`, `total_sweep_hours`, `modal_spend_usd_estimate` (round-4), **`chat_corpus_sha256`, `chat_corpus_path`, `embed_corpus_sha256`, `embed_corpus_path`, `sub_probe_ran`** (round-5).
+
+M6.1.3-vintage readers parse the M6.2 artifact without exception per JSON-decode default. Test enforcement: `test_m6_2_artifact_schema.py::test_strict_superset_compat_with_m6_1_3`.
 
 ## JSON top-level structure
 
@@ -42,7 +47,7 @@ Entity shapes live in [`../data-model.md`](../data-model.md). This contract focu
 
 ### Auxiliary subsections (in this order)
 
-5. **KV-cache pressure** — characterizes the `c=8 × max_tokens=2048` regime per FR-017. Per cohort × cell-type ∈ {chat_stream, embed}: `kv_cache_used_fraction_peak` (best-effort, `null` if vLLM doesn't expose) AND `wall_clock_ratio_c8_2048_over_1024` (REQUIRED, per FR-017a) AND `wall_clock_inference_label` ∈ {`kv_pressure_inferred_chat_stream`, `kv_pressure_inferred_embed`, `kv_pressure_not_observable`}.
+5. **KV-cache pressure** — characterizes the `c=8 × max_tokens=2048` regime per FR-017. **Sourced from the FR-036 KV-pressure sub-probe (round-5)**, NOT the main-sweep budget-table c=8 rows. Per cohort × cell-type ∈ {chat_stream, embed}: `kv_cache_used_fraction_peak` (best-effort, `null` if vLLM doesn't expose) AND `wall_clock_ratio_c8_2048_over_1024` (REQUIRED, per FR-017a; computed from sub-probe `wall_p50_ms` at `c=8 × {1024, 2048}` with `ignore_eos=True`) AND `wall_clock_inference_label` ∈ {`kv_pressure_inferred_chat_stream`, `kv_pressure_inferred_embed`, `kv_pressure_not_observable`}. Subsection explicitly labels measurements as "forced-cap regime (ignore_eos=True)" to distinguish from the budget-table c=8 rows which are "natural EOS under cap=N". The subsection narrative cites both regimes when discussing the c=8 × 2048 row of the budget table — operators see the two answers (production-EOS vs forced-cap) side by side.
 
 6. **Null anchor validation** — per FR-018. Per-(cell, cohort) drift verdict at `max_tokens=10/50` against M6.1.3's published CI. Three-column table: cell, cohort, drift status (`PASS` / `WARN` / `FAIL`) + `drift_fraction` numeric.
 
@@ -155,34 +160,40 @@ Test cases in `test_m6_2_crossover.py`:
 - Base verdict inconclusive → `crossover_max_tokens = None`, evidence `"base verdict was already inconclusive at the M6.1.3 baseline"` per US2 #2.
 - Validate-mode axis subset → returns coarse 4-value vocabulary `{10, 50, 2048, None}`.
 
-### Wall-clock-ratio KV-pressure inference (FR-017a + spec round-3 Q3)
+### Wall-clock-ratio KV-pressure inference (FR-017a + spec round-3 Q3 + round-5 amendment)
 
-Implemented in `m6_2_crossover.compute_kv_pressure_inference(per_cohort_high_cap_rows)`:
+**Round-5 amendment**: The inputs to this compute are the **KV-pressure sub-probe rows** (FR-036), NOT the main-sweep budget-table c=8 rows. The sub-probe sets `ignore_eos=True` so the engine generates to the cap on every RPC — that's the measurement the threshold-2.2 calibration assumes.
+
+Implemented in `m6_2_crossover.compute_kv_pressure_inference(per_cohort_sub_probe_rows)`:
 
 ```python
 M6_2_KV_PRESSURE_THRESHOLD: float = 2.2  # Pinned per spec round-3 Q3
+M6_2_SUB_PROBE_N: int = 20  # Pinned per round-5 Q4
 
 def compute_kv_pressure_inference(
-    per_cohort_high_cap_rows: dict[str, dict[str, dict[int, M6_2MeasurementPoint]]],
+    per_cohort_sub_probe_rows: dict[str, dict[str, dict[int, SubProbeBlockResult]]],
+    # ^ Keyed by cell_type ("chat_stream" | "embed") → cohort → max_tokens (1024 | 2048).
+    #   SubProbeBlockResult is the internal sub-probe block measurement shape
+    #   (n=20 RPCs, ignore_eos=True, wall_p50_ms / wall_p95_ms / failed_reason).
 ) -> list[M6_2KVPressureObservation]:
     out: list[M6_2KVPressureObservation] = []
-    for cohort in M6_1_2_COHORTS:
-        for cell_type in ("chat_stream", "embed"):
-            cell_c8 = f"{cell_type}_c8"
-            row_1024 = per_cohort_high_cap_rows[cell_c8][cohort].get(1024)
-            row_2048 = per_cohort_high_cap_rows[cell_c8][cohort].get(2048)
-            oom = row_2048 is not None and row_2048.failed_reason == "oom"
-            if row_1024 is None or row_2048 is None or row_1024.wall_p50_ms is None or row_2048.wall_p50_ms is None:
+    for cell_type in ("chat_stream", "embed"):
+        for cohort in M6_1_2_COHORTS:
+            block_1024 = per_cohort_sub_probe_rows[cell_type][cohort].get(1024)
+            block_2048 = per_cohort_sub_probe_rows[cell_type][cohort].get(2048)
+            oom = block_2048 is not None and block_2048.failed_reason == "oom"
+            if block_1024 is None or block_2048 is None or block_1024.wall_p50_ms is None or block_2048.wall_p50_ms is None:
                 ratio = None
                 label = "kv_pressure_not_observable"
             else:
-                ratio = row_2048.wall_p50_ms / row_1024.wall_p50_ms
+                ratio = block_2048.wall_p50_ms / block_1024.wall_p50_ms
                 label = (
                     f"kv_pressure_inferred_{cell_type}"
                     if ratio > M6_2_KV_PRESSURE_THRESHOLD
                     else "kv_pressure_not_observable"
                 )
-            engine_field = peak_kv_fraction_from_trailing_metadata(row_2048)  # best-effort, may return None
+            engine_field = peak_kv_fraction_from_trailing_metadata(block_2048) if block_2048 else None
+            sub_probe_prompt_source = "corpus_sharegpt" if cell_type == "chat_stream" else "corpus_sharegpt_embed"
             out.append(M6_2KVPressureObservation(
                 cohort=cohort,
                 cell_type=cell_type,
@@ -191,6 +202,9 @@ def compute_kv_pressure_inference(
                 kv_cache_used_fraction_peak=engine_field,
                 scheduling_stall_signals=None,  # filled by orchestrator from engine logs if any
                 oom_observed=oom,
+                sub_probe_n_rpcs=M6_2_SUB_PROBE_N,
+                sub_probe_prompt_source=sub_probe_prompt_source,
+                sub_probe_measurement_regime="forced_cap_ignore_eos_true",
             ))
     return out
 ```

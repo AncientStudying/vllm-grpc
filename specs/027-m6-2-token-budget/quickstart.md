@@ -4,9 +4,39 @@
 
 ## Operator playbook
 
-M6.2 is a **two-stage sweep with a methodology gate between stages**. Unlike M6.1.x's single-stage publish-and-done flow, M6.2 requires a `/speckit-clarify` round between the validate sweep and the publish sweep — round 3 pins the publish-mode `n` (and therefore the wall-clock / Modal-spend caps) based on the validate-sweep's measured within-cohort variance at `chat_stream c=1 × max_tokens=2048`. This gate is mandatory per FR-004.
+M6.2 is a **two-stage sweep with two methodology gates: a Phase 1 corpus prerequisite and a `/speckit-clarify` gate between validate and publish**.
 
-### Stage 0: Pre-sweep readiness check (~15 min, no Modal)
+- **Phase 1 prerequisite (round-5 FR-035)**: a new ShareGPT-derived embed corpus at hidden_size=4096 MUST exist and be committed before `--m6_2-validate` is invoked. One-time offline generation step (~10-30 min on a GPU).
+- **`/speckit-clarify` gate (FR-004)**: a future clarify cycle pins the publish-mode `n` (and the wall-clock / Modal-spend caps) based on the validate-sweep's measured within-cohort variance at `chat_stream c=1 × max_tokens=2048`. The publish-mode orchestrator refuses to start if `--m6_2-n` is unset.
+
+The KV-pressure sub-probe (round-5 FR-036) runs automatically in both modes per SC-019 — no separate operator step.
+
+### Stage 0a: ShareGPT-derived embed corpus generation (~10-30 min, one-time, Phase 1 prerequisite per FR-035)
+
+**Skip this stage if the corpus already exists** (check `tools/benchmark/corpus/completions_embeds_qwen3_8b/manifest.json`).
+
+```bash
+# 1. Generate the embed corpus at hidden_size=4096 from the ShareGPT chat corpus.
+#    Runs on Modal A10G or local GPU; requires ~16 GB VRAM for Qwen3-8B fp16.
+python scripts/python/gen_embed_corpus_qwen3_8b.py \
+    --source-corpus=tools/benchmark/corpus/chat_sharegpt_1000.json \
+    --output-dir=tools/benchmark/corpus/completions_embeds_qwen3_8b/ \
+    --model=Qwen/Qwen3-8B \
+    --hidden-size=4096 \
+    --dtype=float16
+
+# 2. Verify the generated corpus.
+ls tools/benchmark/corpus/completions_embeds_qwen3_8b/ | wc -l   # expect 1001 (1000 .pt files + manifest.json)
+python -c "import json; m=json.load(open('tools/benchmark/corpus/completions_embeds_qwen3_8b/manifest.json')); print('entries:', len(m['entries']), 'corpus_sha256:', m['corpus_sha256'][:16])"
+
+# 3. Commit the corpus to the repo.
+git add tools/benchmark/corpus/completions_embeds_qwen3_8b/
+git commit -m "[M6.2 prereq] Generate ShareGPT-derived embed corpus at hidden_size=4096"
+```
+
+**The corpus is ~400-800 MB committed**; the manifest pins per-file SHAs + a top-level `corpus_sha256` so SC-018's drift validation can fire on tampering. Generation is reproducible: same ShareGPT input + same model + same RNG seed → same per-file SHAs → same top-level corpus_sha256.
+
+### Stage 0b: Pre-sweep readiness check (~15 min, no Modal)
 
 ```bash
 # 1. Confirm branch + clean tree
@@ -14,25 +44,30 @@ git status                                                    # should be clean 
 git log -1                                                    # should show the spec + plan commits
 
 # 2. Confirm M6.1.3 baseline artifact is available
-ls -la docs/benchmarks/m6_1_3-attribution-closure.json        # MUST exist (required by FR-013 + FR-031)
+ls -la docs/benchmarks/m6_1_3-attribution-closure.json        # MUST exist (FR-013 + FR-031)
 
-# 3. Local lint chain (per feedback_local_lint_chain memory)
+# 3. Confirm Phase 1 corpus prerequisites
+ls -la tools/benchmark/corpus/chat_sharegpt_1000.json         # chat corpus (existing, M5.2-vintage)
+ls -la tools/benchmark/corpus/chat_sharegpt_1000.provenance.json
+ls -la tools/benchmark/corpus/completions_embeds_qwen3_8b/manifest.json  # embed corpus (round-5 prereq from Stage 0a)
+
+# 4. Local lint chain (per feedback_local_lint_chain memory)
 ruff check .                                                  # must pass
 ruff format --check .                                         # must pass
 mypy --strict .                                               # must pass
-pytest tools/benchmark/tests/test_m6_2_*.py                   # must pass (after implementation lands; for spec/plan phase, skipped)
+pytest tools/benchmark/tests/test_m6_2_*.py                   # must pass after implementation lands
 
-# 4. Confirm torch-pin gate would succeed
-uv sync --frozen --all-groups                                 # macOS lockfile parity per ANALYSIS.md M6.0a lesson
+# 5. Confirm torch-pin gate would succeed
+uv sync --frozen --all-groups                                 # macOS lockfile parity per ANALYSIS.md M6.0a
 
-# 5. Confirm Modal token is set
+# 6. Confirm Modal token is set
 echo "${MODAL_BENCH_TOKEN:?MODAL_BENCH_TOKEN env var must be set}"
 
-# 6. Dry-run the validate CLI to confirm argparse wiring
-python -m vllm_grpc_bench --m6_2-validate --m6_2-skip-deploy  # runs against stub driver; exits within seconds
+# 7. Dry-run the validate CLI to confirm argparse wiring + corpus SHA validation
+python -m vllm_grpc_bench --m6_2-validate --m6_2-skip-deploy  # runs against stub driver; exits within seconds; SC-018 corpus-SHA gate fires here if corpora are missing or drifted
 ```
 
-If any step fails, fix BEFORE proceeding. The validate sweep is ~2.3-2.5h + ~$4 Modal spend; a CLI typo or missing baseline file is cheaper to catch here.
+If any step fails, fix BEFORE proceeding. The validate sweep is ~2.3-2.5h + ~$4 Modal spend; a CLI typo or missing baseline/corpus is cheaper to catch here.
 
 ### Stage 1: Validate sweep (~2.3-2.5h wall-clock, ~$4 Modal spend)
 
@@ -49,13 +84,15 @@ python -m vllm_grpc_bench --m6_2-validate \
 ```
 
 **Validate sweep characteristics**:
-- 3-point axis subset `{10, 50, 2048}` × 4 cohorts × 6 cells = **72 measurement points** at `n=20` each = 1,440 total RPCs.
-- 4-hour budget per FR-024.
+- 3-point axis subset `{10, 50, 2048}` × 4 cohorts × 6 cells = **72 measurement points** at `n=20` each = 1,440 total RPCs in the main sweep.
+- **Plus the KV-pressure sub-probe (round-5 FR-036)**: 4 cohorts × 2 cell-types × 2 caps × n=20 = 320 sub-probe RPCs. Runs unconditionally per SC-019 — sub-probe is the only path to FR-017a's wall-clock-ratio inference.
+- 4-hour budget per FR-024 (main sweep ~2.3-2.5 h + sub-probe ~30 min – 1 h).
 - Anchor re-anchor at start + end only (sweep < 8h skips in-flight 4h marks per FR-031).
 - Interior axis points (`256 / 512 / 1024`) rendered as `not_validated` in the artifact narrative per FR-001 / SC-002.
 - Both null anchors (`max_tokens=10/50`) exercised so the FR-012 / SC-004 cross-milestone comparison fires twice per (cell, cohort).
-- High-cap (`max_tokens=2048`) exercised so the FR-017 / SC-006 KV-pressure wall-clock-ratio inference computes.
+- High-cap (`max_tokens=2048`) exercised in BOTH regimes: budget-table row (natural EOS, corpus prompt) AND sub-probe (forced cap, `ignore_eos=True`, corpus prompt). The wall-clock-ratio inference uses the sub-probe rows.
 - The "Production latency budget" section renders the 72 measured rows + 72 `not_validated` placeholder rows.
+- The "KV-cache pressure" subsection shows sub-probe-derived `wall_clock_ratio_c8_2048_over_1024` per cohort × cell-type.
 
 **Validation checklist for the validate artifact**:
 
@@ -68,12 +105,17 @@ $EDITOR docs/benchmarks/m6_2-token-budget-validate.md
 # 2. Iteration order is "cohort_innermost_block".
 # 3. iteration_discipline_verified = true.
 # 4. The "Production latency budget" section renders 72 measured rows + 72 not_validated placeholders.
+#    Each row carries prompt_source ∈ {synthetic_seed_derived (null anchors), corpus_sharegpt (chat interior cap),
+#    synthetic_random_tensor (embed null anchors), corpus_sharegpt_embed (embed interior cap)} + measurement_regime = "natural_eos".
 # 5. The "Protocol crossover threshold" section carries the axis-restricted disclaimer callout.
-# 6. The "KV-cache pressure" subsection includes wall_clock_ratio_c8_2048_over_1024 for all 4 cohorts × 2 cell-types.
+# 6. The "KV-cache pressure" subsection includes wall_clock_ratio_c8_2048_over_1024 for all 4 cohorts × 2 cell-types,
+#    populated from the SUB-PROBE rows (sub_probe_measurement_regime = "forced_cap_ignore_eos_true").
 # 7. The "Null anchor validation" subsection lists all 48 anchor cells with PASS/WARN/FAIL verdicts.
 # 8. The "Anchor latency trajectory" subsection has 2 snapshots per cohort (start + end).
 # 9. The "Failure summary" subsection is present (reads "no measurement-cell failures" if clean).
 # 10. The "Sweep wall-clock timeline" subsection may be omitted (validate sweep < 8h per FR-032).
+# 11. run_meta.chat_corpus_sha256 + chat_corpus_path + embed_corpus_sha256 + embed_corpus_path are populated (round-5 SC-018).
+# 12. run_meta.sub_probe_ran = true (round-5 SC-019).
 
 # Check the integrity_warnings list (should be empty in a clean validate sweep):
 python -c "import json; print(json.load(open('docs/benchmarks/m6_2-token-budget-validate.json'))['integrity_warnings'])"
@@ -120,10 +162,12 @@ python -m vllm_grpc_bench --m6_2 \
 
 **Publish sweep characteristics**:
 - Full 6-point axis `{10, 50, 256, 512, 1024, 2048}` × 4 cohorts × 6 cells = **144 measurement points** at the round-3-pinned `n` each.
+- **Plus the KV-pressure sub-probe (round-5 FR-036)**: 320 sub-probe RPCs (4 cohorts × 2 cell-types × 2 caps × n=20). Runs after the main sweep completes; ~30 min – 1 h additional wall-clock (< 2% of the publish budget).
 - Anchor re-anchor at start + end + every 4h mark per FR-031 (~8-10 snapshots/cohort).
 - `network_paths` topology probe co-fires at the same 4h cadence per FR-009 (~8-10 snapshots/cohort).
-- Cohort-innermost block iteration per FR-030 (FR-032 machine-checks discipline).
-- In-window retry once for transient block failures per FR-033.
+- Cohort-innermost block iteration per FR-030 (FR-032 machine-checks discipline). Sub-probe respects FR-030 within its own (cell_type, max_tokens) tuples.
+- In-window retry once for transient block failures per FR-033 (applies to sub-probe blocks too).
+- Three-regime prompt source per round-5 FR-034 / FR-035: null anchors = synthetic, interior caps = ShareGPT corpus, sub-probe = ShareGPT corpus + ignore_eos=True.
 - All four primary sections + 6 auxiliary subsections render.
 
 **Tunnel readiness**:
@@ -311,6 +355,10 @@ If the operator expected KV-pressure onset and the inference reports `not_observ
 - Artifact schema contract: [contracts/artifact-schema.md](./contracts/artifact-schema.md)
 - Iteration order + confound controls: [contracts/iteration-order.md](./contracts/iteration-order.md)
 - Wire vocabulary: [contracts/wire-vocabulary.md](./contracts/wire-vocabulary.md)
+- Prompt source three-regime split (round-5): [contracts/prompt-source.md](./contracts/prompt-source.md)
 - M6.1.3 baseline artifact: `docs/benchmarks/m6_1_3-attribution-closure.{md,json}`
 - M6.1.3 plan + contracts (inherited copy-then-refactor methodology): [`specs/026-m6-1-3-attribution-closure/plan.md`](../026-m6-1-3-attribution-closure/plan.md)
 - Project-wide instrumentation contract: `contracts/instrumentation.md`
+- ShareGPT chat corpus: `tools/benchmark/corpus/chat_sharegpt_1000.json` + `.provenance.json`
+- ShareGPT-derived embed corpus (round-5 prereq): `tools/benchmark/corpus/completions_embeds_qwen3_8b/`
+- Embed corpus generator script: `scripts/python/gen_embed_corpus_qwen3_8b.py`

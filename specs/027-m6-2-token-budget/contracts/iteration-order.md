@@ -1,6 +1,6 @@
 # Contract: M6.2 Sweep Iteration Order + Exogenous-Confound Controls
 
-**Branch**: `027-m6-2-token-budget` | **Phase 1 output** | **Plan**: [../plan.md](../plan.md)
+**Branch**: `027-m6-2-token-budget` | **Phase 1 output (round-5 amended)** | **Plan**: [../plan.md](../plan.md)
 
 ## Why this contract exists
 
@@ -241,6 +241,52 @@ FR-033 (block-level in-window retry) is DISTINCT from FR-026's Modal-deploy-leve
 
 The two mechanisms compose: if a block is in-window-retrying when Modal preemption occurs, the resume re-runs the entire block (counting as a fresh first-attempt) and the in-window retry budget is re-set; the per-row `retry_attempted` field reflects the post-resume state. If the resume drifts into a different time-of-day window (e.g., > 30 min later than the original block start), the resumed block may break FR-030 — in which case `iteration_discipline_verified` fires false and the operator decides whether to publish or rerun. The orchestrator does NOT auto-abort on resume drift; this is a known edge case per R-8 of [`../research.md`](../research.md).
 
+## Round-5 addition: KV-pressure sub-probe step
+
+After the main 144-point (publish) or 72-point (validate) sweep completes, `m6_2_sweep.py` invokes `m6_2_sub_probe.run_kv_pressure_sub_probe(...)` per FR-036 to run the supplementary sub-probe step. The sub-probe is **part of the same orchestrator iteration sequence** but emits to a different artifact entity (`KVPressureObservation`, not `MeasurementPoint`).
+
+Sub-probe iteration order:
+
+```python
+SUB_PROBE_CELL_TYPES = ("chat_stream", "embed")
+SUB_PROBE_MAX_TOKENS = (1024, 2048)
+SUB_PROBE_N = 20
+
+for cell_type in SUB_PROBE_CELL_TYPES:                            # outer
+    for max_tokens in SUB_PROBE_MAX_TOKENS:                        # middle
+        for cohort in M6_1_2_COHORTS:                              # INNERMOST per FR-030
+            inputs = m6_2_prompt_source.resolve_block_inputs(
+                cell=f"{cell_type}_c8",
+                max_tokens=max_tokens,
+                iter_idx=...,
+                cohort=cohort,
+                base_seed=...,
+                chat_corpus=chat_corpus,
+                embed_corpus=embed_corpus,
+                ignore_eos_override=True,  # FORCED CAP per FR-036
+            )
+            run_sub_probe_block(inputs, n=SUB_PROBE_N, ...)
+```
+
+Sub-probe blocks inherit the round-4 discipline:
+
+- **FR-030**: cohort-innermost within each `(cell_type, max_tokens)` tuple — the 4 cohorts share a tight time window per sub-probe tuple.
+- **FR-032**: per-block UTC timestamps captured + included in the `iteration_discipline_verified` machine check.
+- **FR-033**: in-window retry-once for transient errors.
+
+Sub-probe blocks do NOT inherit the FR-031 4h-cadence anchor re-measurement (the sub-probe is a contiguous ~30 min – 1 h window; intra-sub-probe drift detection is not spec'd) or FR-009 4h `network_paths` probes (same reason).
+
+The sub-probe runs in **both publish and validate modes** (SC-019 — sub-probe is unconditional; the only path to a meaningful FR-017a wall-clock-ratio inference). Wall-clock cost ~30 min – 1 h regardless of mode.
+
+## Round-5 addition: prompt-source regime dispatch
+
+Every per-block dispatch (main-sweep AND sub-probe) calls `m6_2_prompt_source.resolve_block_inputs(...)` to get the correct prompt-source regime per the table in [`prompt-source.md`](./prompt-source.md):
+
+- Main-sweep null-anchor blocks (`max_tokens ∈ {10, 50}`) → synthetic regime, `ignore_eos=False`.
+- Main-sweep interior-cap blocks (`max_tokens ∈ {256, 512, 1024, 2048}`) → corpus regime, `ignore_eos=False`.
+- Sub-probe blocks (`c=8 × {1024, 2048}`) → corpus regime, `ignore_eos=True` (via `ignore_eos_override=True` in the resolver call).
+- FR-031 anchor re-measurement blocks (`chat_stream c=1 × max_tokens=10`) → synthetic regime (not via `resolve_block_inputs`; called directly via `_build_chat_prompt(seed)` to preserve M6.1.3 baseline byte-comparability).
+
 ## Test enforcement
 
 The following test files in `tools/benchmark/tests/` enforce this contract:
@@ -248,5 +294,7 @@ The following test files in `tools/benchmark/tests/` enforce this contract:
 - `test_m6_2_iteration_order.py` — FR-030 cohort-innermost iteration verification; FR-032 per-block UTC timestamps + iteration-discipline machine check + wall-clock timeline subsection rendering.
 - `test_m6_2_anchor_trajectory.py` — FR-031 4h cadence + cell-of-headroom firing rule + start+end-only validate-mode + SC-016 sweep-level integrity header.
 - `test_m6_2_retry_policy.py` — FR-033 in-window retry once + retry-failure handling + end-of-sweep retry forbidden + retry-stays-in-time-window assertion.
+- `test_m6_2_sub_probe.py` (new round-5) — FR-036 sub-probe contract (16 blocks × n=20 × ignore_eos=True), additive to budget table, runs in both publish and validate modes per SC-019, FR-030 discipline preserved within sub-probe.
+- `test_m6_2_prompt_source.py` (new round-5) — three-regime dispatch via `resolve_block_inputs`, cohort-invariance, corpus SHA validation (SC-018).
 
 Each test exercises the contract surface directly with canned data; no Modal compute required. Integration coverage by `test_m6_2_validate_cli.py` and `test_m6_2_publish_cli.py` exercises the same surface against the stub RPC driver end-to-end.

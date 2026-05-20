@@ -4,147 +4,182 @@
 
 ## Overview
 
-Phase 0 captures the implementation-level research that complements the spec-level decisions made during the 4-round `/speckit-clarify` cycle (22 Q/A bullets total). The Technical Context in [`plan.md`](./plan.md) has no `NEEDS CLARIFICATION` markers — every architecturally-significant choice was resolved during clarify. Phase 0 here documents the code-surface investigation needed to write the data model and contracts cleanly.
+Phase 0 captures the implementation-level research that complements the spec-level decisions made during the 5-round `/speckit-clarify` cycle (27 Q/A bullets total — 6 in round 1, 1 in round 2, 3 in round 3, 5 in round 4, 5 in round 5). The Technical Context in [`plan.md`](./plan.md) has no `NEEDS CLARIFICATION` markers — every architecturally-significant choice was resolved during clarify. Phase 0 here documents the code-surface investigation needed to write the data model and contracts cleanly.
 
-The single open deferral (publish-mode `n` per FR-004) is methodology-bounded: the publish-mode orchestrator MUST refuse `--m6_2` invocation if `--m6_2-n` is unset; a future clarify round 3 pins the value after validate-sweep variance data lands. No implementation-side research is needed for the deferral — the gate enforcement is the contract.
+Two open implementation-side prerequisites (neither blocks Phase 1 / Phase 2):
+
+1. **Publish-mode `n`** (FR-004) — clarify-deferred to a future cycle gated on validate-sweep variance data. The publish-mode orchestrator MUST refuse `--m6_2` invocation until pinned.
+2. **ShareGPT-derived embed corpus generation** (FR-035) — engineering deliverable; the corpus MUST exist and be committed before `--m6_2-validate` is invoked. Generated offline via `gen_embed_corpus_qwen3_8b.py`.
 
 ## Research Items
 
 ### R-1 — M6.1.3 module file set + naming convention inheritance
 
-**Decision**: M6.2 mirrors M6.1.3's parallel-module pattern (which mirrors M6.1.2's, which mirrors M6.1.1's). Files: `m6_2_types.py`, `m6_2_sweep.py`, `m6_2_reporter.py`, `m6_2_validate.py`, `m6_2_crossover.py`, `m6_2_anchor_trajectory.py`. Each `m6_2_*` follows the `m6_2_<role>.py` pattern. Six new modules total; no shared cross-milestone helper introduced by M6.2 (the M6.1.3 `symmetric_prompts.py` is imported, not extended).
+**Decision**: M6.2 mirrors M6.1.3's parallel-module pattern. Files: `m6_2_types.py`, `m6_2_sweep.py`, `m6_2_reporter.py`, `m6_2_validate.py`, `m6_2_crossover.py`, `m6_2_anchor_trajectory.py`, plus round-5 additions `m6_2_prompt_source.py` and `m6_2_sub_probe.py`. Eight new modules total; each follows the `m6_2_<role>.py` pattern.
 
-**Rationale**: M6.1.1 established the "one module per concern" convention; M6.1.2 inherited it with 5 modules; M6.1.3 inherited with 8 (more concerns: 7-bucket classifier extension, pooled audit aggregation, between-run variance compute, plus the shared helper); M6.2 inherits with 6 (the 4 standard `_types` / `_sweep` / `_reporter` / `_validate` modules plus the 2 net-new `_crossover` and `_anchor_trajectory` pure-function modules for the new M6.2 analyses). The split is intentional — crossover and anchor-trajectory modules each carry significant pure-function logic that's easier to unit-test in isolation than as part of a larger orchestrator. The parallel-module pattern (vs in-place modification of `m6_1_3_*` files) is mandated by the M6.1.3 FR-037 freeze rule (prior-milestone historical re-runnability stays frozen).
+**Rationale**: M6.1.1 established the "one module per concern" convention; M6.1.2 inherited it with 5 modules; M6.1.3 inherited with 8 (extra concerns: 7-bucket classifier, pooled audit, between-run variance, shared helper); M6.2 inherits with 8 (the 4 standard `_types`/`_sweep`/`_reporter`/`_validate` modules + 4 net-new pure-function or pure-orchestration modules for crossover, anchor trajectory, prompt source, sub-probe). The parallel-module pattern (vs in-place modification of `m6_1_3_*` files) preserves the M6.1.3 FR-037 freeze rule for historical re-runnability.
 
 **Alternatives considered**:
-- Modify `m6_1_3_sweep.py` in-place to add the `max_tokens` axis — REJECTED because in-place modification breaks the M6.1.3 FR-037 freeze on `--m6_1_3` historical output. The parallel `m6_2_*` family preserves M6.1.3 re-runnability.
-- Bundle crossover + anchor-trajectory into `m6_2_sweep.py` — REJECTED; the two concerns have separable test surfaces (crossover doesn't depend on anchor trajectory; both are pure functions consumed by the reporter). Module-per-concern matches the M6.1.x pattern.
-- Add new `m6_2_*` modules for KV-pressure computation separately — REJECTED; the KV-pressure inference is logically the same family as crossover (both are derived analyses on top of the same per-(cell, cohort, max_tokens) measurements). Combining them in `m6_2_crossover.py` reduces module count without losing test isolation.
+- Modify `m6_1_3_sweep.py` in-place — REJECTED (breaks M6.1.3 freeze).
+- Bundle `_prompt_source` + `_sub_probe` into `m6_2_sweep.py` — REJECTED (test isolation; sub-probe orchestration + corpus-loading I/O are separable concerns from main-sweep iteration).
+- Combine `_crossover` + `_prompt_source` into a single "M6.2 helpers" module — REJECTED (the concerns are unrelated — crossover is a pure math function over per-cell rows; prompt-source is corpus loading + regime dispatch with file I/O).
 
 ### R-2 — Sweep iteration order: cohort-innermost block iteration (FR-030)
 
-**Decision**: The orchestrator iterates as:
-```python
-for cell in M6_1_CELLS:                               # outer
-    for max_tokens in M6_2_MAX_TOKENS_AXIS:           # middle
-        for cohort in cohorts_at_concurrency(cell):   # innermost (per FR-030)
-            for rpc in range(n):                       # per-cohort dispatch (concurrent per FR-007)
-                ...
-```
-where `M6_2_MAX_TOKENS_AXIS = (10, 50, 256, 512, 1024, 2048)` in publish mode and `(10, 50, 2048)` in validate mode. The outer-loop `(cell × max_tokens)` order is `(M6_1_CELLS × M6_2_MAX_TOKENS_AXIS)` — cells iterate first, then max_tokens within each cell. This pairs each `(cell, max_tokens)` tuple with its 4 contiguous cohort blocks per FR-030.
+**Decision**: The orchestrator iterates `for cell in M6_1_CELLS: for max_tokens in M6_2_MAX_TOKENS_AXIS: for cohort in cohorts_at_concurrency(cell): for rpc in range(n): ...`. Cohort is innermost per FR-030. The `(cell × max_tokens)` outer-loop order is cells-first then max_tokens within each cell — keeps each cell's per-cohort × per-max_tokens block in a contiguous wall-clock window for reporter clarity.
 
-**Rationale**: Cohort-innermost is the FR-030 spec-level decision (round-4 Q1). The choice of `(cell × max_tokens)` outer order vs `(max_tokens × cell)` outer order is implementation-deferred per FR-030 but MUST keep each `(cell, max_tokens)` tuple's 4 cohort blocks contiguous. Cells-first means the per-cell rendering in the reporter naturally aligns with the iteration order; max_tokens-first would interleave cells which complicates the reporter's per-cell aggregation. Cells-first is the natural choice.
-
-The `iteration_discipline_verified` machine check (FR-032) inspects the per-block UTC timestamps post-hoc: for every `(cell, max_tokens)` tuple, the 4 cohort blocks' timestamps must be contiguous (no other tuple's blocks fall between them). The check is purely diagnostic — it never blocks publication, only emits a soft warning header.
+**Rationale**: Cohort-innermost is the FR-030 spec-level decision (round-4 Q1). Cells-first outer order pairs naturally with the reporter's per-cell rendering and the wall-clock timeline subsection's per-cell readability. The `iteration_discipline_verified` machine check (FR-032) inspects per-block UTC timestamps post-hoc.
 
 **Alternatives considered**:
-- Max_tokens-outermost, cells-middle, cohort-innermost — REJECTED; would interleave cells, complicating per-cell aggregation in the reporter and making the per-cell trajectory in the wall-clock timeline subsection less readable.
-- Randomized `(cell, max_tokens)` outer order — REJECTED; the cohort-innermost discipline already controls between-cohort time-of-day bias; adding randomization to the outer order would distribute within-cell axis-trend variance across the wall clock without methodological benefit, and would make the wall-clock timeline subsection harder to interpret.
-- Cohort-outermost — REJECTED at spec round-4 Q1; this option was explicitly named as "the bad baseline" and is FORBIDDEN per FR-030.
+- Max_tokens-outermost, cells-middle — REJECTED (interleaves cells across the wall clock; harder reporter aggregation).
+- Randomized `(cell, max_tokens)` outer order — REJECTED (FR-030 controls between-cohort bias; outer randomization adds noise without methodological benefit).
+- Cohort-outermost — FORBIDDEN per FR-030.
 
 ### R-3 — Intra-sweep anchor re-measurement implementation (FR-031)
 
-**Decision**: The `m6_2_anchor_trajectory.compute_anchor_block(...)` function is invoked by `m6_2_sweep.py` at sweep start, sweep end, and every 4-hour wall-clock mark in between (in publish mode). The function runs a minimal `chat_stream × c=1 × max_tokens=10` measurement per cohort, `n=20` RPCs, executed cohort-innermost (per FR-030's same-tuple-discipline-applies-to-the-anchor-block). The 4-hour mark is determined by polling `time.monotonic()` against the sweep's start timestamp; the sweep yields an anchor-block invocation when `(now - sweep_start) / 3600 >= next_anchor_mark` where `next_anchor_mark` advances by 4 each fire. Validate-mode (sweep wall-clock < 8h) skips in-flight marks and only fires the start + end anchors.
+**Decision**: `m6_2_anchor_trajectory.compute_anchor_block(...)` invoked at sweep start, end, and every 4-hour wall-clock mark in publish mode. Block is `chat_stream × c=1 × max_tokens=10`, `n=20`, cohort-innermost. The anchor block uses the **synthetic prompt regime** (the M6.1.x `_build_chat_prompt(seed)` path) — NOT the corpus regime introduced in round-5 — so the anchor measurements stay byte-comparable with M6.1.3's published anchor CIs. Validate-mode (sweep < 8h) runs start + end only.
 
-**Rationale**: The 4h cadence aligns with FR-009's `network_paths` cadence so the operator gets a unified "sweep health check" tick: at each 4h mark, both the topology probe (FR-009) AND the anchor re-anchor (FR-031) co-fire. Implementation-wise this is one synchronization barrier per 4h mark — the sweep orchestrator finishes the current `(cell, max_tokens, cohort)` RPC, runs the network_paths probe, runs the anchor re-anchor across all 4 cohorts, then resumes the main iteration.
-
-The chat_stream × c=1 × max_tokens=10 cell choice optimizes for: (a) cheap (low max_tokens → ~35 ms per RPC), (b) network-latency-sensitive (c=1 → no concurrent dispatch masking; the wall-clock includes the full network round-trip), (c) symmetric across cohorts (chat_stream is the canonical Story 2 cell-type). At n=20, the anchor block per cohort takes ~0.7s wall-clock; cohort-innermost iteration across 4 cohorts is ~3s; plus channel setup overhead per cohort is ~5-10s; total ~30-50s per 4h-mark anchor-block firing. Over a 40h publish sweep with 9 in-flight marks + start + end (~11 firings), cumulative overhead is ~5-10 min — well under the FR-031's "≤ ~25 min cumulative" budget.
-
-The `latency_drift_warning` per-cohort threshold (M6.1.3-published CI half-width at `chat_stream c=1 × max_tokens=10`) is read from M6.1.3's published JSON via the `--m6_2-m6-1-3-baseline` path (FR-013, default `docs/benchmarks/m6_1_3-attribution-closure.json`). The exact field path inside the M6.1.3 JSON is `per_cell["chat_stream_c1"]["per_cohort"][cohort_name]["max_tokens=10"]["wall_p50_ms_ci_half_width"]` (or equivalent in the M6.1.3 schema; the data-model.md captures the exact path).
+**Rationale**: 4h cadence aligns with FR-009 `network_paths` for a unified "sweep health check" tick. Cell choice (chat_stream c=1 × max_tokens=10) is cheap, network-sensitive, symmetric. n=20 is sensitive enough at the M6.1.3 CI half-width threshold. Using synthetic prompts (not the corpus regime) at the anchor block preserves the intent of FR-031 — to detect intra-sweep drift relative to the M6.1.3 baseline; switching to corpus prompts would make the trajectory measure prompt-source drift instead of network/temporal drift.
 
 **Alternatives considered**:
-- Run the anchor block at every 2h mark — REJECTED; doubles the cumulative overhead without proportional drift-detection benefit (the 4h cadence catches ≥ 4h-period drift; 2h-period drift is rare and already partially mitigated by FR-030's cohort-innermost interleaving within each `(cell, max_tokens)` block).
-- Run a larger anchor block (e.g., n=50) — REJECTED; the n=20 anchor is already sensitive enough (M6.1.3's CI half-width at chat_stream c=1 × max_tokens=10 is well-bounded; spread > CI half-width is detectable with n=20).
-- Anchor at multiple cells (e.g., chat_stream × c=1 × {10, 50} or both embed and chat_stream) — REJECTED; the 4h cadence already adds ~5-10 min cumulative overhead; doubling the cell coverage doubles the overhead without meaningfully improving detection (the chat_stream c=1 anchor is the highest-network-sensitivity cell; if it doesn't drift, the others aren't expected to either).
+- 2h cadence — REJECTED (doubles cumulative overhead without proportional detection benefit).
+- Larger anchor block (n=50) — REJECTED (n=20 is already sensitive enough).
+- Multiple anchor cells — REJECTED (chat_stream c=1 has highest network sensitivity; doubling cells doubles overhead without detection improvement).
+- Corpus-regime anchor block — REJECTED at this layer (would measure prompt-source drift instead of network drift; would also break the M6.1.3-baseline-comparison interpretation).
 
 ### R-4 — Per-block UTC timestamp capture (FR-032)
 
-**Decision**: The sweep orchestrator captures `block_start_utc = datetime.now(UTC).isoformat()` immediately before entering the per-block RPC dispatch loop and `block_end_utc = datetime.now(UTC).isoformat()` immediately after the loop completes (including any in-window retry per FR-033). The timestamps are stored on the per-(cell, cohort, max_tokens) row of the latency budget table. The orchestrator ALSO accumulates the full iteration sequence as an ordered list of `(cell, max_tokens, cohort, block_start_utc, block_end_utc)` tuples; this list is consumed by the `iteration_discipline_verified` post-hoc check (FR-032) and by the "Sweep wall-clock timeline" reporter subsection.
+**Decision**: `block_start_utc = datetime.now(UTC).isoformat()` immediately before per-block dispatch loop; `block_end_utc = datetime.now(UTC).isoformat()` immediately after (including any in-window retry). Stored on per-row `M6_2MeasurementPoint`. Iteration sequence accumulated as ordered list for post-hoc `iteration_discipline_verified` check.
 
-**Rationale**: The decision is one-of-a-kind per block, not per-RPC — per-RPC timestamps are higher granularity than needed for the time-of-day attribution purpose. The post-hoc machine check is straightforward: group the iteration sequence by `(cell, max_tokens)` tuple and verify each group's 4 cohort blocks are contiguous (no other tuple's blocks fall between them, modulo the anchor re-anchor blocks and the network_paths probe — which are accounted for as known interruptions).
-
-The ISO-8601 string format is chosen over Unix timestamp seconds because (a) human-readable in the JSON artifact, (b) timezone-explicit (UTC suffix), (c) sortable lexicographically without numeric conversion, (d) parseable by every artifact consumer.
+**Rationale**: Per-block granularity (not per-RPC) is sufficient for the time-of-day attribution purpose. ISO-8601 is readable, sortable, timezone-explicit. Storage cost negligible.
 
 **Alternatives considered**:
-- Capture timestamps inside the per-RPC inner loop — REJECTED; per-RPC granularity is higher than needed and would inflate the artifact JSON size by 144 × n × 2 timestamps (~144 × 100 × 2 × 30 bytes ≈ 1 MB of timestamp metadata in publish mode).
-- Use Unix timestamp seconds — REJECTED; ISO-8601 is more readable + sortable + timezone-explicit; the storage cost difference is negligible.
-- Capture wall-clock duration only (no start/end timestamps) — REJECTED; the FR-030 discipline check requires knowing when each block started AND ended to verify contiguity across cohorts at the same `(cell, max_tokens)` tuple. Duration alone doesn't say WHEN.
+- Per-RPC timestamps — REJECTED (over-granular; inflates artifact ~1 MB unnecessarily).
+- Unix timestamps — REJECTED (less readable; lexicographic comparison requires conversion).
+- Duration-only (no start/end) — REJECTED (FR-030 discipline check needs WHEN, not just HOW LONG).
 
 ### R-5 — In-window retry policy implementation (FR-033)
 
-**Decision**: The per-block dispatch loop is wrapped in a try/except that catches the transient-error set `(grpc.RpcError [UNAVAILABLE / DEADLINE_EXCEEDED], asyncio.TimeoutError, httpx.RequestError, single-RPC-OOM-from-engine)`. On first-attempt failure, the loop retries ONCE — re-executing the entire per-cohort block at the current `(cell, max_tokens)` tuple within the same `(cell, max_tokens)` time window (i.e., before the orchestrator advances to the next tuple). On retry success, the row is marked `retry_attempted = true` and `wall_p50_ms` reflects the retry's measurements. On retry failure, the row is marked `failed_<reason>` per FR-029 with `retry_attempted = true` (both attempts failed), and the orchestrator advances to the next cohort within the same tuple.
+**Decision**: Per-block dispatch wrapped in try/except catching the canonical transient set (`grpc.RpcError` with retry-eligible codes, `asyncio.TimeoutError`, `httpx.RequestError`, single-RPC engine-OOM-without-crash). One retry within the current `(cell, max_tokens)` tuple's time window. Retry success → `retry_attempted = true`, latency fields populated from retry measurements. Both attempts fail → `failed_<reason>` per FR-029. End-of-sweep retries FORBIDDEN.
 
-End-of-sweep retries are FORBIDDEN: there is no second pass over failed blocks at the end of the sweep. The orchestrator's main iteration is the only retry opportunity — after the `(cell, max_tokens)` tuple closes, failed blocks are permanently `failed_<reason>`.
-
-**Rationale**: The FR-033 contract is "in-window retry once, no after-the-fact retries". The transient-error set is conservatively scoped to known-transient conditions (network-level errors and dispatch timeouts and single-RPC OOM); other error types (e.g., gRPC INVALID_ARGUMENT, AUTHENTICATION_FAILED) are NOT retried — they indicate a structural failure that retry wouldn't fix.
-
-The single-RPC OOM case (where the engine returns an OOM-like error for one RPC but doesn't crash the engine — rare, but possible at `c=8 × max_tokens=2048`) is included in the retry set because the engine has shown ability to recover from transient memory pressure at the next RPC. If the retry also fails, the row is `failed_oom` and the FR-029 failure-summary tally fires.
+**Rationale**: Conservative transient-error scope. Single retry per FR-033. Multiple retries would extend in-window dispatch and risk slipping into the 4h-mark cadence boundary; end-of-sweep retries would violate FR-030.
 
 **Alternatives considered**:
-- Retry twice (or N > 1 times) — REJECTED; spec FR-033 pins retry count at exactly 1. Multiple retries would extend the in-window dispatch time and risk slipping into the next 4h-mark cadence boundary.
-- End-of-sweep retry pass for failed blocks — REJECTED at spec round-4 Q5 (Option C); the retry would run in a different time-of-day window than its 3 sibling cohorts at the same tuple, violating FR-030 cohort-innermost discipline. The failure-summary tally per FR-029 is the operator's signal to rerun the entire sweep if data completeness is critical.
-- No retries at all (first failure is final) — REJECTED at spec round-4 Q5 (Option B); transient gRPC errors are common enough during multi-day Modal sweeps that no-retry would inflate the failed-cell count unnecessarily.
+- Retry twice — REJECTED (FR-033 pins count at 1).
+- End-of-sweep retry pass — REJECTED at round-4 Q5 (FR-030 violation).
+- No retries — REJECTED at round-4 Q5 (transient failures common at multi-day sweeps).
 
 ### R-6 — Symmetric mean-in-CI crossover rule implementation (spec round-1 Q3)
 
-**Decision**: The `m6_2_crossover.compute_per_cell_crossover(...)` function implements the symmetric mean-in-CI rule (spec round-1 Q3) as follows. For each measurement cell:
+**Decision**: `m6_2_crossover.compute_per_cell_crossover(...)` implements the symmetric mean-in-CI rule. For each cell: identify M6.1.3-winning cohort + second-place cohort from the M6.1.3 baseline; iterate the axis in ascending order; check `(winner_p50 ∈ [second_p50 ± second_ci_half]) OR (second_p50 ∈ [winner_p50 ± winner_ci_half])` at each axis point; return smallest where predicate fires. CI half-width = `1.96 × stderr` (95% normal approximation).
 
-1. Read the M6.1.3 base verdict from the loaded `m6_1_3_base_verdicts` dict. If the verdict is `inconclusive_high_variance` or any `multi_factor_*` compound label, return `M6_2CrossoverThreshold(crossover_max_tokens=None, crossover_evidence="base verdict was already inconclusive at the M6.1.3 baseline", m6_1_3_base_verdict=base_verdict)`.
-2. Identify the M6.1.3-winning cohort (the cohort with the lowest `wall_p50_ms` at M6.1.3's measurement; equivalently, the cohort the M6.1.3 verdict identified as "wins"). Identify the second-place cohort (the one with the lowest `wall_p50_ms` AFTER the winner).
-3. Iterate the M6.2 axis points in ascending order `(10, 50, 256, 512, 1024, 2048)`. For each axis point:
-   - Compute `winner_p50 ± winner_ci_half = [winner_p50 - 1.96 × winner_stderr, winner_p50 + 1.96 × winner_stderr]`.
-   - Compute `second_p50 ± second_ci_half`.
-   - Evaluate the symmetric mean-in-CI predicate: `(winner_p50 ∈ [second_p50 ± second_ci_half]) OR (second_p50 ∈ [winner_p50 ± winner_ci_half])`.
-4. Return the smallest `max_tokens` axis point at which the predicate fires. If the predicate fires at `max_tokens=10` (i.e., the cohort pair already overlaps at the M6.1.3 baseline), return `crossover_max_tokens=10` with `crossover_evidence="M6.1.3 verdict not robust to M6.2 resampling"` per US2 #3.
-5. If the predicate never fires across the entire axis, return `crossover_max_tokens=None` (which renders in markdown as `survives_to_2048` per US2 acceptance #4 phrasing — interpreted by the reporter, not by the compute function).
+Validate-mode operates on the 3-point axis subset `{10, 50, 2048}` and uses the coarse 4-value vocabulary per FR-016. Inputs to the crossover compute are the budget-table rows (interior-cap regime per round-5 FR-034) — NOT the sub-probe rows.
 
-For validate-mode, the function operates on the 3-point axis subset `{10, 50, 2048}` and returns a coarse 4-value vocabulary (`10`, `50`, `2048`, `survives_to_2048`, or `None`) per FR-016.
-
-**Rationale**: The rule is geometric (no stats library), symmetric (either direction satisfies), and unambiguous (no "which percentage of overlap?" interpretation). The CI half-width definition (`1.96 × stderr`, 95% normal approximation) matches M6.1.x's published CIs.
+**Rationale**: Geometric, stats-library-free, symmetric (either direction satisfies), unambiguous.
 
 **Alternatives considered**:
-- CI-overlap ≥ 50% (linear-fraction-of-shorter-CI) — REJECTED at spec round-1 Q3; introduces a "which 50%?" ambiguity (50% of the shorter CI? 50% of the union? 50% of one cohort's CI?) that the symmetric mean-in-CI rule sidesteps.
-- Welch's t-test p > 0.05 — REJECTED at spec round-1 Q3; requires a stats library dependency and the p-value threshold has its own arbitrary cutoff debate.
-- Asymmetric mean-in-CI (only winner's mean must fall in second-place's CI) — REJECTED at spec round-1 Q3; the symmetric rule is more conservative and matches operator intuition ("the means are inside each other's error bars").
+- CI-overlap ≥ 50% — REJECTED at round-1 Q3 ("which 50%?" ambiguity).
+- Welch's t-test p > 0.05 — REJECTED (stats library dependency).
+- Asymmetric mean-in-CI — REJECTED (less conservative).
 
-### R-7 — Wall-clock-ratio KV-pressure inference (FR-017a)
+### R-7 — Wall-clock-ratio KV-pressure inference (FR-017a) — sources from SUB-PROBE per round-5
 
-**Decision**: The `m6_2_crossover.compute_kv_pressure_inference(...)` function computes, for each cohort × cell-type ∈ {chat_stream, embed}:
+**Decision**: `m6_2_crossover.compute_kv_pressure_inference(...)` computes `R = wall_p50_ms(c=8, max_tokens=2048) / wall_p50_ms(c=8, max_tokens=1024)` using the **KV-pressure sub-probe rows** (FR-036, round-5), NOT the main-sweep budget-table c=8 rows. The sub-probe sets `ignore_eos=True` so the engine generates to the cap on every RPC; the ratio reflects forced-2048 vs forced-1024 engine cost. `R > 2.2` → `kv_pressure_inferred_<chat_stream|embed>`; otherwise `kv_pressure_not_observable`.
 
-```
-R = wall_p50_ms(c=8, max_tokens=2048) / wall_p50_ms(c=8, max_tokens=1024)
-```
+**Rationale (round-5 amendment)**: Round-5 surfaced that the main-sweep budget-table c=8 rows use the natural-EOS regime — Qwen3-8B EOS-samples at ~50-200 tokens regardless of cap on the synthetic probe, AND even with the round-5 ShareGPT corpus regime the natural completion length per prompt varies (no guarantee of cap-reaching generation). The wall-clock-ratio inference is meaningful ONLY when both numerator and denominator reflect actual cap-length generation — the sub-probe is the only measurement that provides that. The 2.2 threshold + the ~2.0 expected baseline are calibrated against forced-cap generation; using natural-EOS rows would produce a degenerate ratio (~1.0 to 1.5 depending on completion length) and the threshold would never fire even under real KV pressure.
 
-The 2.2 threshold is a spec-level literal (FR-017a + spec round-3 Q3). If `R > 2.2`, the regime is classified as `kv_pressure_inferred_<cell_type>` (e.g., `kv_pressure_inferred_chat_stream`). Otherwise, classified as `kv_pressure_not_observable`. The `M6_2KVPressureObservation` entity carries both the computed `R` (field `wall_clock_ratio_c8_2048_over_1024`) and the label (field `wall_clock_inference_label`).
-
-The engine-side `kv_cache_used_fraction_peak` field is best-effort: extracted from per-RPC trailing metadata if present, `None` otherwise. The reporter's narrative cites both signals; a discrepancy (e.g., engine field shows high pressure but R ≤ 2.2) is surfaced as a one-line note in the narrative.
-
-**Rationale**: Engine generation cost at high `max_tokens` should scale ~linearly with the cap; R ≈ 2.0 is the expected baseline (max_tokens=2048 generates twice the tokens as max_tokens=1024). The 2.2 threshold gives a 10% margin above linear — KV-cache pressure manifests as super-linear scaling because the per-token engine cost grows with the KV-cache occupancy (eviction, recomputation, scheduler pressure). The 10% margin is tight enough to detect onset of pressure without false-firing on benign per-token cost variance.
-
-The wall-clock-ratio inference is REQUIRED (vs the engine field which is best-effort) because the inference is computed unconditionally from existing latency budget measurements — no new instrumentation, no engine-side dependency.
+Engine-side `kv_cache_used_fraction_peak` extracted best-effort from per-RPC trailing metadata; `None` if absent. Cross-validation narrative.
 
 **Alternatives considered**:
-- Inter-token-latency dispersion proxy (TPOT stddev / mean) — REJECTED at spec round-3 Q3; would require per-RPC TPOT capture (currently aggregated only at the cell level); adds complexity without proportional inference improvement.
-- Engine-log scraping — REJECTED at spec round-3 Q3; brittle (log format changes break the parser); the engine field via gRPC trailing metadata is the structured channel if vLLM exposes it.
-- Best-effort narrative only (no machine-checkable label) — REJECTED at spec round-3 Q3; the regime needs a categorical signal for M8's KV-budget sizing decision; narrative-only would force M8 spec authors to re-derive the inference manually.
+- Use main-sweep c=8 budget-table rows directly — REJECTED at round-5 Q5 (natural-EOS distribution renders threshold moot).
+- Inter-token-latency dispersion proxy — REJECTED at round-3 Q3 (complexity without benefit).
+- Engine-log scraping — REJECTED at round-3 Q3 (brittle).
 
 ### R-8 — Modal preemption recovery + sweep resume at the 20-48h budget
 
-**Decision**: M6.2 inherits the M6.1.3 FR-028 preemption-recurrence threshold (pinned at 2). At the 20-48h M6.2 wall-clock budget, mid-sweep Modal preemption is meaningfully more likely than for any prior M6.x sweep. The orchestrator's auto-resume / partial-artifact-merge handler MUST tolerate one transient preemption per cohort without sweep abort; a second preemption (within the same multi-cohort sequence) aborts.
+**Decision**: M6.2 inherits the M6.1.3 FR-028 preemption-recurrence threshold (pinned at 2). At the 20-48h budget, mid-sweep preemption is meaningfully more likely than M6.1.x sweeps. Orchestrator's auto-resume re-establishes Modal tunnel + deploy handshake; resumes main iteration at the `(cell, max_tokens, cohort)` block where preemption occurred. Per-block UTC timestamps capture resume time, making time-of-day drift visible; `iteration_discipline_verified` may fire false on significant resume drift (informational; not auto-aborting).
 
-**Resume mechanism**: on preemption recovery, the orchestrator re-establishes the Modal tunnel + deploy handshake (inherited from M5.2's preemption-aware URL refresh), then resumes the main iteration at the `(cell, max_tokens, cohort)` block where the preemption occurred. The preemption interrupts mid-block; resume re-runs the entire interrupted block (n RPCs) within the SAME `(cell, max_tokens)` tuple's time window — which means the cohort-innermost discipline (FR-030) is preserved if the resume happens promptly. If the resume happens > some threshold (e.g., > 30 minutes after the original block started, indicating the resume drifted into a different time-of-day window), the interrupted block's siblings may already be complete; in that case, the orchestrator marks the interrupted block as `failed_modal_preemption_resume_drift` per FR-029 and the FR-030 cohort comparison for that tuple loses one cohort. This edge case is rare but spec-acknowledged.
-
-Per-block UTC timestamps (FR-032) capture the actual resume time, making the time-of-day drift visible in the artifact; `iteration_discipline_verified` may fire false (indicating the discipline was broken at the resumed tuple) and the operator can inspect the wall-clock timeline subsection to see exactly which block drifted.
-
-**Rationale**: M6.1.3's preemption-recurrence threshold (2) was pinned against the ~75-minute M6.1.3 sweep. M6.2's longer wall-clock makes the same threshold less conservative (in absolute preemption probability), but the methodological logic is identical: one transient recovery acceptable, second failure aborts. Tightening the threshold would risk false-aborts; relaxing it would mask repeated infrastructure issues.
+**Rationale**: Pinned threshold (2) is M6.1.3-inherited; tightening risks false-aborts at long wall-clock, relaxing masks repeated infrastructure issues.
 
 **Alternatives considered**:
-- Tighten preemption-recurrence threshold to 1 (no transient recovery) — REJECTED; would risk false-aborts at the 20-48h budget where transient preemptions are more likely.
-- Relax the threshold to 3 or more — REJECTED; would mask repeated infrastructure issues that should abort the sweep.
-- Add a `resume_drift_threshold` knob (e.g., abort the cohort if resume happens > 30 min later) — REJECTED as out-of-scope for M6.2; the spec-level decision is "FR-030 discipline is preserved if the resume is prompt; if not, mark the block as failed and continue". A drift-threshold knob would be a future-milestone refinement if observed drift is significant.
+- Tighten to 1 — REJECTED (false-abort risk).
+- Relax to 3 — REJECTED (masks repeated issues).
+- Resume-drift abort knob — REJECTED as out-of-scope.
+
+### R-9 — Three-regime prompt source resolution (FR-034 + FR-035 — round-5)
+
+**Decision**: `m6_2_prompt_source.resolve_block_inputs(cell, max_tokens, iter_idx, cohort, base_seed, ignore_eos_override=None)` is the single entry point the sweep orchestrator + sub-probe orchestrator call to get per-block input parameters. The function returns a dict containing `prompt_text` OR `embed_tensor_bytes` (mutually exclusive based on cell-type), `prompt_source` label (one of `synthetic_seed_derived` / `corpus_sharegpt` / `synthetic_random_tensor` / `corpus_sharegpt_embed`), `prompt_corpus_idx` (the `iter_idx` for corpus regimes; `None` for synthetic regimes), `ignore_eos` (`True` if the caller is the sub-probe orchestrator with `ignore_eos_override=True`; `False` otherwise), `max_tokens` (the cap value).
+
+Regime resolution table:
+
+| Cell-type | `max_tokens` | Regime | Builder called | `prompt_source` |
+|---|---|---|---|---|
+| chat_stream | 10 or 50 (null anchor) | synthetic | `m6_rpc_driver._build_chat_prompt(seed)` | `synthetic_seed_derived` |
+| chat_stream | 256, 512, 1024, 2048 (interior cap) | corpus | `symmetric_prompts.assign_symmetric_prompt(iter_idx, cohort, chat_corpus)` | `corpus_sharegpt` |
+| chat_stream | sub-probe at c=8 × {1024, 2048} | corpus + `ignore_eos=True` | same as interior-cap | `corpus_sharegpt` |
+| embed | 10 or 50 (null anchor) | synthetic random tensor | `m6_1_rpc_driver.build_torch_save_bytes(rpc_index, base_seed)` | `synthetic_random_tensor` |
+| embed | 256, 512, 1024, 2048 (interior cap) | corpus | load `.pt` from `completions_embeds_qwen3_8b/{idx:04d}.pt` where `idx = iter_idx % len(corpus)` | `corpus_sharegpt_embed` |
+| embed | sub-probe at c=8 × {1024, 2048} | corpus + `ignore_eos=True` | same as interior-cap | `corpus_sharegpt_embed` |
+
+`load_chat_corpus()` and `load_embed_corpus()` both verify the on-disk corpus SHA against the respective provenance files (`chat_sharegpt_1000.provenance.json` and `completions_embeds_qwen3_8b/manifest.json`'s top-level `corpus_sha256`) before returning the corpus list. Mismatch raises `CorpusDriftError`.
+
+**Rationale**: The three-regime split is the round-5 Option D answer. Putting the resolution in a single pure-function module (modulo file I/O for corpus loading) makes it independently testable: unit tests can synthesize calls at each regime and assert the dispatch is correct, without needing a full sweep orchestrator. Calling `assign_symmetric_prompt(iter_idx, cohort, corpus)` for corpus regimes makes the previously-defined-but-never-called helper operative; the function's `cohort` parameter is documented as "intentionally ignored — kept for call-site readability".
+
+`prompt_corpus_idx = iter_idx` for corpus regimes (not `iter_idx % len(corpus)`) so the field captures the raw iteration index; the modular arithmetic happens inside `assign_symmetric_prompt` already.
+
+**Alternatives considered**:
+- Per-RPC regime resolution (instead of per-block) — REJECTED (overengineering; the regime is a function of `(cell, max_tokens)` not of individual RPCs within a block).
+- Fold prompt-source resolution into `m6_2_sweep.py` — REJECTED (test isolation; the regime logic is reusable by `m6_2_sub_probe.py`).
+- Resolve regime by inspecting `ignore_eos` (i.e., infer regime from caller) — REJECTED (`ignore_eos` is a downstream effect; the regime decision IS the upstream cause).
+- Use a different cell-type-bucketing structure (e.g., resolve by cell name regex) — REJECTED (the `(cell, max_tokens)` tuple is the natural key; cell-name regex would be fragile to renames).
+
+### R-10 — KV-pressure sub-probe orchestration (FR-036 — round-5)
+
+**Decision**: `m6_2_sub_probe.run_kv_pressure_sub_probe(rpc_driver, cohorts, chat_corpus, embed_corpus, base_seed, n=20, sweep_orchestrator_clock)` runs after the main 144-point sweep completes (in publish mode) or alongside the main 72-point sweep (in validate mode — sub-probe is unconditional per SC-019).
+
+Sub-probe iteration: 16 blocks total = 4 cohorts × 2 cell-types {chat_stream, embed} × 2 caps {1024, 2048}. The orchestrator iterates `for cell_type in (chat_stream, embed): for max_tokens in (1024, 2048): for cohort in cohorts: run_block(...)` — cohort-innermost per FR-030 (within each `(cell_type, max_tokens)` tuple, the 4 cohorts run contiguously).
+
+Each block invokes `m6_2_prompt_source.resolve_block_inputs(cell=f"{cell_type}_c8", max_tokens, iter_idx, cohort, base_seed, ignore_eos_override=True)` to get the corpus-regime input + `ignore_eos=True` kwarg. The RPC builder is called with the new `max_tokens` + `ignore_eos` + `prompt` (or `prompt_embeds_override`) kwargs per the round-5 RPC-builder parameterization. Per-block UTC timestamps captured per FR-032. In-window retry-once per FR-033 (sub-probe blocks subject to the same retry policy as main-sweep blocks; retries stay within the current `(cell_type, max_tokens)` tuple's time window).
+
+Sub-probe output: `list[M6_2KVPressureObservation]` with 8 records (4 cohorts × 2 cell-types) — each carries `wall_clock_ratio_c8_2048_over_1024 = wall_p50_ms(2048) / wall_p50_ms(1024)` per cohort × cell-type, `wall_clock_inference_label` (computed via `m6_2_crossover.compute_kv_pressure_inference(...)` against threshold 2.2), `kv_cache_used_fraction_peak` (best-effort), `oom_observed`, `sub_probe_n_rpcs = 20`, `sub_probe_prompt_source` (`corpus_sharegpt` for chat, `corpus_sharegpt_embed` for embed).
+
+The 16 sub-probe blocks emit per-block measurements only to `KVPressureObservation` (8 records derived from the 16 blocks, since each record aggregates the 1024 + 2048 measurements). They do NOT emit to the main-sweep budget table — the budget table's c=8 × {1024, 2048} rows remain populated by the interior-cap regime per round-5 Q5 additive contract.
+
+**Wall-clock cost**: 16 blocks × n=20 ≈ 320 sub-probe RPCs. At chat_stream c=8 × max_tokens=2048 with `ignore_eos=True`, each RPC is ~8-9 s (concurrent dispatch amortizes 8x). Block wall-clock ~20-25 s. 16 blocks × ~25 s = ~7 minutes lower bound; plus channel setup per cohort and network round-trip overhead, realistic upper bound ~30 min – 1 h. < 2% of the publish wall-clock budget regardless of round-3 main-sweep `n` selection.
+
+**Rationale**: Sub-probe is a self-contained orchestration unit. Putting it in its own module lets it be unit-tested with synthetic timing data without needing the main-sweep orchestrator. Running after the main sweep (in publish mode) keeps the main-sweep wall-clock predictable; running alongside (in validate mode) keeps the validate sweep tightly bounded. The sub-probe IS the only path to FR-017a's meaningful wall-clock-ratio inference, so it MUST run in both modes per SC-019.
+
+**Alternatives considered**:
+- Embed sub-probe into `m6_2_sweep.py` as a final iteration step — REJECTED (test isolation; sub-probe has its own n + ignore_eos + scope semantics that differ from the main sweep).
+- Run sub-probe before main sweep — REJECTED (the main-sweep `iteration_discipline_verified` check would have to be redesigned to account for the sub-probe's `(cell_type, max_tokens)` blocks not being part of the 144-point matrix; running after the main sweep keeps the discipline check clean).
+- Replace budget-table c=8 rows with sub-probe measurements — REJECTED at round-5 Q5 (mixes methodology within the budget table).
+- Skip sub-probe in validate mode (run in publish only) — REJECTED at round-5 Q5 (validate is the only mode where FR-017a's KV-pressure inference is exercisable before publish; SC-019 mandates both modes).
+
+### R-11 — Embed corpus offline generation (FR-035 — round-5 prerequisite)
+
+**Decision**: `scripts/python/gen_embed_corpus_qwen3_8b.py` is an adapted version of the existing `scripts/python/gen_embed_corpus.py` that:
+
+1. Loads `tools/benchmark/corpus/chat_sharegpt_1000.json` (the same SHA-pinned ShareGPT corpus used for the chat regime per FR-034).
+2. Loads Qwen3-8B (`Qwen/Qwen3-8B`) via `vllm.LLM` with `enable_prompt_embeds=False` (we only need the embedding layer, not generation) OR via direct `transformers.AutoModel` access — investigation needed in implementation but the public-API constraint per Constitution II rules out internal vLLM monkey-patching.
+3. For each of the 1000 ShareGPT prompts: tokenize → run through the embedding layer → get a `seq_len × 4096` fp16 tensor → save via `torch.save(...)` to `tools/benchmark/corpus/completions_embeds_qwen3_8b/{idx:04d}.pt`.
+4. Compute per-file SHA-256, plus the top-level `corpus_sha256` over the sorted file-SHA list, and write `tools/benchmark/corpus/completions_embeds_qwen3_8b/manifest.json` with per-entry `{id, source_prompt_id, seq_len, bucket, file_sha256, embed_file}` plus top-level `corpus_sha256` + `source_chat_corpus_sha256` + `model` + `hidden_size` + `generated_at_utc`.
+
+Total artifact size: 1000 files × variable `seq_len × 4096 × 2 bytes (fp16)` ≈ avg `seq_len = 80` → ~640 KB/file × 1000 = ~640 MB. Plus the manifest (~200 KB).
+
+Generation runtime: ~10-30 min on Modal A10G or local GPU. Memory: ~16 GB GPU RAM (Qwen3-8B fp16).
+
+**Phase 1 prerequisite**: The corpus MUST exist and be committed to `tools/benchmark/corpus/completions_embeds_qwen3_8b/` (with `manifest.json`) before `--m6_2-validate` is invoked. The `m6_2_validate.py` driver verifies the corpus exists + the SHA matches the artifact's `embed_corpus_sha256` at sweep start (SC-018); a missing corpus or SHA drift fails fast.
+
+**Rationale**: The existing `completions_embeds/` corpus is at hidden_size=1024 (M5.2-vintage, incompatible with Qwen3-8B). Building a new corpus from ShareGPT at hidden_size=4096 keeps the embed-cell regime methodologically consistent with the chat-cell regime (both use ShareGPT-derived inputs). The corpus is a one-time offline artifact — generation cost is bounded (~10-30 min compute, ~$0.50-1 Modal spend) and committed to the repo for reproducibility. Per-file SHA + top-level corpus SHA enables SC-018's drift validation.
+
+**Alternatives considered**:
+- Embed at fp32 (8 bytes/element instead of 2) — REJECTED (4x storage cost; ~2.6 GB; the model's prompt_embeds path already accepts fp16 per the M6.1.x precedent).
+- Use a different prompt source (e.g., longer-form alignment prompts) — REJECTED at round-5 Q1/Q2 (ShareGPT is the spec-pinned source; consistency with chat regime).
+- Embed at hidden_size=1024 (reuse the existing M5.2 corpus structure) — REJECTED (Qwen3-8B's hidden_size IS 4096; the M5.2 corpus is incompatible).
+- Generate the corpus on the operator workstation (no GPU) — REJECTED (Qwen3-8B's embedding layer requires ~16 GB VRAM; CPU fallback is impractical at 1000-prompt scale).
 
 ## Phase 0 closure
 
-All 8 research items are resolved. No NEEDS CLARIFICATION markers remain. The Technical Context in [`plan.md`](./plan.md) is complete.
+All 11 research items are resolved. No NEEDS CLARIFICATION markers remain. The Technical Context in [`plan.md`](./plan.md) is complete.
 
-Proceed to Phase 1: write [`data-model.md`](./data-model.md), [`contracts/cli.md`](./contracts/cli.md), [`contracts/artifact-schema.md`](./contracts/artifact-schema.md), [`contracts/iteration-order.md`](./contracts/iteration-order.md), [`contracts/wire-vocabulary.md`](./contracts/wire-vocabulary.md), [`quickstart.md`](./quickstart.md), and update `CLAUDE.md`.
+Proceed to Phase 1: write/update [`data-model.md`](./data-model.md), [`contracts/cli.md`](./contracts/cli.md), [`contracts/artifact-schema.md`](./contracts/artifact-schema.md), [`contracts/iteration-order.md`](./contracts/iteration-order.md), [`contracts/wire-vocabulary.md`](./contracts/wire-vocabulary.md), [`contracts/prompt-source.md`](./contracts/prompt-source.md) (new round-5), [`quickstart.md`](./quickstart.md). `CLAUDE.md` agent-context reference already points at this plan.
