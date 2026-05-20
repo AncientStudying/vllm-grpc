@@ -13,6 +13,7 @@ def proto_to_sampling_params(req: Any) -> Any:
     kwargs["top_p"] = req.top_p if req.HasField("top_p") else 1.0
     if req.HasField("seed"):
         kwargs["seed"] = req.seed
+    kwargs["ignore_eos"] = req.ignore_eos
     return SamplingParams(**kwargs)
 
 

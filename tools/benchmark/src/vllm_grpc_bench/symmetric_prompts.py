@@ -354,12 +354,12 @@ def assert_symmetry(
 # --- M6.1.3 — cohort-independent prompt assignment (FR-019 + round-2 Q4) ----
 
 
-def assign_symmetric_prompt(
+def assign_symmetric_prompt[T](
     iter_idx: int,
     cohort: str,
-    corpus: list[str],
-) -> str:
-    """Return the prompt for ``iter_idx`` regardless of ``cohort``.
+    corpus: list[T],
+) -> T:
+    """Return ``corpus[iter_idx % len(corpus)]`` regardless of ``cohort``.
 
     M6.1.3 FR-019 + round-2 Q4: when ``--m6_1_3-symmetric-prompts`` is set,
     every cohort sees the SAME prompt at the SAME iteration index. The
@@ -367,8 +367,10 @@ def assign_symmetric_prompt(
     ``cohort`` is accepted but intentionally ignored so the function
     signature documents the symmetry guarantee at the call site.
 
-    Cross-milestone shared helper: also imported by M5.2 / M6.2 / M7 / M8
-    sweeps via this module's unprefixed name per R-6.
+    Cross-milestone shared helper: imported by M5.2 / M6.2 / M7 / M8 sweeps
+    via this module's unprefixed name per R-6. Generic over the corpus element
+    type so M6.2's embed regime can pass ``list[CompletionEmbedSample]``
+    alongside chat's ``list[RequestSample]`` or ``list[str]``.
     """
     del cohort  # Symmetric-prompts mode: prompt is cohort-invariant by design.
     if not corpus:

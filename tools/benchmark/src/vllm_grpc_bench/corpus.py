@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+
+
+class CorpusDriftError(RuntimeError):
+    """Raised when an on-disk corpus's SHA does not match the recorded canonical SHA.
+
+    M6.2 SC-018: fail-fast at sweep start so the operator cannot silently swap
+    a corpus mid-cycle. The error message names the diverging field (chat or
+    embed) and the expected vs observed SHAs so reconciliation is trivial.
+    """
 
 
 @dataclass
@@ -137,3 +147,113 @@ def load_corpus(path: Path) -> list[RequestSample]:
 DEFAULT_CHAT_CORPUS_PATH = (
     Path(__file__).resolve().parent.parent.parent / "corpus" / "chat_sharegpt_1000.json"
 )
+
+
+# M6.2 default Qwen3-8B prompt-embedding corpus directory. Populated by
+# scripts/python/gen_embed_corpus_qwen3_8b.py (one-time Phase 1 prerequisite
+# per FR-035).
+DEFAULT_EMBED_CORPUS_QWEN3_8B_DIR = (
+    Path(__file__).resolve().parent.parent.parent / "corpus" / "completions_embeds_qwen3_8b"
+)
+
+
+def _sha256_of_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def verify_corpus_sha(corpus_path: Path, expected_sha: str) -> None:
+    """Verify that ``corpus_path`` (a single file) hashes to ``expected_sha``.
+
+    Used at sweep start for the chat ShareGPT corpus (a single JSON file).
+    The embed corpus is a directory and uses a canonical multi-file SHA
+    formula (see ``_compute_embed_corpus_sha``); call that helper directly.
+    """
+    observed = _sha256_of_file(corpus_path)
+    if observed != expected_sha:
+        raise CorpusDriftError(
+            f"Corpus SHA mismatch for {corpus_path}:\n"
+            f"  expected: {expected_sha}\n"
+            f"  observed: {observed}"
+        )
+
+
+def _compute_embed_corpus_sha(per_entry_shas: list[str]) -> str:
+    """Canonical embed-corpus SHA: SHA-256 of '\\n'.join(sorted per-file SHAs).
+
+    Matches the formula used in ``scripts/python/gen_embed_corpus_qwen3_8b.py``
+    when it writes the manifest's top-level ``corpus_sha256`` field.
+    """
+    payload = "\n".join(sorted(per_entry_shas)).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def load_completions_embeds_qwen3_8b(
+    corpus_dir: Path | None = None,
+) -> list[CompletionEmbedSample]:
+    """Load the M6.2 Qwen3-8B prompt-embedding corpus.
+
+    The directory must contain ``manifest.json`` written by
+    ``gen_embed_corpus_qwen3_8b.py`` and the 1000 per-prompt ``.pt`` files it
+    references. Verifies the manifest's top-level ``corpus_sha256`` against
+    the canonical sorted-per-file-SHAs formula; raises ``CorpusDriftError`` on
+    mismatch. Raises ``FileNotFoundError`` if the corpus directory or any
+    referenced ``.pt`` file is missing (FR-035 Phase 1 prerequisite).
+    """
+    if corpus_dir is None:
+        corpus_dir = DEFAULT_EMBED_CORPUS_QWEN3_8B_DIR
+    if not corpus_dir.exists():
+        raise FileNotFoundError(
+            f"Embed corpus directory not found: {corpus_dir}. "
+            "Run scripts/python/gen_embed_corpus_qwen3_8b.py first (FR-035)."
+        )
+    manifest_path = corpus_dir / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(
+            f"Embed corpus manifest not found: {manifest_path}. "
+            "Run scripts/python/gen_embed_corpus_qwen3_8b.py first (FR-035)."
+        )
+
+    manifest: dict[str, Any] = json.loads(manifest_path.read_text())
+    expected_corpus_sha: str = manifest["corpus_sha256"]
+    entries: list[dict[str, Any]] = manifest["entries"]
+
+    per_entry_shas = [str(e["sha256"]) for e in entries]
+    observed_corpus_sha = _compute_embed_corpus_sha(per_entry_shas)
+    if observed_corpus_sha != expected_corpus_sha:
+        raise CorpusDriftError(
+            f"Embed corpus SHA mismatch in {manifest_path}:\n"
+            f"  expected (manifest):       {expected_corpus_sha}\n"
+            f"  observed (recomputed):     {observed_corpus_sha}"
+        )
+
+    samples: list[CompletionEmbedSample] = []
+    for entry in entries:
+        embed_file = str(entry["embed_file"])
+        pt_path = corpus_dir / embed_file
+        if not pt_path.exists():
+            raise FileNotFoundError(
+                f"Embed tensor file referenced by manifest is missing: {pt_path}."
+            )
+        observed_file_sha = _sha256_of_file(pt_path)
+        expected_file_sha = str(entry["sha256"])
+        if observed_file_sha != expected_file_sha:
+            raise CorpusDriftError(
+                f"Embed tensor SHA mismatch for {pt_path}:\n"
+                f"  expected: {expected_file_sha}\n"
+                f"  observed: {observed_file_sha}"
+            )
+        samples.append(
+            CompletionEmbedSample(
+                id=int(entry["id"]),
+                tensor_bytes=pt_path.read_bytes(),
+                max_tokens=0,
+                seed=0,
+                seq_len=int(entry["seq_len"]),
+                bucket=str(entry["bucket"]),
+            )
+        )
+    return samples
