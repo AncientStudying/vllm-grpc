@@ -51,7 +51,7 @@ All entity definitions live in `tools/benchmark/src/vllm_grpc_bench/m6_2_types.p
 
 **Relationships**:
 - 144 MeasurementPoints (publish) form the latency budget table.
-- 48 anchor MeasurementPoints (at `max_tokens ∈ {10, 50}`) form the NullAnchor pairs.
+- 48 anchor MeasurementPoints (at `max_tokens ∈ {10, 50}`) split per FR-012 into 22 cross-checkable NullAnchor pairs (chat at max_tokens=50 + embed at max_tokens=10, minus M6.1.3's 2 cohort omissions) and 26 new-baseline NullAnchor entries (chat at max_tokens=10 + embed at max_tokens=50 + the 2 omitted cohort pairs at the cross-checkable cap).
 - The 8 KVPressureObservation records are derived from 16 sub-probe blocks that produce their own `M6_2MeasurementPoint`-shaped rows internally but DO NOT join the budget table per FR-036 additive contract.
 
 ### NullAnchor
@@ -285,8 +285,8 @@ class M6_2SweepArtifact(M6_1_3SweepArtifact):
 
 Cross-entity invariants the implementation MUST preserve (tested in `test_m6_2_artifact_schema.py` + round-5 additions in `test_m6_2_prompt_source.py` + `test_m6_2_sub_probe.py`):
 
-1. **144-row table completeness (SC-003)**: `len(all_measurement_points) == 144` (publish) or `72` (validate).
-2. **48-cell anchor pool (FR-014)**: `len([m for m in measurement_points if m.max_tokens in {10, 50}]) == 48`.
+1. **144-row table completeness (SC-003)**: `len(all_measurement_points) == 144` in both modes — publish renders 144 measurements (or `failed_<reason>` markers); validate renders 72 measurements + 72 `not_validated` placeholders per FR-016.
+2. **48-cell anchor pool with cross-checkable / new-baseline split (FR-012 / FR-014)**: `len([m for m in measurement_points if m.max_tokens in {10, 50}]) == 48`; of these, exactly 22 carry `null_anchor.cross_checkable == True` (chat at max_tokens=50 + embed at max_tokens=10 minus M6.1.3's 2 cohort omissions) and 26 carry `null_anchor.new_baseline_marker == True`.
 3. **Cohort-innermost discipline (FR-030 / FR-032)**: every `(cell, max_tokens)` tuple's 4 cohort blocks form a contiguous time window.
 4. **In-window retry policy (FR-033)**: any row with `retry_attempted=True` has timestamps within its tuple's window.
 5. **Strict-superset compat (FR-011 / SC-007)**: M6.1.3-vintage reader parses without exception.

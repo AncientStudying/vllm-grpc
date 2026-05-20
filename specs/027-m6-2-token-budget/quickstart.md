@@ -110,7 +110,8 @@ $EDITOR docs/benchmarks/m6_2-token-budget-validate.md
 # 5. The "Protocol crossover threshold" section carries the axis-restricted disclaimer callout.
 # 6. The "KV-cache pressure" subsection includes wall_clock_ratio_c8_2048_over_1024 for all 4 cohorts × 2 cell-types,
 #    populated from the SUB-PROBE rows (sub_probe_measurement_regime = "forced_cap_ignore_eos_true").
-# 7. The "Null anchor validation" subsection lists all 48 anchor cells with PASS/WARN/FAIL verdicts.
+# 7. The "Null anchor validation" subsection lists 22 cross-checkable anchor cells with PASS/WARN/FAIL verdicts
+#    + 26 new-baseline anchor cells with `new_baseline_marker = true` (no M6.1.3 CI to compare against) per FR-012.
 # 8. The "Anchor latency trajectory" subsection has 2 snapshots per cohort (start + end).
 # 9. The "Failure summary" subsection is present (reads "no measurement-cell failures" if clean).
 # 10. The "Sweep wall-clock timeline" subsection may be omitted (validate sweep < 8h per FR-032).
@@ -188,7 +189,7 @@ $EDITOR docs/benchmarks/m6_2-token-budget.md
 # 4. Production latency budget renders 144 rows (no `not_validated` placeholders).
 # 5. Protocol crossover threshold uses full 6-point vocabulary (no axis-restricted disclaimer).
 # 6. KV-cache pressure subsection includes wall_clock_ratio + best-effort engine field.
-# 7. Null anchor validation subsection lists 48 anchor cells.
+# 7. Null anchor validation subsection lists 22 cross-checkable + 26 new-baseline anchor cells per FR-012.
 # 8. Anchor latency trajectory subsection has 8-10 snapshots per cohort.
 # 9. Failure summary subsection tallies any failed cells by reason.
 # 10. Sweep wall-clock timeline subsection renders per (cell, max_tokens) tuple.

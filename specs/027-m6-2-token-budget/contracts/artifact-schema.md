@@ -65,7 +65,7 @@ Four publish-blocking-eligible integrity warning channels render as leading call
 
 | Channel label | Firing rule | FR | SC |
 |---|---|---|---|
-| `null_anchor_drift` | ≥ 3 of 48 anchor cells (6 cells × 4 cohorts × 2 anchor caps `{10, 50}`) have `drift_verdict ∈ {WARN, FAIL}` against M6.1.3 published CI | FR-014 | SC-004 |
+| `null_anchor_drift` | ≥ 2 of 22 cross-checkable anchor cells (chat at max_tokens=50 + embed at max_tokens=10 minus M6.1.3's cohort omissions, per FR-012) have `drift_verdict ∈ {WARN, FAIL}` against M6.1.3 published CI. The 26 new-baseline cells (chat at max_tokens=10 + embed at max_tokens=50 + the 2 omitted cohort pairs) emit `new_baseline_marker` lines but are excluded from this count. | FR-014 | SC-004 |
 | `failure_summary_threshold` | EITHER (a) ≥ 3 cells across the latency budget table have `failed_<reason>` markers, OR (b) any single `(cell, max_tokens)` point has all 4 cohorts failed (then tagged `systemic_failure_<reason>` in addition to per-cohort `failed_<reason>`) | FR-029 | SC-014 |
 | `cohort_csp_mismatch` | Any consecutive-snapshot pair in `network_paths[cohort]` reveals a CSP / region change | FR-009 | SC-010 |
 | `intra_sweep_latency_drift` | ≥ 2 of 4 cohorts in `anchor_latency_trajectory` have `latency_drift_warning = true` | FR-031 | SC-016 |
@@ -345,7 +345,7 @@ def compute_iteration_discipline_verified(
 The validate-sibling artifact:
 - Reports the same 4 primary sections (Production latency budget / TPOT curves / Engine-cost decomposition curves / Protocol crossover threshold) with sections 1/2/3 marking `max_tokens ∈ {256, 512, 1024}` rows as `not_validated`.
 - Section 4 carries the leading axis-restricted disclaimer callout AND uses the coarse 4-value `crossover_max_tokens` vocabulary `{10, 50, 2048, survives_to_2048, null}`.
-- Auxiliary subsections all render: KV-cache pressure (the 2048 axis point IS in the validate subset), Null anchor validation (full 48-cell anchor pool present), Anchor latency trajectory (start + end snapshots only), Failure summary (always present), Sweep wall-clock timeline (OMITTED if total sweep < 8h; included if ≥ 8h e.g. due to retries).
+- Auxiliary subsections all render: KV-cache pressure (the 2048 axis point IS in the validate subset), Null anchor validation (22 cross-checkable cells with PASS/WARN/FAIL + 26 new-baseline cells with `new_baseline_marker` per FR-012), Anchor latency trajectory (start + end snapshots only), Failure summary (always present), Sweep wall-clock timeline (OMITTED if total sweep < 8h; included if ≥ 8h e.g. due to retries).
 - Same integrity-header firing rules apply (no validate-mode relaxation).
 
 ## Forward-pointing annotation (FR-019)

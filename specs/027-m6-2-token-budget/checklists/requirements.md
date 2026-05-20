@@ -48,7 +48,7 @@ vocabulary, similar to how a payment-systems spec would use the term
 1. **Harness inheritance discipline** (new FR-028) — user-directed: copy + refactor the M6.1.3 `m6_1_3_*` module family; regeneration from scratch FORBIDDEN.
 2. **Validate-mode `max_tokens` axis subset** (FR-001 pinned) — `{10, 50, 2048}` at n=20; interior caps rendered as `not_validated`.
 3. **Crossover-detection rule** (US2 acceptance #1, CrossoverThreshold entity pinned) — symmetric mean-in-CI at 95% CI half-width.
-4. **Sweep-integrity warning threshold** (FR-014, SC-004 pinned) — ≥ 3 of 48 anchor cells drift.
+4. **Sweep-integrity warning threshold** (FR-014, SC-004 pinned) — ≥ 2 of 22 cross-checkable anchor cells drift (corrected post-analysis 2026-05-20 after inspecting M6.1.3's published JSON; new-baseline cells excluded from threshold).
 5. **`network_paths` re-probe cadence** (FR-009, SC-010, Edge Cases pinned) — every 4 hours in publish mode; start + end only in validate (< 8 h).
 6. **Validate-mode crossover-section rendering** (FR-016, SC-005 amended) — render with axis-restricted disclaimer; coarse 4-value `crossover_max_tokens` vocabulary in validate.
 

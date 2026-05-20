@@ -47,7 +47,7 @@ The sub-probe is **additive** to the budget table: the budget-table c=8 rows con
 **Primary Dependencies**:
 
 - `vllm` + `torch` — UNCHANGED from M6.1.3. Operator runs `uv sync --frozen --all-groups` on macOS per ANALYSIS.md M6.0a + `feedback_local_lint_chain` memory.
-- `grpcio` + `grpcio-tools` — UNCHANGED. Zero new wire keys per FR-011; schema stays at `"m6_1_1.v1"`.
+- `grpcio` + `grpcio-tools` — UNCHANGED tool versions; the `.proto` files themselves gain one additive field (`ignore_eos`) per T002/T003, stub regen via `make proto`. Artifact-JSON `schema_version` stays at `"m6_1_1.v1"`.
 - `httpx` — UNCHANGED.
 - `modal` — UNCHANGED. No modifications to Modal endpoint code; M6.2 is harness-only.
 - `tcptraceroute` — INHERITED from M6.1.2 (FR-009).
@@ -66,7 +66,7 @@ The sub-probe is **additive** to the budget table: the budget-table c=8 rows con
 - **Unit tests — `test_m6_2_crossover.py`** (NEW): symmetric mean-in-CI rule; US2 #2 inconclusive base verdict; US2 #3 CIs overlap at 10/50; FR-016 validate-mode coarse 4-value vocabulary.
 - **Unit tests — `test_m6_2_kv_pressure.py`** (NEW): FR-017a wall-clock-ratio inference computed from sub-probe rows; best-effort engine-field capture; cross-validation narrative; OOM-observed handling.
 - **Unit tests — `test_m6_2_retry_policy.py`** (NEW): FR-033 in-window retry once; retry-failure handling; end-of-sweep retry forbidden; retry-stays-in-time-window assertion.
-- **Unit tests — `test_m6_2_null_anchor.py`** (NEW): FR-012 / FR-013 cross-milestone comparison; FR-014 sweep-level integrity header at ≥ 3 of 48 anchor cells.
+- **Unit tests — `test_m6_2_null_anchor.py`** (NEW): FR-012 / FR-013 cross-milestone comparison on the 22 cross-checkable cells; FR-012 new-baseline behavior on the 26 non-cross-checkable cells; FR-014 sweep-level integrity header at ≥ 2 of 22 cross-checkable anchor cells drifted (new-baseline cells excluded).
 - **Unit tests — `test_m6_2_artifact_schema.py`** (NEW): 144-row latency budget table; strict-superset compat with M6.1.3-vintage readers; validate-mode `not_validated` rendering; per-row `prompt_source` + `measurement_regime` + `prompt_corpus_idx` field discipline; `run_meta` schema extensions.
 - **Unit tests — `test_m6_2_cli.py`** (NEW): argparse — flag presence, defaults (verbatim-inheritance regression from M6.1.3), mutual exclusion against 17 prior mode flags, round-3 deferral gate enforcement, `--m6_2-asymmetric-prompts` NOT-shipped enforcement (FR-008).
 - **Unit tests — `test_m6_2_prompt_source.py`** (NEW per round-5): FR-034 three-regime chat prompt source (synthetic at null anchors, ShareGPT corpus at interior caps + sub-probe); FR-035 three-regime embed prompt source (random tensor at null anchors, ShareGPT-derived embed corpus at interior caps + sub-probe); `symmetric_prompts.assign_symmetric_prompt` cohort-invariance per iteration index; `prompt_corpus_idx` is `None` for synthetic regimes and equals `iter_idx` for corpus regimes; corpus SHA validation (`chat_corpus_sha256` / `embed_corpus_sha256` in `run_meta` match the on-disk corpus provenance files; SC-018 corpus-drift error fires on mismatch).
@@ -89,8 +89,8 @@ The sub-probe is **additive** to the budget table: the budget-table c=8 rows con
 **Constraints**:
 
 - **No frontend / proxy / engine path changes** (FR-006, FR-007, FR-010, FR-027). M6.2 is harness-only.
-- **No `.proto` edits** (Constitution I). M6.2 adds zero new wire keys.
-- **Strict-superset schema** (FR-011 + SC-007). All M6.2 additions are additive top-level JSON keys or additive per-row fields; `schema_version` stays at `"m6_1_1.v1"`.
+- **One additive `.proto` edit** (Constitution I, proto-first satisfied). M6.2 adds one wire field: `ignore_eos` on ChatCompleteRequest + CompletionRequest, required by the FR-036 KV-pressure sub-probe regime. Sequenced as T002 (investigate) → T003 (proto edit + stub regen) → T003a (frontend translation) before any harness code references the field.
+- **Strict-superset artifact-JSON schema** (FR-011 + SC-007). All M6.2 artifact-JSON additions are additive top-level keys or additive per-row fields; `schema_version` stays at `"m6_1_1.v1"`. Note: this constraint covers the artifact schema only; the gRPC wire schema receives one additive field (`ignore_eos`) via T002/T003 — see the Constitution I note below.
 - **Copy-then-refactor discipline** (FR-028 — project-wide convention from M6.1.3). M6.2 modules are produced by copying the M6.1.3 `m6_1_3_*` family into `m6_2_*` and refactoring only the deltas the `max_tokens` axis + FR-030/031/032/033 confound controls + round-5 three-regime split + sub-probe require.
 - **Cohort-innermost discipline** (FR-030). Cohort-outermost iteration FORBIDDEN.
 - **In-window retry only** (FR-033). End-of-sweep retries FORBIDDEN.
@@ -123,7 +123,7 @@ Evaluated against the 5 principles in `.specify/memory/constitution.md` (v1.0.0)
 
 | Principle | Status | Notes |
 |---|---|---|
-| **I. Proto-First** | **PASS** | Zero new wire keys. All M6.2 additions are JSON-level artifact additions. `schema_version` unchanged. Round-5's `ignore_eos` parameter is a Python sampling-params keyword, not a `.proto` field. The new embed corpus stores `torch.save` tensors per-file; the wire format passing them to the engine is the M6.1.x `prompt_embeds` field that already exists. |
+| **I. Proto-First** | **PASS** | One additive wire field: `ignore_eos` (added to `ChatCompleteRequest` in `proto/vllm_grpc/v1/chat.proto` and `CompletionRequest` in `proto/vllm_grpc/v1/completions.proto` per T002/T003) — required so the KV-pressure sub-probe per FR-036 can pass `ignore_eos=True` through the gRPC wire to the engine. Proto-first discipline satisfied: T003 edits the `.proto` files first, `make proto` regenerates stubs, then Python frontend code (T003a) translates the field to vLLM's `SamplingParams`. Artifact-JSON schema additions remain additive (`schema_version` unchanged at `"m6_1_1.v1"`). The new embed corpus stores `torch.save` tensors per-file; the wire format passing them to the engine is the M6.1.x `prompt_embeds` field that already exists. |
 | **II. Library Dependency, Not Fork** | **PASS** | No engine / proxy / frontend changes. The embed-corpus generator (FR-035) is an offline script that uses `vllm`'s public `LLM` / `LLMEngine` API for the embedding pass — no upstream patching. The `symmetric_prompts.assign_symmetric_prompt` function being newly wired in M6.2 is a project-internal change to call a previously-unused function in our own module, not an upstream contribution. |
 | **III. Phase Discipline** | **PASS** | M6.2 scope matches PLAN.md M6.2 entry. Out-of-scope held firm: M7 (corpus diversity beyond ShareGPT), M8 (additional models, max_model_len > 2048), upstream vLLM contributions. The new embed corpus generation IS in scope — it's the M6.2 implementation prerequisite for the FR-035 three-regime split, NOT a new corpus-diversity deliverable. ShareGPT (the source) is M5.2-vintage; deriving embeddings from it for M6.2 is reuse of existing prompt content. |
 | **IV. CI is the Merge Gate** | **PASS** | 10 new test files exercise the round-5 deltas (prompt source three-regime, sub-probe, corpus SHA validation) on top of the round-4 controls (cohort iteration, anchor trajectory, crossover, KV-pressure, retry, null-anchor, artifact schema, CLI). Local-lint chain mandatory. `iteration_discipline_verified` machine check + 0.5% clock-anomaly budget CI-verifiable from artifact JSON. |
@@ -147,7 +147,7 @@ specs/027-m6-2-token-budget/
 │   ├── cli.md                  # The --m6_2 + --m6_2-validate CLI surface + round-3 deferral gate. No new CLI flags from round-5 (corpus paths are spec-pinned, not parametrizable).
 │   ├── artifact-schema.md      # Top-level keys + per-row fields + four publish-blocking-eligible sweep-level integrity-header rules + symmetric mean-in-CI crossover rule + wall-clock-ratio inference rule + validate-mode rendering rules + ROUND-5 ADDITIONS: prompt_source vocabulary + measurement_regime vocabulary + sub-probe rendering rules + corpus SHA validation rules.
 │   ├── iteration-order.md      # FR-030/031/032/033 confound controls + ROUND-5 ADDITIONS: sub-probe step in the orchestrator outer loop, FR-030 discipline preserved within the sub-probe.
-│   ├── wire-vocabulary.md      # M6.2 adds zero new wire vocabulary (REUSED unchanged from prior round; the round-5 ignore_eos parameter is a Python sampling-params keyword, not a wire-format key).
+│   ├── wire-vocabulary.md      # M6.2 adds ONE additive wire field: `ignore_eos` (bool) on ChatCompleteRequest + CompletionRequest, required by the FR-036 KV-pressure sub-probe regime. All other wire vocabulary REUSED unchanged.
 │   └── prompt-source.md        # NEW PER ROUND-5 — the three-regime prompt source contract: null-anchor synthetic regime, interior-cap corpus regime, sub-probe corpus regime; corpus paths + SHA pinning; assign_symmetric_prompt operative wiring; ignore_eos parameter plumbing; per-row prompt_source + measurement_regime + prompt_corpus_idx field semantics.
 ├── spec.md                     # Feature spec (existing, 27 Q/A clarifications across 5 rounds — round 5 added prompt source, ignore_eos handling, KV-pressure sub-probe)
 └── tasks.md                    # /speckit-tasks output (NOT created by /speckit-plan)
@@ -185,8 +185,8 @@ tools/benchmark/src/vllm_grpc_bench/
 └── __main__.py                   # MODIFY — argparse wiring for `--m6_2` + `--m6_2-validate` + `--m6_2-*` namespaced sub-flags. Mutual-exclusion against 17 prior mode flags. Round-3 deferral gate (refuse `--m6_2` if `--m6_2-n` unset per FR-004). `--m6_2-asymmetric-prompts` MUST NOT be added per FR-008. No corpus-path CLI flag (corpus paths spec-pinned per FR-034 / FR-035; only operator override would be unsupported corpus). ~80-120 LOC.
 
 packages/frontend/src/vllm_grpc_frontend/
-├── chat.py                       # READ-ONLY — UNCHANGED from M6.1.3.
-└── completions.py                # READ-ONLY — UNCHANGED from M6.1.3.
+├── chat.py                       # MODIFY (round-5 follow-on to T003) — read `ignore_eos` from ChatCompleteRequest, pass into SamplingParams. Wired via T003a. ~5-10 LOC.
+└── completions.py                # MODIFY (round-5 follow-on to T003) — read `ignore_eos` from CompletionRequest, pass into SamplingParams. Wired via T003a. ~5-10 LOC.
 
 scripts/python/
 └── gen_embed_corpus_qwen3_8b.py  # NEW (round-5) — adapted from existing scripts/python/gen_embed_corpus.py. Takes the ShareGPT chat corpus (tools/benchmark/corpus/chat_sharegpt_1000.json) as input; feeds each prompt through Qwen3-8B's embedding layer; saves 1000 .pt files at variable seq_len × 4096 (fp16); builds manifest.json with per-entry SHA + source_prompt_id + seq_len + bucket metadata + top-level corpus_sha256. Runs on Modal A10G or local GPU; ~10-30 min compute time. Phase 1 prerequisite per FR-035. ~150-200 LOC.
@@ -298,7 +298,7 @@ Re-evaluated against the 5 principles after Phase 1 design artifacts were drafte
 
 | Principle | Status | Post-design notes |
 |---|---|---|
-| I. Proto-First | **PASS** | Confirmed by [`contracts/wire-vocabulary.md`](./contracts/wire-vocabulary.md) — M6.2 adds zero new wire keys. Round-5's `ignore_eos` parameter is a Python sampling-params keyword, not a `.proto` field. The new embed corpus stores `torch.save` tensors using the existing M6.1.x `prompt_embeds` wire format. Zero `.proto` impact. |
+| I. Proto-First | **PASS** | Confirmed by [`contracts/wire-vocabulary.md`](./contracts/wire-vocabulary.md) — M6.2 adds ONE additive wire field (`ignore_eos`) per T003, with frontend translation via T003a. Proto-first discipline satisfied (proto edit → stub regen → Python translation). The new embed corpus stores `torch.save` tensors using the existing M6.1.x `prompt_embeds` wire format — no schema change for the embed path. |
 | II. Library Dependency, Not Fork | **PASS** | Confirmed by [`data-model.md`](./data-model.md) + [`contracts/prompt-source.md`](./contracts/prompt-source.md) — every M6.2 edit lands in `tools/benchmark/` or `scripts/python/`. No frontend / proxy / engine path changes. The embed-corpus generator uses `vllm`'s public `LLM` API for the embedding pass — no upstream patching. |
 | III. Phase Discipline | **PASS** | Confirmed by [`contracts/artifact-schema.md`](./contracts/artifact-schema.md) + [`contracts/prompt-source.md`](./contracts/prompt-source.md) — schemas match exactly what M6.2 needs. M7 (corpus diversity beyond ShareGPT) / M8 (additional models, max_model_len > 2048) functionality stays out. The new ShareGPT-derived embed corpus is an M6.2 implementation prerequisite, not a corpus-diversity deliverable — ShareGPT IS the M5.2/M6.x corpus; deriving embeddings from it is reuse, not expansion. |
 | IV. CI is the Merge Gate | **PASS** | [`quickstart.md`](./quickstart.md) includes the local-lint-chain step + the embed-corpus-generation prerequisite. 10 test files exercise the round-4 confound controls + round-5 prompt source + sub-probe + corpus SHA validation. Integration tests exercise full CLI → orchestrator → reporter without Modal. SC-018 corpus-drift error is CI-verifiable. |
