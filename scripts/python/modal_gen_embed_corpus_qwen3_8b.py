@@ -35,6 +35,8 @@ Reference: specs/027-m6-2-token-budget/contracts/prompt-source.md
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -54,6 +56,8 @@ _REMOTE_OUTPUT_DIR = "/mnt/out"
 _REMOTE_HF_CACHE = "/root/.cache/huggingface"
 _FUNCTION_TIMEOUT_S = 2400  # 40 minutes (first-run weight download + 1000-prompt embed)
 
+_OUTPUT_VOLUME_NAME = "vllm-grpc-m6-2-embed-corpus"
+
 # Pinned to the repo's torch / transformers versions (uv.lock as of M6.2 build).
 # Bumping is safe but changes the generated tensors' bit-exactness — re-running
 # invalidates the embed corpus SHA, so coordinate with the M6.2 sweep cadence.
@@ -64,7 +68,7 @@ _TRANSFORMERS_VERSION = "5.7.0"
 app = modal.App("vllm-grpc-m6-2-gen-embed-corpus")
 
 _HF_CACHE_VOLUME = modal.Volume.from_name("vllm-grpc-hf-cache", create_if_missing=True)
-_OUTPUT_VOLUME = modal.Volume.from_name("vllm-grpc-m6-2-embed-corpus", create_if_missing=True)
+_OUTPUT_VOLUME = modal.Volume.from_name(_OUTPUT_VOLUME_NAME, create_if_missing=True)
 
 _image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -150,33 +154,48 @@ def generate_remote(
     return manifest
 
 
-def _mirror_volume_to_local(volume: modal.Volume, local_dir: Path) -> int:
-    """Stream every file in ``volume`` into ``local_dir``.
+def _mirror_volume_to_local(volume_name: str, local_dir: Path) -> int:
+    """Download every file in the named Modal Volume into ``local_dir``.
 
-    Returns the count of files written. Uses Modal's sync-callable hybrid
-    Volume API (``iterdir`` + ``read_file_into_fileobj``) so the operator
-    doesn't need to invoke ``modal volume get`` manually.
+    Uses ``modal volume get`` (the documented bulk-download CLI) rather than
+    a per-file SDK loop. Rationale:
+
+    - ``Volume.reload()`` only works inside a running Modal container, so the
+      local entrypoint can't refresh its view that way; the CLI does the right
+      thing automatically.
+    - ``modal volume get -r /`` parallelises the download. For 1000 ``.pt``
+      files (each ~50 KB to 8 MB), a per-file ``read_file_into_fileobj`` loop
+      would dominate wall-clock with sync→async round-trips.
+
+    Returns the count of files written. Cleans ``local_dir`` first so a re-run
+    after a smoke test (e.g., ``--limit=10``) doesn't leave stale files.
     """
-    # Refresh the volume's view so we see the freshly-committed contents.
-    volume.reload()
+    if shutil.which("modal") is None:
+        raise RuntimeError(
+            "modal CLI not found on PATH. Re-run via "
+            "`uv run --with modal modal run ...` so the CLI is available."
+        )
 
+    if local_dir.exists():
+        for stale in local_dir.iterdir():
+            if stale.is_file():
+                stale.unlink()
+            elif stale.is_dir():
+                shutil.rmtree(stale)
     local_dir.mkdir(parents=True, exist_ok=True)
 
-    n_written = 0
-    for entry in volume.iterdir("/", recursive=True):
-        # Skip directories — they're recreated implicitly by the per-file
-        # mkdir below. Modal's FileEntry.type is 1 for files, 2 for dirs
-        # (per modal.volume.FileEntryType); guard generically via has-type.
-        is_dir = getattr(getattr(entry, "type", None), "name", "") == "DIRECTORY"
-        if is_dir:
-            continue
-        relative_path = entry.path.lstrip("/")
-        local_path = local_dir / relative_path
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        with local_path.open("wb") as f:
-            volume.read_file_into_fileobj(entry.path, f)
-        n_written += 1
-    return n_written
+    # `modal volume get <vol> <remote-path> <local-path> --force` overwrites
+    # any existing local files and creates the local dir if needed.
+    cmd = ["modal", "volume", "get", volume_name, "/", str(local_dir), "--force"]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"`modal volume get` failed (exit {proc.returncode}):\n"
+            f"  stdout: {proc.stdout}\n"
+            f"  stderr: {proc.stderr}"
+        )
+
+    return sum(1 for _ in local_dir.rglob("*") if _.is_file())
 
 
 @app.local_entrypoint()
@@ -225,11 +244,11 @@ def main(limit: int | None = None) -> None:
     )
 
     print(
-        f"[modal_gen_embed_corpus] mirroring volume → {_LOCAL_OUTPUT_DIR}...",
+        f"[modal_gen_embed_corpus] mirroring volume {_OUTPUT_VOLUME_NAME} → {_LOCAL_OUTPUT_DIR}...",
         flush=True,
     )
     t1 = time.monotonic()
-    n_written = _mirror_volume_to_local(_OUTPUT_VOLUME, _LOCAL_OUTPUT_DIR)
+    n_written = _mirror_volume_to_local(_OUTPUT_VOLUME_NAME, _LOCAL_OUTPUT_DIR)
     mirror_wall_s = time.monotonic() - t1
     print(
         f"[modal_gen_embed_corpus] mirrored {n_written} files in {mirror_wall_s:.1f}s.",
