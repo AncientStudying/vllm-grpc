@@ -386,6 +386,176 @@ multi-model. The only legitimate reason to bump is a **wire-breaking
 change** — a value type changes from `int` to `str`, or an existing
 key is removed. M6.1.3 does neither.
 
+## M6.2 — Token-Budget Characterization (additive)
+
+M6.2 extends the M6.1.3 schema with the `max_tokens` axis + four
+exogenous-confound controls (FR-030/031/032/033) + the round-5
+three-regime prompt source (FR-034/FR-035) + the KV-pressure sub-probe
+(FR-036). All additions are strict-superset; `schema_version` stays at
+`"m6_1_1.v1"` per FR-011. The artifact pair lives at
+`docs/benchmarks/m6_2-token-budget.{md,json}` (canonical publish) and
+`docs/benchmarks/m6_2-token-budget-validate.{md,json}` (validate
+sibling) per FR-015.
+
+### Seven new top-level keys
+
+| Key | Type | Notes |
+|---|---|---|
+| `per_cell` | dict | `cell_id → cohort → max_tokens → MeasurementPoint`. Replaces M6.1.2's flat `measurements` list when M6.2 axis-rows are populated; M6.1.3 `measurements` are still emitted for backward compat by callers that need them. |
+| `null_anchor_validation` | list | 48-cell anchor pool: 22 cross-checkable (paired against M6.1.3 CI) + 26 new-baseline (`new_baseline_marker=true`, verdict=null). |
+| `max_tokens_axis` | list[int] | Active axis literal (`[10, 50, 256, 512, 1024, 2048]` publish; `[10, 50, 2048]` validate). |
+| `protocol_crossover` | list | Per-cell crossover record (winner/second cohort + `crossover_max_tokens` per the symmetric mean-in-CI rule). 6 records (one per cell). |
+| `kv_pressure_observation` | list | Per (cohort, cell_type) KV-pressure observation derived from the SUB-PROBE (not budget-table c=8 rows). 8 records (4 cohorts × 2 cell-types). |
+| `anchor_latency_trajectory` | dict | `cohort → trajectory`. Per-cohort intra-sweep anchor snapshots with `latency_drift_warning` flag. |
+| `failure_summary` | dict | `failed_reason → count`. Always present per SC-014; empty dict when zero failures. |
+| `integrity_warnings` | list[str] | Canonical channel labels fired (subset of `{"null_anchor_drift", "failure_summary_threshold", "cohort_csp_mismatch", "intra_sweep_latency_drift", "iteration_discipline_broken", "clock_anomaly_warning"}`). Empty list when none fired. |
+
+### Seven new per-row fields on `M6_2MeasurementPoint`
+
+| Field | Type | Notes |
+|---|---|---|
+| `max_tokens` | int | Round-4. The axis point this row measures. |
+| `block_start_utc` | ISO-8601 string | Round-4 (FR-032). UTC block-start timestamp. |
+| `block_end_utc` | ISO-8601 string | Round-4 (FR-032). UTC block-end timestamp. |
+| `retry_attempted` | bool | Round-4 (FR-033). `true` if in-window retry fired. |
+| `prompt_source` | enum | Round-5 (FR-034/FR-035). Literal `"synthetic_seed_derived" \| "corpus_sharegpt" \| "synthetic_random_tensor" \| "corpus_sharegpt_embed"`. |
+| `measurement_regime` | enum | Round-5 (FR-036). Always `"natural_eos"` on budget-table rows. Sub-probe rows live in `kv_pressure_observation` only and carry `"forced_cap_ignore_eos_true"`. |
+| `prompt_corpus_idx` | int \| null | Round-5. Corpus-regime `iter_idx` for post-hoc analysis; `null` on synthetic-regime rows. |
+
+### Ten new `run_meta` fields
+
+| Field | Type | Notes |
+|---|---|---|
+| `iteration_order` | string | Round-4 (FR-030). Always `"cohort_innermost_block"`. |
+| `iteration_discipline_verified` | bool | Round-4 (FR-032). Post-hoc machine check on the block sequence. |
+| `n_per_point` | int | Round-3 deferred (publish; `--m6_2-n` operator-pinned) or `20` (validate). |
+| `validate_axis_subset` | list[int] \| null | `[10, 50, 2048]` in validate; null in publish. |
+| `wall_clock_start_utc` | ISO-8601 string | Sweep boundary stamps. |
+| `wall_clock_end_utc` | ISO-8601 string | |
+| `total_sweep_hours` | float | Derived. |
+| `modal_spend_usd_estimate` | float \| null | Best-effort. |
+| `chat_corpus_sha256` | string | Round-5 (FR-034 / SC-018). Recorded at sweep start from `chat_sharegpt_1000.provenance.json`. |
+| `chat_corpus_path` | string | Default `"tools/benchmark/corpus/chat_sharegpt_1000.json"`. |
+| `embed_corpus_sha256` | string | Round-5 (FR-035 / SC-018). Recorded at sweep start from `completions_embeds_qwen3_8b/manifest.json`. |
+| `embed_corpus_path` | string | Default `"tools/benchmark/corpus/completions_embeds_qwen3_8b/"`. |
+| `sub_probe_ran` | bool | Round-5 (FR-036 / SC-019). `true` in both publish and validate modes. |
+
+### Sweep-level integrity-header firing rules
+
+Five publish-blocking-eligible channels (operator decides) + one soft
+diagnostic. Channels render as leading callouts above the markdown
+body; the JSON `integrity_warnings` list carries the canonical labels.
+
+| Channel label | Firing rule | FR | SC |
+|---|---|---|---|
+| `null_anchor_drift` | ≥ 2 of 22 cross-checkable null-anchor cells drifted (verdict ∈ {WARN, FAIL}). New-baseline cells excluded from the count. | FR-014 | SC-004 |
+| `failure_summary_threshold` | ≥ 3 cells failed OR any (cell, max_tokens) tuple had all 4 cohorts fail (then tagged `systemic_failure_<reason>`). | FR-029 | SC-014 |
+| `cohort_csp_mismatch` | Any cohort's `network_paths` trajectory shows a CSP / region change between consecutive snapshots. | FR-009 | SC-010 |
+| `intra_sweep_latency_drift` | ≥ 2 of 4 cohorts' anchor trajectories drifted beyond M6.1.3 baseline CI. | FR-031 | SC-016 |
+| `clock_anomaly_warning` | ≥ 0.5% of RPCs flagged for wire-format clock anomaly across the sweep. | FR-006 (inherited) | SC-011 |
+| `iteration_discipline_broken` | `run_meta.iteration_discipline_verified = false`. Soft diagnostic only; informational. | FR-032 | SC-017 |
+
+### Derived-field computation rules
+
+**Symmetric mean-in-CI crossover rule** (FR-016 / spec round-1 Q3) — per
+cell, walk the `max_tokens` axis ascending and detect the first point
+where EITHER the M6.1.3-winner cohort's M6.2 mean lies inside the
+M6.1.3-second cohort's CI, OR vice versa. Implemented in
+`m6_2_crossover.compute_per_cell_crossover`. Inconclusive base verdicts
+short-circuit to `crossover_max_tokens=null` with canonical evidence
+text. Rule firing at the first axis point (e.g. 10) emits the
+"M6.1.3 verdict not robust to M6.2 resampling" evidence per US2 #3.
+
+**Wall-clock-ratio KV-pressure inference** (FR-017a / spec round-3 Q3 /
+round-5 amendment) — per (cohort, cell_type), compute
+`R = wall_p50_ms(2048) / wall_p50_ms(1024)` from the **sub-probe rows**
+(NOT main-sweep budget-table c=8 rows). `R > 2.2` →
+`kv_pressure_inferred_<cell_type>`; else `kv_pressure_not_observable`.
+OOM at the 2048 sub-probe pins the label to `kv_pressure_not_observable`
+and sets `oom_observed=true`. Implemented in
+`m6_2_crossover.compute_kv_pressure_inference`. Threshold 2.2 pinned per
+round-3 Q3.
+
+### Three-regime prompt-source contract (FR-034 / FR-035 — round-5)
+
+| `(cell_type, max_tokens)` | Regime | `prompt_source` | `ignore_eos` |
+|---|---|---|---|
+| `chat_stream`, `10 \| 50` | null-anchor synthetic | `synthetic_seed_derived` | false |
+| `chat_stream`, `256 \| 512 \| 1024 \| 2048` | interior-cap corpus | `corpus_sharegpt` | false |
+| `embed`, `10 \| 50` | null-anchor synthetic | `synthetic_random_tensor` | false |
+| `embed`, `256 \| 512 \| 1024 \| 2048` | interior-cap corpus | `corpus_sharegpt_embed` | false |
+| sub-probe `(chat_stream_c8, 1024 \| 2048)` | forced-cap corpus | `corpus_sharegpt` | **true** |
+| sub-probe `(embed_c8, 1024 \| 2048)` | forced-cap corpus | `corpus_sharegpt_embed` | **true** |
+
+The regime is selected per-block (not per-cohort or per-iteration) by
+`m6_2_prompt_source.resolve_block_inputs`. Sub-probe rows DO NOT appear
+in the `per_cell` budget table — they emit to
+`kv_pressure_observation` only, preserving the additive-vs-budget
+distinction per FR-036.
+
+### KV-pressure sub-probe contract (FR-036 — round-5)
+
+The sub-probe is a separate, additive measurement loop:
+
+- **16 blocks**: 4 cohorts × 2 cell-types `{chat_stream, embed}` × 2 caps
+  `{1024, 2048}`. Targets `chat_stream_c8` + `embed_c8` cells per
+  FR-017a's high-concurrency focus.
+- **`n=20` per block** pinned (`M6_2_SUB_PROBE_N`).
+- **`ignore_eos=True`** on every RPC so the engine generates to the
+  forced cap.
+- **Corpus regime** via `m6_2_prompt_source.resolve_block_inputs(...,
+  ignore_eos_override=True)`.
+- **FR-030 cohort-innermost discipline** within each (cell_type,
+  max_tokens) tuple: all 4 cohorts dispatch back-to-back before
+  advancing.
+- **FR-032 per-block UTC timestamps + FR-033 in-window retry-once**
+  apply to sub-probe blocks identically to main-sweep blocks.
+- **Runs in both publish and validate modes** per SC-019.
+- Sub-probe results emit to `m6_2_crossover.SubProbeBlockResult` and are
+  consumed by `compute_kv_pressure_inference` to produce the 8
+  `kv_pressure_observation` records. They DO NOT pollute the
+  latency-budget table — `per_cell` c=8 rows stay populated by the
+  main-sweep interior-cap regime.
+
+### Corpus SHA validation (SC-018 — round-5)
+
+Both corpora are SHA-pinned at sweep start. The orchestrator reads:
+
+- `tools/benchmark/corpus/chat_sharegpt_1000.provenance.json:corpus_sha256`
+- `tools/benchmark/corpus/completions_embeds_qwen3_8b/manifest.json:corpus_sha256`
+
+…compares them against the on-disk corpus, and aborts with exit code 6
+(`CorpusDriftError`) on mismatch. The validated SHAs are recorded in
+`run_meta.{chat,embed}_corpus_sha256` so post-hoc analysis can detect
+silent corpus swaps.
+
+### Validate-mode rendering rules
+
+The validate-sibling artifact shares the same shape as the publish
+artifact with these adjustments:
+
+- Interior caps (`max_tokens ∈ {256, 512, 1024}`) carry `failed_reason
+  = "not_validated"` placeholder rows so the `per_cell` shape stays
+  144 entries (idealized) / 132 entries (live-cohort discipline).
+- The "Protocol crossover threshold" section prepends the
+  axis-restricted disclaimer callout; `crossover_max_tokens` uses the
+  coarse 4-value vocabulary `{10, 50, 2048, survives_to_2048, null}`.
+- The "Sweep wall-clock timeline" subsection is OMITTED when
+  `total_sweep_hours < 8` (validate sweeps are too short to be
+  signal-bearing). Publish mode renders it unconditionally.
+- All other auxiliary subsections render normally — anchor trajectory
+  carries 2 snapshots (start + end), null-anchor + KV-pressure +
+  failure-summary all populate normally.
+
+### Project-wide convention propagation (FR-027)
+
+M6.2 is **harness-only** — no frontend / proxy / engine path changes.
+One additive `.proto` field (`ignore_eos` on `ChatCompleteRequest` +
+`CompletionRequest`) was added in T003 to support the sub-probe regime;
+frontend translation lives in `packages/frontend/src/vllm_grpc_frontend/{chat,completions}.py`
+(T003a). The artifact-JSON schema additions are all top-level keys or
+per-row fields; `schema_version` unchanged.
+
 ## Strict-superset evolution rule
 
 New top-level keys are added without bumping `schema_version` PROVIDED:
@@ -412,6 +582,17 @@ The contract precedents are:
   per FR-001 / FR-002 / FR-005 / FR-008 / FR-008a / FR-016 / FR-024
   / FR-026 + round-3 Q1 (the additive-strict-superset convention
   binding future M6.2 / M7 / M8 milestones).
+- M6.2 (`specs/027-m6-2-token-budget/contracts/{artifact-schema,iteration-order,prompt-source,wire-vocabulary}.md`)
+  — added the `max_tokens` axis + 7 top-level keys (`per_cell`,
+  `null_anchor_validation`, `max_tokens_axis`, `protocol_crossover`,
+  `kv_pressure_observation`, `anchor_latency_trajectory`,
+  `failure_summary`, `integrity_warnings`) + 7 per-row fields
+  (`max_tokens`, `block_start_utc`, `block_end_utc`,
+  `retry_attempted`, `prompt_source`, `measurement_regime`,
+  `prompt_corpus_idx`) + 10 `run_meta` fields + the three-regime
+  prompt-source contract (FR-034/FR-035) + the KV-pressure sub-probe
+  contract (FR-036) + the corpus SHA validation rule (SC-018) + one
+  additive `ignore_eos` wire field per FR-036.
 
 ## Cross-references
 
@@ -434,6 +615,24 @@ The contract precedents are:
   trigger verdict.
 - [`specs/026-m6-1-3-attribution-closure/data-model.md`](../specs/026-m6-1-3-attribution-closure/data-model.md)
   — Python dataclasses for M6.1.3 additions.
+- [`specs/027-m6-2-token-budget/contracts/artifact-schema.md`](../specs/027-m6-2-token-budget/contracts/artifact-schema.md)
+  — M6.2 top-level keys + per-row fields + integrity-header firing rules
+  + symmetric mean-in-CI crossover + wall-clock-ratio inference +
+  validate-mode rendering rules.
+- [`specs/027-m6-2-token-budget/contracts/iteration-order.md`](../specs/027-m6-2-token-budget/contracts/iteration-order.md)
+  — FR-030 cohort-innermost discipline + FR-031 anchor cadence +
+  FR-032 timestamps + FR-033 in-window retry.
+- [`specs/027-m6-2-token-budget/contracts/prompt-source.md`](../specs/027-m6-2-token-budget/contracts/prompt-source.md)
+  — three-regime prompt-source contract + corpus paths + SHA pinning +
+  `ignore_eos` plumbing + sub-probe regime selection.
+- [`specs/027-m6-2-token-budget/contracts/wire-vocabulary.md`](../specs/027-m6-2-token-budget/contracts/wire-vocabulary.md)
+  — `ignore_eos` additive wire field on `ChatCompleteRequest` +
+  `CompletionRequest`.
+- [`specs/027-m6-2-token-budget/data-model.md`](../specs/027-m6-2-token-budget/data-model.md)
+  — Python dataclasses for M6.2 additions
+  (`M6_2MeasurementPoint`, `M6_2NullAnchor`, `M6_2CrossoverThreshold`,
+  `M6_2KVPressureObservation`, `M6_2AnchorLatencyTrajectory`,
+  `M6_2RunMeta`, `M6_2SweepArtifact`).
 - [`ANALYSIS.md § M6.1.2`](../ANALYSIS.md) — the methodology
   implications of the per-sweep topology evidence (the spike-era
   multi-cloud topology vs the 2026-05-17 single-AWS consolidation).
