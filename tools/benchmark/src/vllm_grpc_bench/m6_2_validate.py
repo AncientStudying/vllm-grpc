@@ -31,11 +31,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as _dt
+import json
 import subprocess
 import uuid
 from pathlib import Path
 from typing import Literal
 
+from vllm_grpc_bench.corpus import (
+    CompletionEmbedSample,
+    RequestSample,
+)
+from vllm_grpc_bench.m6_1_2_types import M6_1_2CohortKind
+from vllm_grpc_bench.m6_2_crossover import M6_1_3CohortBaseline
 from vllm_grpc_bench.m6_2_types import (
     M6_2_VALIDATE_MAX_TOKENS_AXIS,
     M6_2RunMeta,
@@ -48,6 +55,7 @@ __all__ = [
     "build_stub_anchor_dispatcher",
     "build_stub_dispatcher",
     "infer_output_path",
+    "load_m6_1_3_baseline",
     "run_m6_2",
 ]
 
@@ -160,6 +168,83 @@ def _stub_is_transient(exc: BaseException) -> bool:  # noqa: ARG001 - kept for p
     return False
 
 
+# --- M6.1.3 baseline loader (US2 crossover input) --------------------------
+
+
+def load_m6_1_3_baseline(
+    baseline_path: str | Path,
+) -> tuple[
+    dict[str, dict[M6_1_2CohortKind, M6_1_3CohortBaseline]],
+    dict[str, str],
+]:
+    """Read the M6.1.3 artifact and return ``(per_cell_baseline, base_verdicts)``.
+
+    ``per_cell_baseline[cell_id][cohort]`` is a
+    :class:`m6_2_crossover.M6_1_3CohortBaseline` (wall_p50_ms + CI half-width).
+    ``base_verdicts[cell_id]`` is the M6.1.3 classifier label.
+
+    Source mapping:
+
+    - ``wall_p50_ms`` ← M6.1.3's ``measurements[].wall_clock_ms_mean`` (mean
+      is the closest available per-cohort proxy; M6.1.3 doesn't publish a
+      per-cohort p50).
+    - ``wall_p50_ms_ci_half_width`` ← per-(cell, cohort)
+      ``between_run_variance.stddev_of_means_ms`` × 1.96 / sqrt(n_runs) when
+      available, else 0.0 (the crossover compute falls back to the symmetric
+      mean-in-CI rule's failure path when the CI is degenerate).
+    - ``base_verdicts`` ← ``classifications`` dict from the artifact.
+
+    Returns ``({}, {})`` if the baseline file is missing or malformed; the
+    crossover compute then emits the canonical "did not publish" evidence
+    for every cell.
+    """
+    path = Path(baseline_path)
+    if not path.exists():
+        return {}, {}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}, {}
+
+    baseline_per_cell: dict[str, dict[M6_1_2CohortKind, M6_1_3CohortBaseline]] = {}
+    for measurement in data.get("measurements", []):
+        cell_id = measurement.get("cell_id")
+        cohort = measurement.get("cohort")
+        wall_mean = measurement.get("wall_clock_ms_mean")
+        if cell_id is None or cohort is None or wall_mean is None:
+            continue
+        baseline_per_cell.setdefault(cell_id, {})[cohort] = M6_1_3CohortBaseline(
+            wall_p50_ms=float(wall_mean),
+            wall_p50_ms_ci_half_width=0.0,  # see between_run_variance section
+        )
+
+    # Enrich with between_run_variance-derived CI half-widths when present.
+    variance = data.get("between_run_variance") or {}
+    for cell_id, per_cohort in variance.items():
+        for cohort, var in (per_cohort or {}).items():
+            stddev = var.get("stddev_of_means_ms")
+            n_runs = var.get("n_runs", 1)
+            if stddev is None or n_runs is None or n_runs < 2:
+                continue
+            try:
+                ci_half = 1.96 * float(stddev) / (float(n_runs) ** 0.5)
+            except (TypeError, ValueError):
+                continue
+            entry = baseline_per_cell.get(cell_id, {}).get(cohort)
+            if entry is None:
+                continue
+            baseline_per_cell[cell_id][cohort] = M6_1_3CohortBaseline(
+                wall_p50_ms=entry.wall_p50_ms,
+                wall_p50_ms_ci_half_width=ci_half,
+            )
+
+    base_verdicts: dict[str, str] = {}
+    for cell_id, label in (data.get("classifications") or {}).items():
+        if isinstance(label, str):
+            base_verdicts[cell_id] = label
+    return baseline_per_cell, base_verdicts
+
+
 # --- Artifact assembly -----------------------------------------------------
 
 
@@ -189,6 +274,8 @@ def build_artifact(
     base_seed: int,
     modal_region: str,
     model_identifier: str,
+    sub_probe_rows: object = None,  # list[SubProbeBlockResult] | None
+    sub_probe_ran: bool = False,
     run_id: str | None = None,
     m6_1_3_baseline_path: str = "docs/benchmarks/m6_1_3-attribution-closure.json",
 ) -> M6_2SweepArtifact:
@@ -209,6 +296,11 @@ def build_artifact(
     """
     from vllm_grpc_bench.m6_2_anchor_trajectory import (
         compute_anchor_latency_trajectory,
+    )
+    from vllm_grpc_bench.m6_2_crossover import (
+        SubProbeBlockResult,
+        compute_kv_pressure_inference,
+        compute_per_cell_crossover,
     )
     from vllm_grpc_bench.m6_2_reporter import (
         build_integrity_warnings,
@@ -249,6 +341,33 @@ def build_artifact(
         m6_1_3_baseline_ci_half_width=5.0,
     )
 
+    # US2 crossover compute. Reads M6.1.3 baseline (cohort means + classifier
+    # labels) and runs the symmetric mean-in-CI rule against M6.2's per-cohort
+    # axis rows. Cells without a baseline entry emit canonical "did not
+    # publish" evidence.
+    baseline_per_cell, base_verdicts = load_m6_1_3_baseline(m6_1_3_baseline_path)
+    protocol_crossover = compute_per_cell_crossover(
+        per_cell_filled,
+        baseline_per_cell,
+        base_verdicts,
+        sweep_mode=sweep_mode,
+    )
+
+    # US3 KV-pressure inference. Consumes the sub-probe rows (NOT the
+    # main-sweep budget-table c=8 rows) per FR-036 / FR-017a amendment.
+    # 8 records emitted: 4 cohorts × 2 cell-types.
+    typed_sub_probe_rows: list[SubProbeBlockResult] = []
+    if sub_probe_rows is not None:
+        if not isinstance(sub_probe_rows, list):
+            raise TypeError(f"sub_probe_rows must be a list, got {type(sub_probe_rows).__name__}")
+        for row in sub_probe_rows:
+            if not isinstance(row, SubProbeBlockResult):
+                raise TypeError(
+                    f"sub_probe_rows entries must be SubProbeBlockResult, got {type(row).__name__}"
+                )
+            typed_sub_probe_rows.append(row)
+    kv_pressure_observation = compute_kv_pressure_inference(typed_sub_probe_rows)
+
     started = sweep_outputs.wall_clock_start_utc
     ended = sweep_outputs.wall_clock_end_utc
     total_hours = _hours_between(started, ended)
@@ -277,7 +396,7 @@ def build_artifact(
         chat_corpus_path=chat_corpus_path,
         embed_corpus_sha256=embed_corpus_sha256,
         embed_corpus_path=embed_corpus_path,
-        sub_probe_ran=False,  # US3 wiring (T039) will flip this to True
+        sub_probe_ran=sub_probe_ran,
     )
 
     artifact = M6_2SweepArtifact(
@@ -295,8 +414,8 @@ def build_artifact(
         max_tokens_axis=list(
             M6_2_VALIDATE_MAX_TOKENS_AXIS if sweep_mode == "validate" else M6_2_MAX_TOKENS_AXIS
         ),
-        protocol_crossover=[],
-        kv_pressure_observation=[],
+        protocol_crossover=protocol_crossover,
+        kv_pressure_observation=kv_pressure_observation,
         anchor_latency_trajectory=anchor_trajectory,
         failure_summary={},
         integrity_warnings=[],
@@ -332,6 +451,48 @@ def _hours_between(start_utc: str, end_utc: str) -> float:
     return (end - start).total_seconds() / 3600.0
 
 
+# --- Main-sweep + sub-probe driver -----------------------------------------
+
+
+async def _drive_main_sweep_and_sub_probe(
+    *,
+    inputs: object,  # M6_2SweepInputs
+    dispatcher: object,
+    anchor_dispatcher: object,
+    chat_corpus: list[RequestSample],
+    embed_corpus: list[CompletionEmbedSample],
+    base_seed: int,
+) -> tuple[object, list[object]]:
+    """Drive the main sweep + sub-probe sequentially in a single asyncio
+    runtime. Sub-probe always runs after the main sweep completes per SC-019;
+    both publish and validate modes invoke it.
+    """
+    from vllm_grpc_bench.m6_2_sub_probe import run_kv_pressure_sub_probe
+    from vllm_grpc_bench.m6_2_sweep import (
+        M6_2SweepInputs,
+    )
+    from vllm_grpc_bench.m6_2_sweep import (
+        run_m6_2_sweep as _run_m6_2_sweep,
+    )
+
+    if not isinstance(inputs, M6_2SweepInputs):
+        raise TypeError(
+            f"_drive_main_sweep_and_sub_probe inputs must be M6_2SweepInputs, "
+            f"got {type(inputs).__name__}"
+        )
+
+    sweep_outputs = await _run_m6_2_sweep(inputs)
+    sub_probe_results = await run_kv_pressure_sub_probe(
+        dispatcher=dispatcher,  # type: ignore[arg-type]
+        is_transient=_stub_is_transient,
+        base_seed=base_seed,
+        chat_corpus=chat_corpus,
+        embed_corpus=embed_corpus,
+    )
+    del anchor_dispatcher  # not needed by the sub-probe (it dispatches via the main dispatcher)
+    return sweep_outputs, list(sub_probe_results)
+
+
 # --- Entry function --------------------------------------------------------
 
 
@@ -355,7 +516,6 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
         M6_2SweepInputs,
         gate_corpus_shas,
         gate_publish_mode_n,
-        run_m6_2_sweep,
     )
 
     args_m6_2_n: int | None = getattr(args, "m6_2_n", None)
@@ -416,7 +576,17 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
         is_transient=_stub_is_transient,
         topology_probe=None,
     )
-    sweep_outputs = asyncio.run(run_m6_2_sweep(inputs))
+    sub_probe_rows = asyncio.run(
+        _drive_main_sweep_and_sub_probe(
+            inputs=inputs,
+            dispatcher=dispatcher,
+            anchor_dispatcher=anchor_dispatcher,
+            chat_corpus=chat_corpus,
+            embed_corpus=embed_corpus,
+            base_seed=base_seed,
+        )
+    )
+    sweep_outputs, sub_probe_results = sub_probe_rows
 
     artifact = build_artifact(
         sweep_mode=sweep_mode,
@@ -429,6 +599,8 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
         base_seed=base_seed,
         modal_region=modal_region,
         model_identifier=model_identifier,
+        sub_probe_rows=sub_probe_results,
+        sub_probe_ran=True,
     )
     write_m6_2_report(artifact, md_path, json_path, sweep_mode=sweep_mode)
     print(

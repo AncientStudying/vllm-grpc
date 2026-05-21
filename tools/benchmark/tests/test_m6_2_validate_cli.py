@@ -122,8 +122,8 @@ def test_validate_artifact_run_meta_carries_round5_additions(tmp_path: Path) -> 
     assert rm["validate_axis_subset"] == [10, 50, 2048]
     assert len(rm["chat_corpus_sha256"]) == 64
     assert len(rm["embed_corpus_sha256"]) == 64
-    # US3 (T039) will flip sub_probe_ran to True; for US1 MVP it's False.
-    assert isinstance(rm["sub_probe_ran"], bool)
+    # Round-5 SC-019: sub-probe runs unconditionally in both publish + validate.
+    assert rm["sub_probe_ran"] is True
 
 
 def test_validate_artifact_integrity_warnings_canonical(tmp_path: Path) -> None:
@@ -185,6 +185,69 @@ def test_validate_artifact_carries_method_background_pointer(tmp_path: Path) -> 
     md = md_path.read_text()
     assert "## Method / Background" in md
     assert "m6_1_3-attribution-closure.md" in md
+
+
+def test_validate_artifact_kv_pressure_observation_has_8_records(tmp_path: Path) -> None:
+    """T043 / US3: 4 cohorts × 2 cell-types = 8 :class:`M6_2KVPressureObservation`
+    records populated from the sub-probe per FR-036."""
+    md_path = tmp_path / "m6_2-token-budget-validate.md"
+    json_path = tmp_path / "m6_2-token-budget-validate.json"
+    args = _build_validate_args(md_path=md_path, json_path=json_path)
+    assert run_m6_2(args, sweep_mode="validate") == 0
+    payload = json.loads(json_path.read_text())
+    observations = payload["kv_pressure_observation"]
+    assert len(observations) == 8, "4 cohorts × 2 cell-types = 8 records"
+    types = {obs["cell_type"] for obs in observations}
+    assert types == {"chat_stream", "embed"}
+    cohorts = {obs["cohort"] for obs in observations}
+    assert len(cohorts) == 4
+
+
+def test_validate_kv_pressure_records_carry_sub_probe_fields(tmp_path: Path) -> None:
+    """T043 / US3: each observation carries the round-5 metadata
+    (``sub_probe_n_rpcs=20``, ``sub_probe_measurement_regime``,
+    cell-type-dependent ``sub_probe_prompt_source``)."""
+    md_path = tmp_path / "m6_2-token-budget-validate.md"
+    json_path = tmp_path / "m6_2-token-budget-validate.json"
+    args = _build_validate_args(md_path=md_path, json_path=json_path)
+    assert run_m6_2(args, sweep_mode="validate") == 0
+    payload = json.loads(json_path.read_text())
+    for obs in payload["kv_pressure_observation"]:
+        assert obs["sub_probe_n_rpcs"] == 20
+        assert obs["sub_probe_measurement_regime"] == "forced_cap_ignore_eos_true"
+        expected_source = (
+            "corpus_sharegpt" if obs["cell_type"] == "chat_stream" else "corpus_sharegpt_embed"
+        )
+        assert obs["sub_probe_prompt_source"] == expected_source
+
+
+def test_validate_kv_pressure_markdown_subsection_rendered(tmp_path: Path) -> None:
+    """T043 / US3: KV-cache pressure subsection rendered when observations
+    are present. Subsection labels measurements as forced-cap regime."""
+    md_path = tmp_path / "m6_2-token-budget-validate.md"
+    json_path = tmp_path / "m6_2-token-budget-validate.json"
+    args = _build_validate_args(md_path=md_path, json_path=json_path)
+    assert run_m6_2(args, sweep_mode="validate") == 0
+    md = md_path.read_text()
+    assert "## KV-cache pressure" in md
+    assert "forced-cap sub-probe regime" in md
+    assert "ignore_eos=True" in md
+    # The pending-implementation placeholder must NOT appear.
+    assert "User Story 3 sub-probe implementation pending" not in md
+
+
+def test_validate_protocol_crossover_has_six_records(tmp_path: Path) -> None:
+    """T036 / US2: 6 cells → 6 crossover records. Validate-mode renders the
+    axis-restricted disclaimer + coarse vocabulary."""
+    md_path = tmp_path / "m6_2-token-budget-validate.md"
+    json_path = tmp_path / "m6_2-token-budget-validate.json"
+    args = _build_validate_args(md_path=md_path, json_path=json_path)
+    assert run_m6_2(args, sweep_mode="validate") == 0
+    payload = json.loads(json_path.read_text())
+    assert len(payload["protocol_crossover"]) == 6
+    md = md_path.read_text()
+    assert "## Protocol crossover threshold" in md
+    assert "Validate-mode crossover analysis is restricted" in md
 
 
 def test_validate_cli_refuses_m6_2_with_unset_n(tmp_path: Path) -> None:
