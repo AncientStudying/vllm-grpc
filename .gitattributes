@@ -1,0 +1,5 @@
+# Git LFS tracking — added 2026-05-21 for the M6.2 Qwen3-8B prompt-embedding
+# corpus (FR-035). The pattern is intentionally scoped to the new corpus
+# directory only; the legacy `tools/benchmark/corpus/completions_embeds/*.pt`
+# files (20 small fp32 tensors from M5.x) remain regular git blobs.
+tools/benchmark/corpus/completions_embeds_qwen3_8b/*.pt filter=lfs diff=lfs merge=lfs -text

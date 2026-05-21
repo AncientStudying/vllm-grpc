@@ -55,11 +55,18 @@ def _sha256_of_file(path: Path) -> str:
 
 
 def _bucket_of(seq_len: int) -> str:
-    """Map a tokenized seq_len onto the 3 buckets recorded in the chat
-    corpus provenance file (short / medium / long)."""
-    if seq_len < 128:
+    """Map a tokenized seq_len onto 3 buckets calibrated to the actual
+    ShareGPT first-human-turn distribution (median 18, p90 128, p99 479).
+
+    Thresholds (post 2026-05-21 retune): ``< 16 → short``, ``16–127 → medium``,
+    ``>= 128 → long``. Under the realized Qwen3-8B tokenization this splits
+    the 1000-prompt corpus roughly 47% / 43% / 10%, making the bucket label
+    a useful stratifier for the M6.2 reporter. The earlier ``< 128 → short``
+    threshold put 90% of entries in ``short`` and was effectively useless.
+    """
+    if seq_len < 16:
         return "short"
-    if seq_len < 512:
+    if seq_len < 128:
         return "medium"
     return "long"
 
