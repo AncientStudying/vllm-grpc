@@ -40,6 +40,8 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import statistics
+import sys
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -88,6 +90,9 @@ __all__ = [
     "run_m6_2_sweep",
     "should_run_anchor_at",
     "verify_iteration_discipline",
+    # Per-block aggregator (exported for unit tests + future reporters)
+    "_aggregate_block_metrics",
+    "_AggregatedRPCMetrics",
 ]
 
 
@@ -210,6 +215,14 @@ class RetryClassifier(Protocol):
 
 def _now_iso_utc() -> str:
     return _dt.datetime.now(_dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _stderr_ts() -> str:
+    """Bracketed ISO-8601 UTC prefix for stderr diagnostic lines.
+
+    Mirrors `m6_1_3_sweep._stderr_ts` so clock-anomaly logging fits the
+    project-wide stderr emission style (FR-018 / R-7 inherited convention)."""
+    return _dt.datetime.now(_dt.UTC).strftime("[%Y-%m-%dT%H:%M:%SZ]")
 
 
 async def run_block_with_retry(
@@ -608,6 +621,210 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
     )
 
 
+# --- Per-block aggregation of per-RPC timing payloads -----------------------
+
+_CLOCK_ANOMALY_MAX_FRACTION: float = 0.005
+"""SC-011 cell-level clock-anomaly gate (0.5% of RPCs flagged).
+
+Inherited from M6.1.3's `M6_1_3ClassifierThresholds.clock_anomaly_max_fraction`.
+When a block's fraction of clock-anomalous RPCs (negative `seg_ingress_ms`
+or `seg_egress_ms` from wall↔monotonic clock-source mismatch) exceeds this
+threshold, the row's `clock_anomaly` flag fires."""
+
+
+@dataclass(slots=True, kw_only=True)
+class _AggregatedRPCMetrics:
+    """Per-block statistical summary derived from `(timings_ms, per_rpc_metadata)`.
+
+    Wall percentiles come from `timings_ms` directly. Segment means + TPOT
+    come from the per-RPC payload dict (M6.1.1 timing checkpoints +
+    `engine_cost.engine_tpot_ms` threaded through by
+    `m6_2_validate.build_modal_block_dispatcher`).
+
+    Each field is `None` when its source data is missing — e.g., REST cohorts
+    without the M6.1.3 proxy-edge anchors leave `seg_ingress_ms` /
+    `seg_egress_ms` as `None`; embed cohorts (unary RPC) leave `tpot_ms` as
+    `None` because there's no per-token rate to measure.
+    """
+
+    wall_p50_ms: float
+    wall_p95_ms: float
+    wall_p99_ms: float
+    wall_p50_ms_ci_half_width: float
+    tpot_ms: float | None
+    seg_ab_ms: float | None
+    seg_queue_ms: float | None
+    seg_prefill_ms: float | None
+    seg_ingress_ms: float | None
+    seg_egress_ms: float | None
+    clock_anomaly_fraction: float
+    clock_anomaly: bool
+
+
+def _ci_half_width_95(samples: list[float]) -> float:
+    """95% normal-approximation CI half-width (1.96 × stderr).
+
+    Mirrors `m6_1_3_reporter._ci_half_width_95` verbatim. Returns 0.0 when
+    `n < 2` (stdev undefined).
+    """
+    if len(samples) < 2:
+        return 0.0
+    return float(1.96 * statistics.stdev(samples) / (len(samples) ** 0.5))
+
+
+def _parse_int(md: dict[str, str], key: str) -> int | None:
+    """Best-effort int parser. Returns `None` if the key is absent or the
+    value isn't a parseable integer."""
+    raw = md.get(key)
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_float(md: dict[str, str], key: str) -> float | None:
+    """Best-effort float parser. Returns `None` on absent / unparseable."""
+    raw = md.get(key)
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _mean_or_none(samples: list[float]) -> float | None:
+    if not samples:
+        return None
+    return sum(samples) / len(samples)
+
+
+def _aggregate_block_metrics(
+    timings_ms: list[float],
+    per_rpc_metadata: list[dict[str, str]],
+    *,
+    cell_id: str = "",
+    cohort: str = "",
+) -> _AggregatedRPCMetrics:
+    """Aggregate per-RPC timings + metadata dicts into a single block summary.
+
+    Wall percentiles + CI half-width derive from `timings_ms`. Segment means
+    derive from `per_rpc_metadata` entries containing M6.1.1 timing checkpoint
+    keys (handler_entry_ns / pre_engine_ns / first_chunk_ns / terminal_emit_ns)
+    + M6.1.2 engine-internal keys (engine_queued_ns / engine_scheduled_ns /
+    engine_first_token_ns) + M6.1.3 proxy-edge keys (pre_engine_wall_ns /
+    first_chunk_mono_ns / engine_arrival_ns). TPOT comes from the
+    `engine_tpot_ms` key threaded in by `build_modal_block_dispatcher`.
+
+    Per FR-006 + SC-011: rows where a derived segment goes negative (clock
+    anomaly from wall↔monotonic conversion in the proxy-edge derivation) are
+    excluded from that segment's mean and counted toward the cell-level
+    `clock_anomaly_fraction`. Negative values are logged to stderr for
+    diagnostic trace.
+
+    `cell_id` / `cohort` are passed through for clock-anomaly stderr logging
+    only — neither affects the returned aggregates.
+    """
+    sorted_t = sorted(timings_ms)
+    wall_p50 = _percentile(sorted_t, 50.0)
+    wall_p95 = _percentile(sorted_t, 95.0)
+    wall_p99 = _percentile(sorted_t, 99.0)
+    wall_ci = _ci_half_width_95(timings_ms)
+
+    # Per-RPC seg_ab / seg_bc / seg_cd from the M6.1.1 perf_counter checkpoints.
+    seg_ab: list[float] = []
+    for md in per_rpc_metadata:
+        h = _parse_int(md, "handler_entry_ns")
+        p = _parse_int(md, "pre_engine_ns")
+        if h is None or p is None:
+            continue
+        seg_ab.append((p - h) * 1e-6)
+
+    # Per-RPC seg_queue / seg_prefill from the M6.1.2 engine-internal stats.
+    # Skip rows where any engine-stat field is 0 (vLLM didn't populate).
+    seg_queue: list[float] = []
+    seg_prefill: list[float] = []
+    for md in per_rpc_metadata:
+        q = _parse_int(md, "engine_queued_ns") or 0
+        s = _parse_int(md, "engine_scheduled_ns") or 0
+        f = _parse_int(md, "engine_first_token_ns") or 0
+        if q > 0 and s > 0 and f > 0:
+            seg_queue.append((s - q) * 1e-6)
+            seg_prefill.append((f - s) * 1e-6)
+
+    # Per-RPC seg_ingress / seg_egress from the M6.1.3 proxy-edge anchors.
+    # FR-006 clock-anomaly gate: negative deltas are logged + excluded.
+    seg_ingress: list[float] = []
+    seg_egress: list[float] = []
+    anomaly_count = 0
+    for md in per_rpc_metadata:
+        rpc_anomalous = False
+        pre_wall = _parse_int(md, "pre_engine_wall_ns")
+        engine_arr = _parse_int(md, "engine_arrival_ns") or 0
+        if pre_wall is not None and engine_arr > 0:
+            delta_ms = (engine_arr - pre_wall) * 1e-6
+            if delta_ms < 0:
+                print(
+                    f"{_stderr_ts()} [clock-anomaly] {cell_id}/{cohort} "
+                    f"seg_ingress_ms={delta_ms:.3f} "
+                    f"(engine_arrival_ns={engine_arr}, pre_engine_wall_ns={pre_wall})",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                rpc_anomalous = True
+            else:
+                seg_ingress.append(delta_ms)
+
+        first_mono = _parse_int(md, "first_chunk_mono_ns")
+        engine_first = _parse_int(md, "engine_first_token_ns") or 0
+        if first_mono is not None and engine_first > 0:
+            delta_ms = (first_mono - engine_first) * 1e-6
+            if delta_ms < 0:
+                print(
+                    f"{_stderr_ts()} [clock-anomaly] {cell_id}/{cohort} "
+                    f"seg_egress_ms={delta_ms:.3f} "
+                    f"(first_chunk_mono_ns={first_mono}, engine_first_token_ns={engine_first})",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                rpc_anomalous = True
+            else:
+                seg_egress.append(delta_ms)
+
+        if rpc_anomalous:
+            anomaly_count += 1
+
+    n_total = len(per_rpc_metadata)
+    clock_anomaly_fraction = anomaly_count / n_total if n_total > 0 else 0.0
+    clock_anomaly = clock_anomaly_fraction > _CLOCK_ANOMALY_MAX_FRACTION
+
+    # Per-RPC engine_tpot_ms from `engine_cost.engine_tpot_ms` (only present on
+    # chat_stream cells; embed cells leave it absent because TPOT is undefined
+    # for unary RPCs).
+    tpot_samples: list[float] = []
+    for md in per_rpc_metadata:
+        v = _parse_float(md, "engine_tpot_ms")
+        if v is not None:
+            tpot_samples.append(v)
+
+    return _AggregatedRPCMetrics(
+        wall_p50_ms=wall_p50,
+        wall_p95_ms=wall_p95,
+        wall_p99_ms=wall_p99,
+        wall_p50_ms_ci_half_width=wall_ci,
+        tpot_ms=_mean_or_none(tpot_samples),
+        seg_ab_ms=_mean_or_none(seg_ab),
+        seg_queue_ms=_mean_or_none(seg_queue),
+        seg_prefill_ms=_mean_or_none(seg_prefill),
+        seg_ingress_ms=_mean_or_none(seg_ingress),
+        seg_egress_ms=_mean_or_none(seg_egress),
+        clock_anomaly_fraction=clock_anomaly_fraction,
+        clock_anomaly=clock_anomaly,
+    )
+
+
 def _build_measurement_point(
     *,
     cell_id: str,
@@ -622,10 +839,13 @@ def _build_measurement_point(
 ) -> M6_2MeasurementPoint:
     """Build a per-block :class:`M6_2MeasurementPoint` from a dispatch result.
 
-    Per-RPC segment decomposition (seg_ab / seg_queue / seg_prefill /
-    seg_ingress / seg_egress) is left for US1's reporter wiring (T025) — at
-    the foundational layer we only record the wall-clock summary stats. The
-    segment fields stay ``None`` on US1-pending rows.
+    On successful blocks the per-RPC payloads (from
+    `BlockDispatchResult.per_rpc_metadata`) are aggregated via
+    :func:`_aggregate_block_metrics` into the M6.2 per-cell row's
+    `wall_p50_ms_ci_half_width`, `tpot_ms`, and the five
+    `seg_{ab,queue,prefill,ingress,egress}_ms` segment means. Per FR-006 +
+    SC-011 clock-anomalous rows are excluded from the affected segment's
+    mean and counted toward the row's `clock_anomaly` flag.
     """
     if result.failed_reason is not None or not result.timings_ms:
         return M6_2MeasurementPoint(
@@ -652,27 +872,32 @@ def _build_measurement_point(
             measurement_regime="natural_eos",
             prompt_corpus_idx=block_inputs.get("prompt_corpus_idx"),
         )
-    sorted_t = sorted(result.timings_ms)
+    agg = _aggregate_block_metrics(
+        result.timings_ms,
+        result.per_rpc_metadata,
+        cell_id=cell_id,
+        cohort=cohort,
+    )
     return M6_2MeasurementPoint(
         cell_id=cell_id,
         cohort=cohort,
         max_tokens=max_tokens,
         n_rpcs=n,
-        wall_p50_ms=_percentile(sorted_t, 50.0),
-        wall_p95_ms=_percentile(sorted_t, 95.0),
-        wall_p99_ms=_percentile(sorted_t, 99.0),
-        wall_p50_ms_ci_half_width=None,  # Wired by US1 reporter aggregation.
-        tpot_ms=None,  # Wired by US1 reporter aggregation.
-        seg_ab_ms=None,
-        seg_queue_ms=None,
-        seg_prefill_ms=None,
-        seg_ingress_ms=None,
-        seg_egress_ms=None,
+        wall_p50_ms=agg.wall_p50_ms,
+        wall_p95_ms=agg.wall_p95_ms,
+        wall_p99_ms=agg.wall_p99_ms,
+        wall_p50_ms_ci_half_width=agg.wall_p50_ms_ci_half_width,
+        tpot_ms=agg.tpot_ms,
+        seg_ab_ms=agg.seg_ab_ms,
+        seg_queue_ms=agg.seg_queue_ms,
+        seg_prefill_ms=agg.seg_prefill_ms,
+        seg_ingress_ms=agg.seg_ingress_ms,
+        seg_egress_ms=agg.seg_egress_ms,
         failed_reason=None,
         block_start_utc=block_start_utc,
         block_end_utc=block_end_utc,
         retry_attempted=retry_attempted,
-        clock_anomaly=False,
+        clock_anomaly=agg.clock_anomaly,
         prompt_source=block_inputs["prompt_source"],
         measurement_regime="natural_eos",
         prompt_corpus_idx=block_inputs.get("prompt_corpus_idx"),

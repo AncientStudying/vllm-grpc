@@ -237,7 +237,13 @@ async def _drive_rest_chat_stream_m6_2(
     ignore_eos: bool,
     prompt: str | None,
 ) -> RPCResult:
-    """M6.2 chat_stream REST dispatcher — threads max_tokens / ignore_eos / prompt."""
+    """M6.2 chat_stream REST dispatcher — threads max_tokens / ignore_eos / prompt.
+
+    Captures the terminal SSE ``data:`` payload and extracts ``engine_cost`` +
+    ``m6_1_1_timings`` (mirrors :func:`m6_rpc_driver._drive_rest_chat_stream`)
+    so the M6.2 per-segment aggregator can decompose REST cohorts the same way
+    it decomposes gRPC.
+    """
     body = _build_chat_rest_payload(
         seed,
         max_tokens=max_tokens,
@@ -247,6 +253,7 @@ async def _drive_rest_chat_stream_m6_2(
     body_bytes = json.dumps(body).encode()
     t0 = time.perf_counter()
     first_chunk_at: float | None = None
+    last_data_payload: str | None = None
     try:
         async with client.stream(
             "POST",
@@ -268,6 +275,7 @@ async def _drive_rest_chat_stream_m6_2(
                     continue
                 if first_chunk_at is None:
                     first_chunk_at = time.perf_counter()
+                last_data_payload = line[len("data:") :].strip()
     except httpx.HTTPError as exc:
         return RPCResult(
             success=False,
@@ -278,12 +286,28 @@ async def _drive_rest_chat_stream_m6_2(
         )
     wall_ms = (time.perf_counter() - t0) * 1000.0
     ttft_ms = (first_chunk_at - t0) * 1000.0 if first_chunk_at else None
+    engine_cost = None
+    m6_1_1_payload: dict[str, int | str | None] | None = None
+    if last_data_payload:
+        try:
+            terminal = json.loads(last_data_payload)
+        except (ValueError, json.JSONDecodeError):
+            terminal = None
+        if isinstance(terminal, dict):
+            engine_cost = parse_rest_response(terminal, "chat_stream")
+            from vllm_grpc_bench.m6_1_1_timing import (
+                extract_rest_timings,
+                timing_checkpoint_to_payload,
+            )
+
+            m6_1_1_payload = timing_checkpoint_to_payload(extract_rest_timings(terminal))
     return RPCResult(
         success=True,
         wall_clock_ms=wall_ms,
         ttft_ms=ttft_ms,
-        engine_cost=None,
+        engine_cost=engine_cost,
         failure_reason=None,
+        m6_1_1_timing_payload=m6_1_1_payload,
     )
 
 
@@ -301,7 +325,12 @@ async def _drive_rest_embed_m6_2(
     ignore_eos: bool,
     prompt_embeds_override: bytes | None,
 ) -> RPCResult:
-    """M6.2 embed REST dispatcher — threads max_tokens / ignore_eos / corpus embed bytes."""
+    """M6.2 embed REST dispatcher — threads max_tokens / ignore_eos / corpus embed bytes.
+
+    Mirrors :func:`m6_1_rpc_driver._drive_rest_embed_m6_1` by parsing the
+    JSON response body for ``engine_cost`` + ``m6_1_1_timings`` so the M6.2
+    per-segment aggregator can decompose REST embed cohorts.
+    """
     body = _build_embed_rest_payload_m6_1(
         seq_len,
         cell.hidden_size,
@@ -342,12 +371,18 @@ async def _drive_rest_embed_m6_2(
     except (ValueError, json.JSONDecodeError):
         payload = {}
     engine_cost = parse_rest_response(payload, "embed") if isinstance(payload, dict) else None
+    from vllm_grpc_bench.m6_1_1_timing import extract_rest_timings, timing_checkpoint_to_payload
+
+    m6_1_1_payload = timing_checkpoint_to_payload(
+        extract_rest_timings(payload) if isinstance(payload, dict) else None
+    )
     return RPCResult(
         success=True,
         wall_clock_ms=wall_ms,
         ttft_ms=None,
         engine_cost=engine_cost,
         failure_reason=None,
+        m6_1_1_timing_payload=m6_1_1_payload,
     )
 
 

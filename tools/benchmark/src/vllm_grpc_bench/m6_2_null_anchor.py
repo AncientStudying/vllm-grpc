@@ -4,8 +4,8 @@ Pairs each M6.2 anchor measurement (at ``max_tokens ∈ {10, 50}``) against the
 M6.1.3 published CI. The 48-cell anchor pool splits per FR-012 into:
 
 - **22 cross-checkable cells**: cells M6.1.3 published a CI for. The verdict
-  is ``PASS`` (inside M6.1.3 CI), ``WARN`` (outside CI but within 2× half-
-  width), or ``FAIL`` (outside 2× half-width).
+  is computed via the pooled-CI-with-floor rule (see
+  :func:`compute_drift_verdict`).
 - **26 new-baseline cells**: cells M6.1.3 did NOT publish (the 2 cohort
   omissions × 13 cells, or the chat_stream × max_tokens=10 + embed ×
   max_tokens=50 quadrants depending on the cross-checkable definition). Each
@@ -15,6 +15,14 @@ The FR-014 sweep-level ``null_anchor_drift`` integrity header fires when
 ≥ ``M6_2_NULL_ANCHOR_DRIFT_COUNT_THRESHOLD`` (2 by default) cross-checkable
 cells carry ``drift_verdict ∈ {WARN, FAIL}``. New-baseline cells are
 excluded from this count by construction (their verdict is ``None``).
+
+Threshold rule (B2, 2026-05-23): the prior rule compared ``|delta|`` against
+M6.1.3's CI half-width alone. M6.1.3's CIs were measured under tighter
+conditions than M6.2's per-block n=20 sweeps, so sub-ms baseline CIs made
+the gate trip at 100σ+ on operationally-insignificant deltas. The pooled
+rule respects both the baseline precision and the current sweep's per-block
+variance, with a 10 ms floor that prevents pathological tiny CIs (either
+side) from firing on noise.
 """
 
 from __future__ import annotations
@@ -27,28 +35,74 @@ from vllm_grpc_bench.m6_2_types import (
 )
 
 __all__ = [
+    "DRIFT_THRESHOLD_FLOOR_MS",
+    "DRIFT_THRESHOLD_WARN_MULTIPLIER",
     "compute_drift_verdict",
     "compute_null_anchor_drift_header_fired",
     "make_new_baseline_anchor",
     "make_null_anchor",
+    "pooled_ci_half_width",
 ]
+
+DRIFT_THRESHOLD_FLOOR_MS: float = 10.0
+"""Lower bound on the per-cell drift threshold (ms). Prevents sub-ms baseline
+CIs (M6.1.3 ``chat_stream_c1`` ``default_grpc`` published a 0.14 ms CI) from
+flagging operationally-insignificant drift as a sweep-level failure."""
+
+DRIFT_THRESHOLD_WARN_MULTIPLIER: float = 3.0
+"""Multiplier separating WARN from FAIL on the pooled-CI scale. ``PASS`` when
+``|delta| <= pooled``; ``WARN`` when ``pooled < |delta| <= 3 * pooled``;
+``FAIL`` beyond. The 3× upper band keeps FAIL roughly at the operationally
+"this is real drift, not measurement noise" point."""
+
+
+def pooled_ci_half_width(
+    m6_1_3_ci_half_width: float,
+    m6_2_ci_half_width: float = 0.0,
+    *,
+    floor_ms: float = DRIFT_THRESHOLD_FLOOR_MS,
+) -> float:
+    """Compute the per-cell drift threshold (ms).
+
+    ``pooled = max(m6_1_3_ci_half_width, m6_2_ci_half_width, floor_ms)``.
+    Negative inputs are coerced to 0 before the max.
+    """
+    return max(
+        max(m6_1_3_ci_half_width, 0.0),
+        max(m6_2_ci_half_width, 0.0),
+        floor_ms,
+    )
 
 
 def compute_drift_verdict(
     m6_2_wall_p50_ms: float,
     m6_1_3_wall_p50_ms: float,
     m6_1_3_ci_half_width: float,
+    m6_2_ci_half_width: float = 0.0,
+    *,
+    floor_ms: float = DRIFT_THRESHOLD_FLOOR_MS,
+    warn_multiplier: float = DRIFT_THRESHOLD_WARN_MULTIPLIER,
 ) -> M6_2DriftVerdict:
-    """FR-012 / FR-013 verdict rule.
+    """Pooled-CI-with-floor verdict rule (B2).
 
-    ``PASS``: ``|m6_2 - m6_1_3| <= ci_half_width``.
-    ``WARN``: ``ci_half_width < |m6_2 - m6_1_3| <= 2 * ci_half_width``.
-    ``FAIL``: ``|m6_2 - m6_1_3| > 2 * ci_half_width``.
+    ``pooled = max(m6_1_3_ci_half_width, m6_2_ci_half_width, floor_ms)``.
+    ``PASS``: ``|m6_2 - m6_1_3| <= pooled``.
+    ``WARN``: ``pooled < |m6_2 - m6_1_3| <= warn_multiplier * pooled``.
+    ``FAIL``: ``|m6_2 - m6_1_3| > warn_multiplier * pooled``.
+
+    ``m6_2_ci_half_width=0.0`` (default) reduces to a single-sided pooling
+    against the baseline + floor, which is the right behavior for callers
+    that don't have the M6.2 per-block CI in scope.
     """
     delta = abs(m6_2_wall_p50_ms - m6_1_3_wall_p50_ms)
-    if delta <= m6_1_3_ci_half_width:
+    pooled = pooled_ci_half_width(
+        m6_1_3_ci_half_width,
+        m6_2_ci_half_width,
+        floor_ms=floor_ms,
+    )
+    if delta <= pooled:
         return "PASS"
-    if delta <= 2.0 * m6_1_3_ci_half_width:
+    if delta <= warn_multiplier * pooled:
         return "WARN"
     return "FAIL"
 
@@ -61,11 +115,16 @@ def make_null_anchor(
     m6_2_wall_p50_ms: float | None,
     m6_1_3_wall_p50_ms: float,
     m6_1_3_ci_half_width: float,
+    m6_2_ci_half_width: float = 0.0,
 ) -> M6_2NullAnchor:
     """Build a cross-checkable :class:`M6_2NullAnchor` (M6.1.3 baseline present).
 
     ``m6_2_wall_p50_ms=None`` (M6.2 anchor block failed) yields
     ``drift_verdict="FAIL"`` and ``drift_fraction=None``.
+
+    ``drift_fraction`` is preserved as a diagnostic and is computed against
+    the pooled CI half-width (not the bare M6.1.3 CI) so the reported value
+    matches the threshold-band placement of the verdict.
     """
     if m6_2_wall_p50_ms is None:
         return M6_2NullAnchor(
@@ -79,12 +138,14 @@ def make_null_anchor(
             drift_fraction=None,
             new_baseline_marker=False,
         )
-    verdict = compute_drift_verdict(m6_2_wall_p50_ms, m6_1_3_wall_p50_ms, m6_1_3_ci_half_width)
-    drift_fraction = (
-        (m6_2_wall_p50_ms - m6_1_3_wall_p50_ms) / m6_1_3_ci_half_width
-        if m6_1_3_ci_half_width > 0
-        else 0.0
+    verdict = compute_drift_verdict(
+        m6_2_wall_p50_ms,
+        m6_1_3_wall_p50_ms,
+        m6_1_3_ci_half_width,
+        m6_2_ci_half_width,
     )
+    pooled = pooled_ci_half_width(m6_1_3_ci_half_width, m6_2_ci_half_width)
+    drift_fraction = (m6_2_wall_p50_ms - m6_1_3_wall_p50_ms) / pooled if pooled > 0 else 0.0
     return M6_2NullAnchor(
         cell_id=cell_id,
         cohort=cohort,

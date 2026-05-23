@@ -65,10 +65,10 @@ Four publish-blocking-eligible integrity warning channels render as leading call
 
 | Channel label | Firing rule | FR | SC |
 |---|---|---|---|
-| `null_anchor_drift` | ≥ 2 of 22 cross-checkable anchor cells (chat at max_tokens=50 + embed at max_tokens=10 minus M6.1.3's cohort omissions, per FR-012) have `drift_verdict ∈ {WARN, FAIL}` against M6.1.3 published CI. The 26 new-baseline cells (chat at max_tokens=10 + embed at max_tokens=50 + the 2 omitted cohort pairs) emit `new_baseline_marker` lines but are excluded from this count. | FR-014 | SC-004 |
+| `null_anchor_drift` | ≥ 2 of 22 cross-checkable anchor cells (chat at max_tokens=50 + embed at max_tokens=10 minus M6.1.3's cohort omissions, per FR-012) have `drift_verdict ∈ {WARN, FAIL}` against M6.1.3 published CI. The 26 new-baseline cells (chat at max_tokens=10 + embed at max_tokens=50 + the 2 omitted cohort pairs) emit `new_baseline_marker` lines but are excluded from this count. Per-cell verdict uses the **pooled-CI-with-floor rule** documented below. | FR-014 | SC-004 |
 | `failure_summary_threshold` | EITHER (a) ≥ 3 cells across the latency budget table have `failed_<reason>` markers, OR (b) any single `(cell, max_tokens)` point has all 4 cohorts failed (then tagged `systemic_failure_<reason>` in addition to per-cohort `failed_<reason>`) | FR-029 | SC-014 |
 | `cohort_csp_mismatch` | Any consecutive-snapshot pair in `network_paths[cohort]` reveals a CSP / region change | FR-009 | SC-010 |
-| `intra_sweep_latency_drift` | ≥ 2 of 4 cohorts in `anchor_latency_trajectory` have `latency_drift_warning = true` | FR-031 | SC-016 |
+| `intra_sweep_latency_drift` | ≥ 2 of 4 cohorts in `anchor_latency_trajectory` have `latency_drift_warning = true`. Per-cohort `latency_drift_warning` uses the same **pooled-CI-with-floor rule** documented below. | FR-031 | SC-016 |
 
 One soft diagnostic warning (NOT publish-blocking-eligible, informational only):
 
@@ -77,6 +77,53 @@ One soft diagnostic warning (NOT publish-blocking-eligible, informational only):
 | `iteration_discipline_broken` | `run_meta.iteration_discipline_verified = false` | FR-032 | SC-017 |
 
 Test enforcement: `test_m6_2_artifact_schema.py::test_integrity_warning_channels_canonical` asserts that `integrity_warnings` list contains only the canonical channel labels above (or is empty).
+
+### Pooled-CI-with-floor drift threshold rule (B2 amendment, 2026-05-23)
+
+SC-004 (`null_anchor_drift`) and SC-016 (`intra_sweep_latency_drift`) both
+depend on a per-cell drift threshold derived from CI half-widths. The
+original rule compared `|delta|` directly against M6.1.3's published
+CI half-width alone. M6.1.3's CIs were measured under tighter conditions
+(more runs, longer warm-up) than an M6.2 per-block n=20 sweep, so sub-ms
+baseline CIs (e.g., `chat_stream_c1` `default_grpc` published a 0.14 ms CI)
+made the gate trip at 100σ+ on operationally-insignificant drift.
+
+The **pooled-CI-with-floor** rule (implemented in
+`m6_2_null_anchor.pooled_ci_half_width` /
+`m6_2_null_anchor.compute_drift_verdict`) is:
+
+```
+pooled = max(m6_1_3_ci_half_width, m6_2_ci_half_width, 10 ms)
+PASS   if |delta| ≤ pooled
+WARN   if pooled < |delta| ≤ 3 × pooled
+FAIL   if |delta| > 3 × pooled
+```
+
+Where:
+
+- `m6_1_3_ci_half_width` is the baseline CI for the (cell, cohort) pair
+  loaded from `docs/benchmarks/m6_1_3-attribution-closure.json`.
+- `m6_2_ci_half_width` is the current sweep's per-block CI half-width
+  computed by the per-segment aggregator (`_aggregate_block_metrics` in
+  `m6_2_sweep.py`) using the same 1.96 × stderr formula as
+  `m6_1_3_reporter._ci_half_width_95`. For SC-016, `m6_2_ci_half_width` is
+  the trajectory's own CI half-width over the snapshot p50 samples
+  (`_snapshot_ci_half_width` in `m6_2_anchor_trajectory.py`).
+- The 10 ms floor (`DRIFT_THRESHOLD_FLOOR_MS`) prevents sub-ms baseline CIs
+  on either side from flagging operationally-insignificant drift.
+- The 3× multiplier (`DRIFT_THRESHOLD_WARN_MULTIPLIER`) separates WARN from
+  FAIL — calibrated so FAIL roughly aligns with the operationally "this is
+  real drift, not measurement noise" point.
+
+The reported `drift_fraction` numeric is computed against the pooled width
+(`delta / pooled`) so the value matches the band placement of the verdict.
+
+Known limitation (not addressed by B2): the floor is absolute, so
+low-latency cohorts may still report `WARN` on small operational drifts
+(e.g., 15 ms on a ~570 ms `tuned_grpc_multiplexed` baseline is ~2.6%
+relative — above the 10 ms floor and thus flagged). Further suppression
+for low-latency cells would need a relative-magnitude floor (option B4
+from the 2026-05-23 selection round) which is NOT implemented in B2.
 
 ## Derived-field computation rules
 

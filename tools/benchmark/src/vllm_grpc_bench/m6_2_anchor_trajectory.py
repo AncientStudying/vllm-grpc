@@ -12,18 +12,31 @@ The collected trajectory feeds three artifacts:
 - Per-cohort ``M6_2AnchorLatencyTrajectory`` records (rendered as the "Anchor
   latency trajectory" markdown subsection per FR-031).
 - The per-cohort ``latency_drift_warning`` flag (fires when the trajectory's
-  ``max - min`` spread exceeds M6.1.3's baseline CI half-width).
+  ``max - min`` spread exceeds the pooled-CI threshold; see B2 rule below).
 - The sweep-level ``intra_sweep_latency_drift`` integrity header (fires when
   ≥ 2 of the 4 cohorts carry ``latency_drift_warning`` per SC-016).
+
+Threshold rule (B2, 2026-05-23): the prior rule fired when ``max-min``
+exceeded M6.1.3's baseline CI half-width alone. M6.1.3's CIs are sub-ms for
+several cohorts so any natural intra-sweep variance tripped the gate. The
+new rule applies the same pooled-CI-with-floor formula as SC-004
+(see :mod:`m6_2_null_anchor`): ``threshold = max(m6_1_3_ci_hw,
+snapshot_ci_hw, 10ms)`` where ``snapshot_ci_hw`` is the 95% normal-
+approximation CI half-width over the trajectory's p50 samples.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
+import statistics
 from collections.abc import Callable
 from typing import Protocol
 
 from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
+from vllm_grpc_bench.m6_2_null_anchor import (
+    DRIFT_THRESHOLD_FLOOR_MS,
+    pooled_ci_half_width,
+)
 from vllm_grpc_bench.m6_2_types import (
     M6_2_LATENCY_DRIFT_COHORT_COUNT_THRESHOLD,
     M6_2AnchorLatencySnapshot,
@@ -36,6 +49,16 @@ __all__ = [
     "compute_anchor_latency_trajectory",
     "compute_intra_sweep_drift_header_fired",
 ]
+
+
+def _snapshot_ci_half_width(snapshots: list[M6_2AnchorLatencySnapshot]) -> float:
+    """95% normal-approximation CI half-width (1.96 × stderr) over the
+    trajectory's ``wall_p50_ms`` samples. Mirrors
+    :func:`m6_2_sweep._ci_half_width_95`. Returns 0.0 when ``n < 2``."""
+    if len(snapshots) < 2:
+        return 0.0
+    p50s = [s.wall_p50_ms for s in snapshots]
+    return float(1.96 * statistics.stdev(p50s) / (len(p50s) ** 0.5))
 
 
 class AnchorRPCDriver(Protocol):
@@ -128,14 +151,19 @@ async def compute_anchor_block(
 def compute_anchor_latency_trajectory(
     snapshots_by_cohort: dict[M6_1_2CohortKind, list[M6_2AnchorLatencySnapshot]],
     m6_1_3_baseline_ci_half_width: float,
+    *,
+    floor_ms: float = DRIFT_THRESHOLD_FLOOR_MS,
 ) -> dict[M6_1_2CohortKind, M6_2AnchorLatencyTrajectory]:
     """Reduce the per-cohort sequence of snapshots into trajectory entities.
 
     For each cohort, compute the ``wall_p50_ms`` spread across snapshots and
-    set ``latency_drift_warning=True`` iff ``spread > baseline_ci_half_width``
-    (FR-031). Cohorts with fewer than 2 snapshots get
-    ``max_minus_min_wall_p50_ms=0.0`` + ``latency_drift_warning=False`` (no
-    meaningful spread can be computed)."""
+    set ``latency_drift_warning=True`` iff
+    ``spread > pooled_ci_half_width(baseline_ci, snapshot_ci, floor_ms)``
+    where ``snapshot_ci`` is the 95% normal-approximation CI over the
+    trajectory's own ``wall_p50_ms`` samples (B2 rule). Cohorts with fewer
+    than 2 snapshots get ``max_minus_min_wall_p50_ms=0.0`` +
+    ``latency_drift_warning=False`` (no meaningful spread can be computed).
+    """
     out: dict[M6_1_2CohortKind, M6_2AnchorLatencyTrajectory] = {}
     for cohort, snapshots in snapshots_by_cohort.items():
         if len(snapshots) < 2:
@@ -144,7 +172,12 @@ def compute_anchor_latency_trajectory(
         else:
             p50s = [s.wall_p50_ms for s in snapshots]
             spread = max(p50s) - min(p50s)
-            warning = spread > m6_1_3_baseline_ci_half_width
+            threshold = pooled_ci_half_width(
+                m6_1_3_baseline_ci_half_width,
+                _snapshot_ci_half_width(snapshots),
+                floor_ms=floor_ms,
+            )
+            warning = spread > threshold
         out[cohort] = M6_2AnchorLatencyTrajectory(
             cohort=cohort,
             snapshots=list(snapshots),

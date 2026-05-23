@@ -301,9 +301,29 @@ def build_modal_block_dispatcher(
             # the integration test's fake driver.
             if getattr(r, "success", False) and getattr(r, "wall_clock_ms", None) is not None:
                 timings_ms.append(float(r.wall_clock_ms))
+                md: dict[str, str] = {}
                 payload = getattr(r, "m6_1_1_timing_payload", None)
                 if isinstance(payload, dict):
-                    per_rpc_metadata.append({k: str(v) for k, v in payload.items()})
+                    # Skip None values: timing_checkpoint_to_payload emits None
+                    # for pre-M6.1.3 wire vintage on `pre_engine_wall_ns` /
+                    # `first_chunk_mono_ns` / audit fields. Carrying the literal
+                    # string "None" through would break downstream int parsing.
+                    for k, v in payload.items():
+                        if v is None:
+                            continue
+                        md[k] = str(v)
+                engine_cost = getattr(r, "engine_cost", None)
+                if engine_cost is not None:
+                    # Thread engine_cost fields into per_rpc_metadata so the
+                    # aggregator can compute tpot_ms / engine_ttft_ms / engine_forward_ms
+                    # alongside the M6.1.1 segment checkpoints. Keys mirror
+                    # `EngineCostSpan` attribute names verbatim.
+                    for attr in ("engine_tpot_ms", "engine_ttft_ms", "engine_forward_ms"):
+                        v = getattr(engine_cost, attr, None)
+                        if v is not None:
+                            md[attr] = str(v)
+                if md:
+                    per_rpc_metadata.append(md)
             else:
                 if first_failure is None:
                     reason = getattr(r, "failure_reason", None)
@@ -561,6 +581,17 @@ def make_null_anchor_validation(
                     cohorts_for_cell.get(cohort) if max_tokens == baseline_max_tokens else None
                 )
                 if baseline_entry is not None and baseline_entry.wall_p50_ms_ci_half_width > 0.0:
+                    m6_2_ci_hw = 0.0
+                    if point is not None:
+                        # M6.2's per-block CI half-width is computed by the
+                        # per-segment aggregator (see ``_aggregate_block_metrics``
+                        # in m6_2_sweep). Thread it into the pooled-CI rule so
+                        # cells whose own variance is larger than the M6.1.3
+                        # baseline CI don't trip on noise. ``None`` for cells
+                        # whose CI couldn't be computed (n<2) → 0.0 → floor.
+                        ci_attr = getattr(point, "wall_p50_ms_ci_half_width", None)
+                        if isinstance(ci_attr, int | float):
+                            m6_2_ci_hw = float(ci_attr)
                     anchors.append(
                         make_null_anchor(
                             cell_id=cell_id,
@@ -569,6 +600,7 @@ def make_null_anchor_validation(
                             m6_2_wall_p50_ms=m6_2_p50,
                             m6_1_3_wall_p50_ms=baseline_entry.wall_p50_ms,
                             m6_1_3_ci_half_width=baseline_entry.wall_p50_ms_ci_half_width,
+                            m6_2_ci_half_width=m6_2_ci_hw,
                         )
                     )
                 else:
