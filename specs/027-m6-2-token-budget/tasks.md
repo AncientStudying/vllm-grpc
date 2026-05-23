@@ -204,6 +204,21 @@ description: "Implementation tasks for M6.2 Token-Budget Characterization"
 
 ---
 
+## Phase 8: Threshold Recalibration (post-T047 first attempt — closes the validate-data-driven calibration gap)
+
+**Purpose**: The 2026-05-23T21:08Z validate sweep (the first end-to-end T047 run — see `docs/benchmarks/m6_2-token-budget-validate.{md,json}`) fired both SC-004 `null_anchor_drift` (11/11 cross-checkable cells) and SC-016 `intra_sweep_latency_drift` (4/4 cohorts). Diagnostic analysis showed the firing pattern conflates three regimes: (a) genuine ~2× REST regression on `chat_stream max_tokens=50` cells (correctly flagged), (b) operationally-insignificant 0.5–2.8% absolute drift on low-CI gRPC cells amplified by the 10 ms absolute floor (false positives), and (c) warmup-driven trajectory spread inflated by every cohort's t≈0 snapshot (false positives). Round-8 amendment (spec.md clarifications + FR-014/FR-031 inline + contracts/artifact-schema.md) recalibrates both gates via B4 (relative-magnitude floor extending B2) and C1 (warmup suppression + insufficient-snapshot fallback). This phase implements both.
+
+- [ ] T060 [P] Implement B4 in `m6_2_null_anchor.py`: add `DRIFT_THRESHOLD_FLOOR_FRACTION: float = 0.025`; extend `pooled_ci_half_width(..., baseline_p50_ms: float = 0.0, floor_fraction: float = DRIFT_THRESHOLD_FLOOR_FRACTION)` to include the relative co-floor in the `max(...)`; extend `compute_drift_verdict` + `make_null_anchor` to thread `baseline_p50_ms` (already in scope as `m6_1_3_wall_p50_ms`). Backward-compatible default (`baseline_p50_ms=0` reduces to B2 behavior). ~25 LOC.
+- [ ] T061 [P] Implement C1 warmup suppression in `m6_2_anchor_trajectory.py`: add `WARMUP_SUPPRESSION_HOURS: float = 0.05`; in `compute_anchor_latency_trajectory`, partition snapshots into pre-/post-warmup lists; compute spread + threshold over post-warmup only; when `len(post_warmup) < 2`, return `latency_drift_warning=False` + `insufficient_post_warmup_snapshots=True`; thread B4's `baseline_p50_ms` + `floor_fraction` into the pooled call. Add `insufficient_post_warmup_snapshots: bool = False` field to `M6_2AnchorLatencyTrajectory` in `m6_2_types.py`. ~40 LOC.
+- [ ] T062 Add `trajectory_insufficient_snapshots` canonical channel to `m6_2_reporter.py` soft-diagnostic header rendering. Fires when any cohort carries `insufficient_post_warmup_snapshots=True`. Update `test_m6_2_artifact_schema.py::test_integrity_warning_channels_canonical` to allow the new channel. ~15 LOC.
+- [ ] T063 [P] Extend `tools/benchmark/tests/test_m6_2_null_anchor.py` with B4 coverage: parameterized cases for (relative-floor-dominates, absolute-floor-dominates, baseline-CI-dominates, m6_2-CI-dominates) on synthetic inputs; replay-against-validate-sweep regression test asserting the 11 cross-checkable verdicts shift from the current 6-FAIL/5-WARN/0-PASS split to the expected 4-FAIL/4-WARN/3-PASS split.
+- [ ] T064 [P] Extend `tools/benchmark/tests/test_m6_2_anchor_trajectory.py` with C1 coverage: warmup snapshot dropped from spread; insufficient-post-warmup fallback returns `latency_drift_warning=False`; B4 relative co-floor honored; validate-mode start+end 2-snapshot trajectory naturally hits the fallback after warmup drop.
+- [ ] T065 Re-run the lint chain (`ruff check . && ruff format --check . && mypy --strict . && pytest tools/benchmark/tests/test_m6_2_*.py`) and commit Phase 8.
+
+**Checkpoint**: Phase 8 complete. Re-run T047 against the same Modal A10G — the validate artifact's `integrity_warnings` list shrinks from 2 entries to either 0 (if the underlying REST regression has been resolved separately) or 1 (`null_anchor_drift` persists on the 5 cells with the genuine REST regression — the 8 ≥ 2 firing-threshold count still trips). T048 (clarify round 6 for `n`-pinning) can proceed once Phase 8 lands AND the REST regression is either fixed or formally accepted as the new M6.2 baseline.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase dependencies

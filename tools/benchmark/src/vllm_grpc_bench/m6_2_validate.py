@@ -274,17 +274,28 @@ def build_modal_block_dispatcher(
         prompt_embeds_override = block_inputs.get("embed_tensor_bytes")
         ignore_eos = bool(block_inputs.get("ignore_eos", False))
 
+        # In-flight RPCs MUST be bounded by cell.concurrency so the measured
+        # cell reflects the load it claims to characterize. Without this
+        # semaphore, all n RPCs fire simultaneously regardless of cell.c,
+        # which (a) under-measures c=1/c=4 cells by accidentally batching them
+        # at n-way concurrency, (b) saturates the single-worker REST shim's
+        # event loop with concurrent SSE streams, inflating client-side TPOT
+        # by ~44 ms/token on REST cohorts at n=20. Mirrors the M6.1.3
+        # m6_1_3_sweep.py:468 pattern.
+        sem = asyncio.Semaphore(cell.concurrency)
+
         async def _one_rpc(i: int) -> Any:
             seed = base_seed + i
-            return await driver(
-                cohort,
-                cell,
-                seed,
-                max_tokens=max_tokens,
-                ignore_eos=ignore_eos,
-                prompt=prompt,
-                prompt_embeds_override=prompt_embeds_override,
-            )
+            async with sem:
+                return await driver(
+                    cohort,
+                    cell,
+                    seed,
+                    max_tokens=max_tokens,
+                    ignore_eos=ignore_eos,
+                    prompt=prompt,
+                    prompt_embeds_override=prompt_embeds_override,
+                )
 
         results = await asyncio.gather(*[_one_rpc(i) for i in range(n)], return_exceptions=True)
 
@@ -382,20 +393,26 @@ def build_modal_anchor_dispatcher(
     async def _anchor(
         *, cohort: M6_1_2CohortKind, n: int, base_seed: int, seed_offset: int
     ) -> list[float]:
+        # Same in-flight bound as build_modal_block_dispatcher: the anchor is
+        # always chat_stream_c1 (concurrency=1), so this enforces strictly
+        # serial dispatch and matches M6.1.3's anchor measurement regime.
+        sem = asyncio.Semaphore(cell.concurrency)
+
         async def _one(i: int) -> float | None:
             seed = base_seed + seed_offset + i
-            try:
-                result = await driver(
-                    cohort,
-                    cell,
-                    seed,
-                    max_tokens=anchor_max_tokens,
-                    ignore_eos=False,
-                    prompt=None,
-                    prompt_embeds_override=None,
-                )
-            except (grpc.RpcError, httpx.HTTPError):
-                return None
+            async with sem:
+                try:
+                    result = await driver(
+                        cohort,
+                        cell,
+                        seed,
+                        max_tokens=anchor_max_tokens,
+                        ignore_eos=False,
+                        prompt=None,
+                        prompt_embeds_override=None,
+                    )
+                except (grpc.RpcError, httpx.HTTPError):
+                    return None
             if getattr(result, "success", False) and result.wall_clock_ms is not None:
                 return float(result.wall_clock_ms)
             return None

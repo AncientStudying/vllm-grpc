@@ -70,11 +70,12 @@ Four publish-blocking-eligible integrity warning channels render as leading call
 | `cohort_csp_mismatch` | Any consecutive-snapshot pair in `network_paths[cohort]` reveals a CSP / region change | FR-009 | SC-010 |
 | `intra_sweep_latency_drift` | ≥ 2 of 4 cohorts in `anchor_latency_trajectory` have `latency_drift_warning = true`. Per-cohort `latency_drift_warning` uses the same **pooled-CI-with-floor rule** documented below. | FR-031 | SC-016 |
 
-One soft diagnostic warning (NOT publish-blocking-eligible, informational only):
+Soft diagnostic warnings (NOT publish-blocking-eligible, informational only):
 
 | Channel label | Firing rule | FR | SC |
 |---|---|---|---|
 | `iteration_discipline_broken` | `run_meta.iteration_discipline_verified = false` | FR-032 | SC-017 |
+| `trajectory_insufficient_snapshots` | One or more cohorts have < 2 snapshots after `sweep_hour_mark ≥ WARMUP_SUPPRESSION_HOURS` (0.05h) warmup suppression. Informational only; the cohort's `latency_drift_warning` is forced to `false` and excluded from the SC-016 count. Validate-mode start+end trajectories naturally hit this path. | FR-031 (round-8 C1) | — |
 
 Test enforcement: `test_m6_2_artifact_schema.py::test_integrity_warning_channels_canonical` asserts that `integrity_warnings` list contains only the canonical channel labels above (or is empty).
 
@@ -118,12 +119,80 @@ Where:
 The reported `drift_fraction` numeric is computed against the pooled width
 (`delta / pooled`) so the value matches the band placement of the verdict.
 
-Known limitation (not addressed by B2): the floor is absolute, so
-low-latency cohorts may still report `WARN` on small operational drifts
-(e.g., 15 ms on a ~570 ms `tuned_grpc_multiplexed` baseline is ~2.6%
-relative — above the 10 ms floor and thus flagged). Further suppression
-for low-latency cells would need a relative-magnitude floor (option B4
-from the 2026-05-23 selection round) which is NOT implemented in B2.
+### Pooled-CI-with-floor drift threshold rule (B4 amendment, 2026-05-23 round 8)
+
+Round-8 extends the B2 rule with a **relative co-floor** at 2.5% of the
+baseline p50, closing the known limitation B2 documented. Updated rule:
+
+```
+pooled = max(
+    m6_1_3_ci_half_width,
+    m6_2_ci_half_width,
+    DRIFT_THRESHOLD_FLOOR_MS,                                 # 10 ms absolute (B2)
+    DRIFT_THRESHOLD_FLOOR_FRACTION * m6_1_3_wall_p50_ms,      # 2.5% relative (B4, NEW)
+)
+PASS   if |delta| ≤ pooled
+WARN   if pooled < |delta| ≤ 3 × pooled
+FAIL   if |delta| > 3 × pooled
+```
+
+Where the new co-floor constant is:
+
+- `DRIFT_THRESHOLD_FLOOR_FRACTION: float = 0.025` (2.5% of baseline p50).
+
+The relative co-floor dominates whenever `baseline_p50 ≥ 400 ms` (which
+covers every M6.x cell). It suppresses operationally-insignificant
+absolute drift — e.g., 40 ms drift on a 2100 ms baseline is 1.9%, below
+the 2.5% floor → PASS. The 2.5% calibration is ~2× the within-baseline
+re-anchor drift M6.1.3 itself measured (~1.2% median), giving headroom
+for normal sweep-to-sweep variation while still flagging the ≥ 5% drift
+that the operator expectation document treats as "investigate".
+
+The absolute 10 ms co-floor (B2) is preserved as protection against
+sub-ms baseline CIs on hypothetical future ultra-low-latency cells; it
+dominates when `baseline_p50 < 400 ms`. The 3× WARN/FAIL multiplier
+(B2) is unchanged.
+
+Empirically (computed against the 2026-05-23T21:08Z validate sweep), B4
+reclassifies 3 of the 11 cross-checkable drift verdicts that B2 alone
+flagged on noise (low-CI gRPC cells with sub-2.8% absolute drift) from
+WARN/FAIL back to PASS, leaving 4 FAIL + 4 WARN + 3 PASS. The FR-014
+sweep-level header still fires correctly (8 ≥ 2 threshold) because the
+genuine REST regression on 5 cells dominates the count.
+
+### Trajectory verdict warmup suppression (C1 amendment, 2026-05-23 round 8)
+
+`compute_anchor_latency_trajectory` (in `m6_2_anchor_trajectory.py`) is
+extended to:
+
+1. **Drop warmup snapshots** before computing
+   `max_minus_min_wall_p50_ms`:
+
+   ```python
+   WARMUP_SUPPRESSION_HOURS: float = 0.05  # 3 minutes
+   post_warmup = [s for s in snapshots if s.sweep_hour_mark >= WARMUP_SUPPRESSION_HOURS]
+   ```
+
+   Empirical motivation: every cohort's t=0 snapshot in the validate
+   sweep is a warmup outlier (`default_grpc` 752 → 558 ms steady state;
+   `rest_https_edge` 1736 → 1087 ms steady state). Three minutes covers
+   Modal's first-request bootstrap + the engine's first cudagraph
+   capture.
+
+2. **Apply the B4 relative co-floor** to the spread threshold (same
+   `pooled_ci_half_width` call as the null-anchor verdict, including
+   `baseline_p50_ms` and `floor_fraction`) so the trajectory verdict
+   uses the same noise floor as the null-anchor verdict.
+
+3. **Insufficient-snapshot fallback**: cohorts left with < 2 post-warmup
+   snapshots set
+   `M6_2AnchorLatencyTrajectory.latency_drift_warning = false` +
+   `insufficient_post_warmup_snapshots = true` (new field) and emit the
+   soft `trajectory_insufficient_snapshots` diagnostic header documented
+   in the "Soft diagnostic warnings" table above. Validate mode's
+   start+end probe pattern hits this path by construction; degenerate
+   single-snapshot comparisons that would fire trivially are excluded
+   from the SC-016 count.
 
 ## Derived-field computation rules
 

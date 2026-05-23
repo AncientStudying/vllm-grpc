@@ -27,6 +27,7 @@ Coverage:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import Any
 
@@ -234,6 +235,68 @@ class TestModalBlockDispatcher:
         assert len(result.timings_ms) == 3  # 5 - 2 failures
         assert result.failed_reason is None  # at least one success → block OK
 
+    @pytest.mark.parametrize(
+        ("cell_id", "expected_max"),
+        [
+            ("chat_stream_c1", 1),
+            ("chat_stream_c4", 4),
+            ("chat_stream_c8", 8),
+            ("embed_c1", 1),
+            ("embed_c4", 4),
+            ("embed_c8", 8),
+        ],
+    )
+    async def test_in_flight_bounded_by_cell_concurrency(
+        self,
+        cell_id: str,
+        expected_max: int,
+        block_inputs: ResolvedBlockInputs,
+    ) -> None:
+        """Regression: peak in-flight RPCs MUST equal cell.concurrency, not n.
+
+        Without the asyncio.Semaphore(cell.concurrency) bound, all n RPCs
+        fire simultaneously regardless of cell.c — which under-measures
+        c=1/c=4 cells and saturates the single-worker REST shim's event
+        loop, inflating client-side TPOT by ~44 ms/token on REST cohorts at
+        n=20 (root cause of the 2026-05-23T21:08Z validate-sweep REST
+        regression).
+        """
+        in_flight = 0
+        peak = 0
+        lock = asyncio.Lock()
+
+        async def _delay_driver(
+            cohort: M6_1_2CohortKind,
+            cell: M6_1Cell,
+            seed: int,
+            *,
+            max_tokens: int,
+            ignore_eos: bool = False,
+            prompt: str | None = None,
+            prompt_embeds_override: bytes | None = None,
+        ) -> _FakeRPCResult:
+            nonlocal in_flight, peak
+            async with lock:
+                in_flight += 1
+                peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)  # hold the slot so concurrency can pile up
+            async with lock:
+                in_flight -= 1
+            return _FakeRPCResult(success=True, wall_clock_ms=10.0)
+
+        dispatch = build_modal_block_dispatcher(_delay_driver, base_seed=0)
+        await dispatch(
+            cell_id=cell_id,
+            cohort="default_grpc",
+            max_tokens=50,
+            n=20,  # match validate-sweep n; well above any cell.concurrency
+            block_inputs=block_inputs,
+        )
+        assert peak == expected_max, (
+            f"peak in-flight = {peak} but cell.concurrency = {expected_max}; "
+            "cell.concurrency must bound the asyncio.gather fan-out"
+        )
+
 
 # --- AnchorRPCDriver tests --------------------------------------------------
 
@@ -268,6 +331,37 @@ class TestModalAnchorDispatcher:
         anchor = build_modal_anchor_dispatcher(driver)
         samples = await anchor(cohort="default_grpc", n=20, base_seed=42, seed_offset=0)
         assert len(samples) == 10  # 20 - 10 failures
+
+    async def test_anchor_is_strictly_serial(self) -> None:
+        """The anchor block uses chat_stream_c1 (concurrency=1) so the
+        semaphore bound MUST hold it to one in-flight RPC at a time. This
+        matches M6.1.3's anchor measurement regime."""
+        in_flight = 0
+        peak = 0
+        lock = asyncio.Lock()
+
+        async def _delay_driver(
+            cohort: M6_1_2CohortKind,
+            cell: M6_1Cell,
+            seed: int,
+            *,
+            max_tokens: int,
+            ignore_eos: bool = False,
+            prompt: str | None = None,
+            prompt_embeds_override: bytes | None = None,
+        ) -> _FakeRPCResult:
+            nonlocal in_flight, peak
+            async with lock:
+                in_flight += 1
+                peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            async with lock:
+                in_flight -= 1
+            return _FakeRPCResult(success=True, wall_clock_ms=10.0)
+
+        anchor = build_modal_anchor_dispatcher(_delay_driver)
+        await anchor(cohort="default_grpc", n=20, base_seed=42, seed_offset=0)
+        assert peak == 1, f"anchor peak in-flight = {peak}; chat_stream_c1 must be serial"
 
 
 # --- is_transient_modal_error tests ----------------------------------------
