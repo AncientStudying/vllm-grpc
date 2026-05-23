@@ -39,15 +39,19 @@ __all__ = [
 
 
 class AnchorRPCDriver(Protocol):
-    """Sweep-supplied callable that dispatches the anchor RPC block.
+    """Sweep-supplied async callable that dispatches the anchor RPC block.
 
     The orchestrator wires this to a thin wrapper around the chat_stream
     gRPC driver primitive (``m6_rpc_driver._drive_grpc_chat``) configured for
     cell ``chat_stream_c1``, ``max_tokens=10``, ``ignore_eos=False``, and
     synthetic seed-derived prompts. Returns the per-RPC wall-clock latencies
-    in milliseconds (one float per successful RPC; failed RPCs omitted)."""
+    in milliseconds (one float per successful RPC; failed RPCs omitted).
 
-    def __call__(
+    Async-shaped so real Modal adapters can fire RPCs via the shared
+    ``provide_m6_2_rpc_driver`` callable without juggling a parallel
+    synchronous client; the stub anchor dispatcher in tests is also async."""
+
+    async def __call__(
         self,
         *,
         cohort: M6_1_2CohortKind,
@@ -75,7 +79,7 @@ def _percentile(samples: list[float], p: float) -> float:
     return sorted_samples[low] * (1.0 - weight) + sorted_samples[high] * weight
 
 
-def compute_anchor_block(
+async def compute_anchor_block(
     cohorts: list[M6_1_2CohortKind],
     rpc_driver: AnchorRPCDriver,
     base_seed: int,
@@ -100,9 +104,10 @@ def compute_anchor_block(
     skipped silently and produce no snapshot for that cohort.
     """
     del cell_id  # currently fixed; reserved for future-milestone overrides
+    del max_tokens  # currently fixed at the M6.1.x synthetic default
     snapshots: dict[M6_1_2CohortKind, M6_2AnchorLatencySnapshot] = {}
     for cohort in cohorts:
-        samples = rpc_driver(
+        samples = await rpc_driver(
             cohort=cohort,
             n=n,
             base_seed=base_seed,

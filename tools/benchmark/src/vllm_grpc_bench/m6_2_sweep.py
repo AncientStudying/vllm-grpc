@@ -49,6 +49,7 @@ from vllm_grpc_bench.corpus import (
     RequestSample,
 )
 from vllm_grpc_bench.m6_1_2_types import (
+    M6_1_2_COHORTS,
     M6_1_2CohortKind,
     cohorts_at_concurrency,
 )
@@ -422,7 +423,12 @@ class M6_2SweepInputs:
     dispatcher: BlockDispatcher
     anchor_dispatcher: AnchorRPCDriver
     is_transient: RetryClassifier
-    topology_probe: Callable[[], Awaitable[dict[str, Any]]] | None = None
+    topology_probe: Callable[[], Awaitable[dict[M6_1_2CohortKind, Any]]] | None = None
+    """FR-009 network-paths probe (m6_1_2_network_probe.run_topology_probe).
+
+    Fires at sweep start + end (validate sweeps < 8 h); publish sweeps
+    additionally fire at every 4 h mark per the same cadence as the anchor
+    block. ``None`` disables the probe (stub / test paths)."""
 
 
 @dataclass(slots=True, kw_only=True)
@@ -431,8 +437,8 @@ class M6_2SweepOutputs:
     then ships them to the reporter.
 
     The orchestrator emits the per-block ``M6_2MeasurementPoint`` rows + the
-    per-cohort anchor snapshots; the reporter (T022-T030) renders these into
-    the full markdown + JSON.
+    per-cohort anchor snapshots + the per-cohort topology-probe trajectory;
+    the reporter (T022-T030) renders these into the full markdown + JSON.
     """
 
     measurements: list[M6_2MeasurementPoint]
@@ -440,6 +446,7 @@ class M6_2SweepOutputs:
     iteration_discipline_verified: bool
     wall_clock_start_utc: str
     wall_clock_end_utc: str
+    network_paths: dict[M6_1_2CohortKind, list[Any]] | None = None
 
 
 def gate_publish_mode_n(args_m6_2_n: int | None, sweep_mode: M6_2SweepMode) -> int:
@@ -506,6 +513,12 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
 
     measurements: list[M6_2MeasurementPoint] = []
     anchor_snapshots: dict[M6_1_2CohortKind, list[M6_2AnchorLatencySnapshot]] = {}
+    network_paths_trajectory: dict[M6_1_2CohortKind, list[Any]] = {
+        cohort: [] for cohort in M6_1_2_COHORTS
+    }
+
+    # FR-009 topology probe at sweep start.
+    await _capture_topology_probe(network_paths_trajectory, inputs.topology_probe)
 
     # Anchor at sweep start (t = 0h).
     await _capture_anchor_block(
@@ -582,12 +595,16 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
             sweep_hour_mark=elapsed_hours,
         )
 
+    # FR-009 topology probe at sweep end.
+    await _capture_topology_probe(network_paths_trajectory, inputs.topology_probe)
+
     return M6_2SweepOutputs(
         measurements=measurements,
         anchor_snapshots=anchor_snapshots,
         iteration_discipline_verified=verify_iteration_discipline(measurements),
         wall_clock_start_utc=sweep_start_utc,
         wall_clock_end_utc=sweep_end_utc,
+        network_paths=network_paths_trajectory if inputs.topology_probe is not None else None,
     )
 
 
@@ -683,9 +700,7 @@ async def _capture_anchor_block(
 ) -> None:
     """Invoke :func:`compute_anchor_block` and append the per-cohort
     snapshots to ``snapshots_by_cohort``."""
-    from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS
-
-    new_snapshots = compute_anchor_block(
+    new_snapshots = await compute_anchor_block(
         cohorts=list(M6_1_2_COHORTS),
         rpc_driver=rpc_driver,
         base_seed=base_seed,
@@ -693,3 +708,26 @@ async def _capture_anchor_block(
     )
     for cohort, snapshot in new_snapshots.items():
         snapshots_by_cohort.setdefault(cohort, []).append(snapshot)
+
+
+async def _capture_topology_probe(
+    trajectory_by_cohort: dict[M6_1_2CohortKind, list[Any]],
+    probe: Callable[[], Awaitable[dict[M6_1_2CohortKind, Any]]] | None,
+) -> None:
+    """FR-009: fire one topology-probe pass + append per-cohort results.
+
+    Each call appends one entry per cohort to ``trajectory_by_cohort[cohort]``;
+    over a sweep, the per-cohort list grows into the FR-009 trajectory the
+    reporter renders. ``probe=None`` is a no-op (test / stub paths).
+    """
+    if probe is None:
+        return
+    try:
+        result = await probe()
+    except Exception:  # noqa: BLE001
+        # Probe failures NEVER abort the sweep per FR-001a; the absent entries
+        # in `trajectory_by_cohort` are themselves the warning signal that the
+        # reporter surfaces via its FR-009 / SC-010 channel.
+        return
+    for cohort, entry in result.items():
+        trajectory_by_cohort.setdefault(cohort, []).append(entry)
