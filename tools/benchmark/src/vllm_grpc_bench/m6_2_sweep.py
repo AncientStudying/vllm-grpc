@@ -83,6 +83,7 @@ __all__ = [
     "M6_2SweepInputs",
     "M6_2SweepOutputs",
     "RetryClassifier",
+    "START_GUARD_HOURS",
     "compute_failure_summary_header_fired",
     "iter_block_dispatch_order",
     "iter_main_sweep_tuples",
@@ -101,6 +102,20 @@ __all__ = [
 ANCHOR_CADENCE_HOURS: float = 4.0
 """FR-031 anchor re-measurement cadence (publish mode). Validate mode
 collapses to start + end only when total wall-clock < 8 h."""
+
+
+START_GUARD_HOURS: float = 0.001
+"""Tolerance window for the "this is the sweep-start (t=0) check" branch
+in :func:`should_run_anchor_at`. Distinct from the 4-h-cadence ``epsilon_hours``
+window: that tolerance must accommodate small wall-clock jitter around
+multiples of 4 h, but the start guard only needs to match "exactly t=0"
+because the sweep-start anchor is captured BEFORE the main loop begins.
+
+T073 fix (2026-05-24): the previous shared epsilon (0.05 h = 3 min) on
+the start branch caused every tuple-end check that landed in the first
+3 min of the sweep to re-fire the anchor block. Surfaced by the Phase 9
+/ T067 progress instrumentation: the 13:44 UTC validate run logged an
+``ANCHOR_START sweep_hour_mark=0.02`` immediately after tuple 1 closed."""
 
 
 # --- Pure iteration helpers (FR-030 / FR-032) -------------------------------
@@ -406,6 +421,7 @@ def should_run_anchor_at(
     total_sweep_hours: float | None = None,
     cadence_hours: float = ANCHOR_CADENCE_HOURS,
     epsilon_hours: float = 0.05,
+    start_guard_hours: float = START_GUARD_HOURS,
 ) -> bool:
     """Return True iff the orchestrator should fire an anchor block at the
     given sweep-hour mark.
@@ -413,15 +429,31 @@ def should_run_anchor_at(
     Sweep start (``0``) and sweep end (``total_sweep_hours``) always fire.
     Otherwise: publish mode fires every ``cadence_hours``; validate mode
     fires the same cadence only if ``total_sweep_hours >= 8 h``.
+
+    The ``start_guard_hours`` window (default 0.001 h ≈ 3.6 s) bounds the
+    "exactly t=0" check. It is intentionally MUCH tighter than the
+    ``epsilon_hours`` window (0.05 h = 3 min) used for the 4-h-cadence
+    tolerance: the sweep-start anchor is captured BEFORE the main loop
+    begins, so this branch only needs to match the exact t=0 sentinel.
+    The pre-T073 code shared ``epsilon_hours`` for both purposes, which
+    caused every tuple-end check in the first 3 min to re-fire the anchor.
     """
-    if sweep_hour_mark <= epsilon_hours:
+    if sweep_hour_mark <= start_guard_hours:
         return True
     if total_sweep_hours is not None and abs(sweep_hour_mark - total_sweep_hours) <= epsilon_hours:
         return True
     if sweep_mode == "validate" and (total_sweep_hours is None or total_sweep_hours < 8.0):
         return False
     multiples = sweep_hour_mark / cadence_hours
-    return abs(multiples - round(multiples)) <= (epsilon_hours / cadence_hours)
+    nearest = round(multiples)
+    # T073 follow-on: the 4-h-cadence tolerance ALSO catches small marks
+    # (e.g. 0.02 h rounds to 0 cadence multiples), which would re-fire the
+    # start anchor through the cadence branch. The start anchor is captured
+    # before the main loop begins, so the cadence branch only fires for
+    # ``nearest >= 1`` (the literal 4 h / 8 h / 12 h marks).
+    if nearest == 0:
+        return False
+    return abs(multiples - nearest) <= (epsilon_hours / cadence_hours)
 
 
 # --- FR-029 failure summary sweep-level header ------------------------------

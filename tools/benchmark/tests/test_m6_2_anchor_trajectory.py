@@ -249,6 +249,74 @@ class TestCadenceRule:
         assert should_run_anchor_at(4.0, "validate", total_sweep_hours=10.0) is True
 
 
+class TestT073StartGuardRegression:
+    """T073 (2026-05-24): the pre-fix code shared ``epsilon_hours=0.05`` for
+    both the "this is t=0" start-guard branch AND the 4-h-cadence tolerance.
+    That caused any tuple-end mark in [0, 0.05] to re-fire the anchor block,
+    so the validate sweep that exposed the bug logged an
+    ``ANCHOR_START sweep_hour_mark=0.02`` immediately after tuple 1.
+
+    Post-fix the start guard uses :data:`START_GUARD_HOURS = 0.001` (~3.6 s)
+    — tight enough to match only the literal sweep-start tick captured before
+    the main loop begins."""
+
+    def test_start_guard_constant_is_tight(self) -> None:
+        """``START_GUARD_HOURS`` MUST be tight enough that a tuple-end check
+        landing in the first few minutes does not re-fire the anchor."""
+        from vllm_grpc_bench.m6_2_sweep import START_GUARD_HOURS
+
+        assert START_GUARD_HOURS < 0.05, (
+            "start guard must be tighter than the 4-h-cadence epsilon, or "
+            "the T073 bug regresses"
+        )
+        assert START_GUARD_HOURS > 0, "guard must still match t=0"
+
+    def test_start_anchor_fires_at_exact_zero(self) -> None:
+        assert should_run_anchor_at(0.0, "validate") is True
+        assert should_run_anchor_at(0.0, "publish") is True
+
+    def test_start_anchor_does_not_fire_at_0_02h(self) -> None:
+        """Regression: this was the live-sweep duplicate (validate run
+        2026-05-24 13:46:05Z emitted ``ANCHOR_START sweep_hour_mark=0.02``
+        immediately after tuple 1 closed). The post-fix tight guard must
+        treat 0.02 as "past sweep start, no anchor required"."""
+        assert should_run_anchor_at(0.02, "validate") is False
+        assert should_run_anchor_at(0.02, "publish") is False
+
+    def test_start_anchor_does_not_fire_at_old_epsilon_boundary(self) -> None:
+        """0.05 h was the pre-fix epsilon. Anything in the (start_guard,
+        epsilon] band must no longer fire the start branch — the test
+        anchors the regression at the OLD threshold."""
+        assert should_run_anchor_at(0.05, "validate") is False
+        assert should_run_anchor_at(0.04, "publish") is False
+
+    def test_start_anchor_does_not_fire_during_first_3_minutes(self) -> None:
+        """The bug was 'anchor re-fires for any mark in the first 3 min'.
+        Sweep several marks inside that window and assert none fire the
+        start branch."""
+        for mark in (0.005, 0.01, 0.015, 0.025, 0.04):
+            assert should_run_anchor_at(mark, "validate") is False, (
+                f"start branch must NOT fire at mark={mark}h (T073 regression)"
+            )
+
+    def test_start_guard_does_not_affect_4h_cadence(self) -> None:
+        """The 4-h-cadence tolerance (``epsilon_hours=0.05``) is unchanged —
+        publish-mode marks near multiples of 4 h still fire."""
+        assert should_run_anchor_at(4.0, "publish") is True
+        assert should_run_anchor_at(4.04, "publish") is True  # within cadence epsilon
+        assert should_run_anchor_at(3.96, "publish") is True
+        assert should_run_anchor_at(4.1, "publish") is False  # outside cadence epsilon
+
+    def test_end_anchor_still_uses_epsilon_tolerance(self) -> None:
+        """The "this is the sweep-end mark" branch keeps the ``epsilon_hours``
+        tolerance — that one tolerates jitter around the actual sweep
+        wall-clock and is a separate concern from the start-guard fix."""
+        # total_sweep_hours = 2.5h; mark = 2.49h is within epsilon → fires.
+        assert should_run_anchor_at(2.49, "validate", total_sweep_hours=2.5) is True
+        # mark = 2.4h is outside epsilon → does NOT fire.
+        assert should_run_anchor_at(2.4, "validate", total_sweep_hours=2.5) is False
+
+
 class TestC1WarmupSuppression:
     """Round-8 amendment (T061): snapshots at ``sweep_hour_mark <
     WARMUP_SUPPRESSION_HOURS`` (default 0.05 h = 3 min) are dropped from
