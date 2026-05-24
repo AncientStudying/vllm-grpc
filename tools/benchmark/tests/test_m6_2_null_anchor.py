@@ -118,18 +118,14 @@ class TestDriftVerdict:
         widen — sweeps with naturally noisier blocks shouldn't trip on noise."""
         # baseline=2, m6_2=50, delta=40 → pooled=50, 40 ≤ 50 → PASS.
         assert (
-            compute_drift_verdict(
-                140.0, 100.0, m6_1_3_ci_half_width=2.0, m6_2_ci_half_width=50.0
-            )
+            compute_drift_verdict(140.0, 100.0, m6_1_3_ci_half_width=2.0, m6_2_ci_half_width=50.0)
             == "PASS"
         )
 
     def test_pooled_uses_baseline_ci_when_larger(self) -> None:
         # baseline=100, m6_2=2, delta=80 → pooled=100, 80 ≤ 100 → PASS.
         assert (
-            compute_drift_verdict(
-                180.0, 100.0, m6_1_3_ci_half_width=100.0, m6_2_ci_half_width=2.0
-            )
+            compute_drift_verdict(180.0, 100.0, m6_1_3_ci_half_width=100.0, m6_2_ci_half_width=2.0)
             == "PASS"
         )
 
@@ -137,9 +133,7 @@ class TestDriftVerdict:
         """Defense-in-depth: malformed negative CIs should not under-cut the
         floor (the max-with-floor still applies)."""
         assert (
-            compute_drift_verdict(
-                108.0, 100.0, m6_1_3_ci_half_width=-5.0, m6_2_ci_half_width=-5.0
-            )
+            compute_drift_verdict(108.0, 100.0, m6_1_3_ci_half_width=-5.0, m6_2_ci_half_width=-5.0)
             == "PASS"
         )
 

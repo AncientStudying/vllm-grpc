@@ -362,9 +362,7 @@ def format_status_line(
 
     net_str = f"{net_rate_mbps:.2f}MB/s" if net_rate_mbps is not None else "—"
     wall_str = (
-        f"{state.last_block_wall_p50_ms:.0f}ms"
-        if state.last_block_wall_p50_ms is not None
-        else "—"
+        f"{state.last_block_wall_p50_ms:.0f}ms" if state.last_block_wall_p50_ms is not None else "—"
     )
 
     ts = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -390,8 +388,7 @@ def iter_ticks(interval_s: float, once: bool) -> Iterator[None]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Monitor an in-flight M6.2 sweep via its progress log + "
-            "optional PID + network rate."
+            "Monitor an in-flight M6.2 sweep via its progress log + optional PID + network rate."
         ),
     )
     parser.add_argument(
@@ -462,9 +459,8 @@ def main(argv: list[str] | None = None) -> int:
         # ``sweep_end_utc is not None`` gate is preserved so a fresh-but-
         # incomplete artifact (mid-write race) still reports False until
         # the sweep itself has signalled completion.
-        artifact_present = (
-            state.sweep_end_utc is not None
-            and compute_artifact_present(args.json_out, state.sweep_start_utc)
+        artifact_present = state.sweep_end_utc is not None and compute_artifact_present(
+            args.json_out, state.sweep_start_utc
         )
 
         line = format_status_line(
@@ -481,8 +477,7 @@ def main(argv: list[str] | None = None) -> int:
             if alive is False:
                 exit_ts = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
                 print(
-                    f"[{exit_ts}] orchestrator PID {args.pid} no longer alive — "
-                    "exiting monitor.",
+                    f"[{exit_ts}] orchestrator PID {args.pid} no longer alive — exiting monitor.",
                     flush=True,
                 )
                 return 0

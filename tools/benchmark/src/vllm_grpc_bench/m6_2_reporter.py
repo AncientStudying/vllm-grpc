@@ -606,8 +606,8 @@ def _render_early_eos_audit(artifact: M6_2SweepArtifact) -> list[str]:
     lines.append("")
     lines.append(
         "For a clean cohort-axis protocol comparison at large `max_tokens` "
-        "use either the §\"TPOT curves\" table (protocol-invariant per-token "
-        "decode cost) or the §\"KV-cache pressure\" sub-probe (forced-cap "
+        'use either the §"TPOT curves" table (protocol-invariant per-token '
+        'decode cost) or the §"KV-cache pressure" sub-probe (forced-cap '
         "via `ignore_eos=True`, prompt-content held constant)."
     )
     lines.append("")

@@ -254,7 +254,7 @@ def is_transient_modal_error(exc: BaseException) -> bool:
 # diagnosed only when the WHOLE block fails with this shape (a real Modal
 # preemption kills every in-flight RPC against the dead container).
 
-_ENDPOINT_DEATH_GRPC_CODES: frozenset = frozenset(
+_ENDPOINT_DEATH_GRPC_CODES: frozenset[grpc.StatusCode] = frozenset(
     {grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.CANCELLED}
 )
 """gRPC status codes consistent with the underlying Modal container having
@@ -322,9 +322,7 @@ def is_modal_endpoint_death(exc: BaseException) -> bool:
     return False
 
 
-def block_failed_with_endpoint_death(
-    results: list[Any], n: int
-) -> bool:
+def block_failed_with_endpoint_death(results: list[Any], n: int) -> bool:
     """Return ``True`` iff a whole block dispatched ``n`` RPCs and EVERY
     one came back as an endpoint-death exception (per
     :func:`is_modal_endpoint_death`).
@@ -344,10 +342,7 @@ def block_failed_with_endpoint_death(
     """
     if n <= 0 or len(results) != n:
         return False
-    return all(
-        isinstance(r, BaseException) and is_modal_endpoint_death(r)
-        for r in results
-    )
+    return all(isinstance(r, BaseException) and is_modal_endpoint_death(r) for r in results)
 
 
 def _cell_from_cell_id(cell_id: str) -> M6_1Cell:
@@ -437,9 +432,7 @@ async def build_modal_make_driver_callable(
     initial_inner_stack: Any = contextlib.AsyncExitStack()
     await outer_stack.enter_async_context(initial_inner_stack)
     initial_driver, _ = await initial_inner_stack.enter_async_context(
-        provide_m6_2_rpc_driver(
-            initial_endpoints, seq_len=seq_len, base_seed=base_seed
-        )
+        provide_m6_2_rpc_driver(initial_endpoints, seq_len=seq_len, base_seed=base_seed)
     )
 
     state: dict[str, Any] = {
@@ -470,9 +463,7 @@ async def build_modal_make_driver_callable(
         new_inner_stack: Any = contextlib.AsyncExitStack()
         await outer_stack.enter_async_context(new_inner_stack)
         new_driver, _ = await new_inner_stack.enter_async_context(
-            provide_m6_2_rpc_driver(
-                new_endpoints, seq_len=seq_len, base_seed=base_seed
-            )
+            provide_m6_2_rpc_driver(new_endpoints, seq_len=seq_len, base_seed=base_seed)
         )
         state["driver_stack"] = new_inner_stack
         state["endpoints"] = new_endpoints
@@ -567,9 +558,7 @@ def build_modal_block_dispatcher(
                     prompt_embeds_override=prompt_embeds_override,
                 )
 
-        return await asyncio.gather(
-            *[_one_rpc(i) for i in range(n)], return_exceptions=True
-        )
+        return await asyncio.gather(*[_one_rpc(i) for i in range(n)], return_exceptions=True)
 
     async def _dispatcher(
         *,
@@ -824,9 +813,7 @@ def build_modal_anchor_dispatcher(
         # T074e recovery loop: when ALL n anchor RPCs failed with
         # endpoint-death signatures, the Modal worker is gone. Mirrors the
         # block dispatcher's recovery sequence.
-        while make_driver is not None and block_failed_with_endpoint_death(
-            results, n
-        ):
+        while make_driver is not None and block_failed_with_endpoint_death(results, n):
             if state.preemption_events >= preemption_budget:
                 _progress(
                     "PREEMPTION_BUDGET_EXHAUSTED",
@@ -1387,7 +1374,7 @@ async def _drive_main_sweep_and_sub_probe(
     embed_corpus: list[CompletionEmbedSample],
     base_seed: int,
     is_transient: Any = None,
-) -> tuple[object, list[object]]:
+) -> tuple[Any, list[Any]]:
     """Drive the main sweep + sub-probe sequentially in a single asyncio
     runtime. Sub-probe always runs after the main sweep completes per SC-019;
     both publish and validate modes invoke it.
@@ -1569,9 +1556,9 @@ async def _run_modal_backed(
             # run_meta.preemption_events for post-hoc audit. Both
             # accessors are callable; the .preemption_events attribute is
             # the function, not the value.
-            preemption_events_total = int(
-                block_dispatcher.preemption_events()
-            ) + int(anchor_dispatcher.preemption_events())
+            preemption_events_total = int(block_dispatcher.preemption_events()) + int(
+                anchor_dispatcher.preemption_events()
+            )
     except ModalDeployError as exc:
         print(
             f"[m6_2_validate] Modal deploy/handshake failed: {exc}",

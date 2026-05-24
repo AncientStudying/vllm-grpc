@@ -702,9 +702,7 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
                 max_tokens=max_tokens,
                 duration_s=f"{block_duration_s:.1f}",
                 wall_p50_ms=(
-                    f"{measurement.wall_p50_ms:.1f}"
-                    if measurement.wall_p50_ms is not None
-                    else "—"
+                    f"{measurement.wall_p50_ms:.1f}" if measurement.wall_p50_ms is not None else "—"
                 ),
                 failed=measurement.failed_reason or "no",
                 retry=str(retry_attempted),

@@ -29,10 +29,7 @@ import os
 from pathlib import Path
 
 _MONITOR_SCRIPT = (
-    Path(__file__).resolve().parents[3]
-    / "scripts"
-    / "python"
-    / "monitor_m6_2_sweep.py"
+    Path(__file__).resolve().parents[3] / "scripts" / "python" / "monitor_m6_2_sweep.py"
 )
 _spec = importlib.util.spec_from_file_location("monitor_m6_2_sweep", _MONITOR_SCRIPT)
 assert _spec is not None and _spec.loader is not None
@@ -69,9 +66,7 @@ class TestComputeArtifactPresent:
         artifact.write_text("{}")
         assert compute_artifact_present(artifact, None) is False
 
-    def test_returns_false_when_artifact_predates_sweep_start(
-        self, tmp_path: Path
-    ) -> None:
+    def test_returns_false_when_artifact_predates_sweep_start(self, tmp_path: Path) -> None:
         """The 2026-05-24 production regression: a previous failed sweep
         left a stale artifact at 10:01 UTC; the current sweep started
         at 16:17 UTC. The predicate must NOT treat the stale file as
@@ -81,9 +76,7 @@ class TestComputeArtifactPresent:
         _set_mtime(stale, "2026-05-24T10:01:00Z")
         assert compute_artifact_present(stale, "2026-05-24T16:17:01Z") is False
 
-    def test_returns_true_when_artifact_postdates_sweep_start(
-        self, tmp_path: Path
-    ) -> None:
+    def test_returns_true_when_artifact_postdates_sweep_start(self, tmp_path: Path) -> None:
         """Happy path: the sweep wrote its artifact after SWEEP_START
         fired. The predicate reports presence so the monitor's auto-exit
         can trigger correctly."""
@@ -92,9 +85,7 @@ class TestComputeArtifactPresent:
         _set_mtime(fresh, "2026-05-24T20:30:00Z")
         assert compute_artifact_present(fresh, "2026-05-24T16:17:01Z") is True
 
-    def test_returns_false_when_sweep_start_is_unparseable(
-        self, tmp_path: Path
-    ) -> None:
+    def test_returns_false_when_sweep_start_is_unparseable(self, tmp_path: Path) -> None:
         """Defensive: a malformed sweep_start_utc string (e.g. from a
         future SWEEP_START schema migration that breaks _parse_utc)
         must not crash the monitor and must not claim presence."""
@@ -123,9 +114,7 @@ class TestMonitorRegression20260524:
     ``artifact=yes`` against a 10:01 stale file; post-T075 monitor must
     report ``artifact=no``."""
 
-    def test_2026_05_24_stale_artifact_no_longer_false_positives(
-        self, tmp_path: Path
-    ) -> None:
+    def test_2026_05_24_stale_artifact_no_longer_false_positives(self, tmp_path: Path) -> None:
         # The exact scenario from production:
         #   stale artifact: docs/benchmarks/m6_2-token-budget-validate.json
         #                   mtime = 2026-05-24T15:01:52Z (10:01:52 CDT)
@@ -137,9 +126,7 @@ class TestMonitorRegression20260524:
         _set_mtime(stale, "2026-05-24T15:01:52Z")
         assert compute_artifact_present(stale, "2026-05-24T16:17:01Z") is False
 
-    def test_2026_05_24_post_sweep_artifact_correctly_reports_present(
-        self, tmp_path: Path
-    ) -> None:
+    def test_2026_05_24_post_sweep_artifact_correctly_reports_present(self, tmp_path: Path) -> None:
         """The flip side: once the sweep completes and writes its fresh
         artifact (mtime will be ~20:30 UTC for the 3.5-4 h validate
         sweep), the predicate must report True so the monitor's

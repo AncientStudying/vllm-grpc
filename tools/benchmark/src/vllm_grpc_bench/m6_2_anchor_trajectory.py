@@ -194,9 +194,7 @@ def compute_anchor_latency_trajectory(
     """
     out: dict[M6_1_2CohortKind, M6_2AnchorLatencyTrajectory] = {}
     for cohort, snapshots in snapshots_by_cohort.items():
-        post_warmup = [
-            s for s in snapshots if s.sweep_hour_mark >= warmup_suppression_hours
-        ]
+        post_warmup = [s for s in snapshots if s.sweep_hour_mark >= warmup_suppression_hours]
         if len(post_warmup) < 2:
             out[cohort] = M6_2AnchorLatencyTrajectory(
                 cohort=cohort,

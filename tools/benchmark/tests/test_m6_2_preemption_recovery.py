@@ -163,19 +163,14 @@ class TestIsModalEndpointDeathRest:
     def test_connect_error_with_dns_failure_fires(self) -> None:
         assert (
             is_modal_endpoint_death(
-                httpx.ConnectError(
-                    "[Errno 8] nodename nor servname provided, or not known"
-                )
+                httpx.ConnectError("[Errno 8] nodename nor servname provided, or not known")
             )
             is True
         )
 
     def test_read_error_with_endpoint_fragment_fires(self) -> None:
         assert (
-            is_modal_endpoint_death(
-                httpx.ReadError("connection reset by peer mid-stream")
-            )
-            is True
+            is_modal_endpoint_death(httpx.ReadError("connection reset by peer mid-stream")) is True
         )
 
     def test_read_error_without_endpoint_fragment_does_not_fire(self) -> None:
@@ -191,10 +186,7 @@ class TestIsModalEndpointDeathRest:
     def test_remote_protocol_error_does_not_fire(self) -> None:
         """HTTP/2 protocol error — server is alive but speaking
         incorrectly. Could recover on retry; not preemption."""
-        assert (
-            is_modal_endpoint_death(httpx.RemoteProtocolError("invalid frame"))
-            is False
-        )
+        assert is_modal_endpoint_death(httpx.RemoteProtocolError("invalid frame")) is False
 
 
 class TestIsModalEndpointDeathNonNetwork:
@@ -365,9 +357,7 @@ class TestBlockDispatcherRecoveryHappyPath:
     block. A second-try success closes the recovery cycle cleanly."""
 
     @pytest.mark.asyncio
-    async def test_recovery_on_first_preemption_succeeds(
-        self, _fake_rpc_success: Any
-    ) -> None:
+    async def test_recovery_on_first_preemption_succeeds(self, _fake_rpc_success: Any) -> None:
         from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
 
         dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
@@ -376,9 +366,7 @@ class TestBlockDispatcherRecoveryHappyPath:
         async def make_driver() -> Any:
             return fresh
 
-        dispatcher = build_modal_block_dispatcher(
-            dead, base_seed=42, make_driver=make_driver
-        )
+        dispatcher = build_modal_block_dispatcher(dead, base_seed=42, make_driver=make_driver)
         result = await dispatcher(
             cell_id="embed_c1",
             cohort="default_grpc",
@@ -395,9 +383,7 @@ class TestBlockDispatcherRecoveryHappyPath:
         assert dispatcher.preemption_budget == 2  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
-    async def test_no_recovery_when_make_driver_is_none(
-        self, _fake_rpc_success: Any
-    ) -> None:
+    async def test_no_recovery_when_make_driver_is_none(self, _fake_rpc_success: Any) -> None:
         """Backward compatibility: ``make_driver=None`` (the default)
         disables recovery entirely. The pre-T074 behaviour is preserved
         and the block fails with the usual aggregation path."""
@@ -418,9 +404,7 @@ class TestBlockDispatcherRecoveryHappyPath:
         assert dispatcher.preemption_events() == 0  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
-    async def test_no_recovery_when_only_some_rpcs_fail(
-        self, _fake_rpc_success: Any
-    ) -> None:
+    async def test_no_recovery_when_only_some_rpcs_fail(self, _fake_rpc_success: Any) -> None:
         """Only a WHOLE-block endpoint-death pattern triggers recovery.
         Mixed success / failure stays on the normal aggregation path
         (some timings recorded, ``failed_reason=None`` if at least one
@@ -440,9 +424,7 @@ class TestBlockDispatcherRecoveryHappyPath:
         async def make_driver() -> Any:
             raise AssertionError("make_driver MUST NOT be invoked on partial failure")
 
-        dispatcher = build_modal_block_dispatcher(
-            driver, base_seed=42, make_driver=make_driver
-        )
+        dispatcher = build_modal_block_dispatcher(driver, base_seed=42, make_driver=make_driver)
         result = await dispatcher(
             cell_id="embed_c1",
             cohort="default_grpc",
@@ -461,9 +443,7 @@ class TestBlockDispatcherRecoveryBudget:
     so the orchestrator can abort the sweep cleanly."""
 
     @pytest.mark.asyncio
-    async def test_budget_exhausted_raises_after_threshold(
-        self, _fake_rpc_success: Any
-    ) -> None:
+    async def test_budget_exhausted_raises_after_threshold(self, _fake_rpc_success: Any) -> None:
         from vllm_grpc_bench.m6_2_validate import (
             PreemptionBudgetExhausted,
             build_modal_block_dispatcher,
@@ -503,13 +483,9 @@ class TestBlockDispatcherRecoveryBudget:
         dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
 
         async def make_driver() -> Any:
-            raise TimeoutError(
-                "Modal endpoint refresh timed out — new container never published"
-            )
+            raise TimeoutError("Modal endpoint refresh timed out — new container never published")
 
-        dispatcher = build_modal_block_dispatcher(
-            dead, base_seed=42, make_driver=make_driver
-        )
+        dispatcher = build_modal_block_dispatcher(dead, base_seed=42, make_driver=make_driver)
         with pytest.raises(PreemptionRecoveryFailed, match="TimeoutError"):
             await dispatcher(
                 cell_id="embed_c1",
@@ -535,9 +511,7 @@ class TestBlockDispatcherRecoveryBudget:
         assert M6_2_PREEMPTION_RECURRENCE_THRESHOLD == 2
 
     @pytest.mark.asyncio
-    async def test_recovery_within_budget_succeeds(
-        self, _fake_rpc_success: Any
-    ) -> None:
+    async def test_recovery_within_budget_succeeds(self, _fake_rpc_success: Any) -> None:
         """Two preemptions in a row, both recover successfully (third
         block succeeds) → no abort, the dispatcher returns a normal
         BlockDispatchResult."""
@@ -586,9 +560,7 @@ class TestBuildModalMakeDriverCallable:
         closed_count = {"n": 0}
 
         @_contextlib.asynccontextmanager
-        async def _fake_provide_driver(
-            eps: Any, *, seq_len: int, base_seed: int
-        ) -> Any:
+        async def _fake_provide_driver(eps: Any, *, seq_len: int, base_seed: int) -> Any:
             opened_endpoints.append(eps)
             driver = _RecordingDriver(yield_each=[])
             try:
@@ -626,9 +598,7 @@ class TestBuildModalMakeDriverCallable:
         assert closed_count["n"] == 1
 
     @pytest.mark.asyncio
-    async def test_make_driver_refreshes_and_swaps(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_make_driver_refreshes_and_swaps(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When the Modal Dict publishes fresh URLs (gRPC URL differs),
         make_driver closes the old driver context, opens a new one against
         the refreshed URLs, and returns the new driver."""
@@ -658,9 +628,7 @@ class TestBuildModalMakeDriverCallable:
         close_log: list[int] = []
 
         @_contextlib.asynccontextmanager
-        async def _fake_provide_driver(
-            eps: Any, *, seq_len: int, base_seed: int
-        ) -> Any:
+        async def _fake_provide_driver(eps: Any, *, seq_len: int, base_seed: int) -> Any:
             opened_endpoints.append(eps)
             idx = len(opened_endpoints) - 1
             driver = _RecordingDriver(yield_each=[])
@@ -723,15 +691,11 @@ class TestBuildModalMakeDriverCallable:
             rest_https_edge_url="https://edge.example/",
         )
 
-        async def _fake_refresh_returns_none(
-            cached: Any, *, poll_timeout_s: float = 600.0
-        ) -> Any:
+        async def _fake_refresh_returns_none(cached: Any, *, poll_timeout_s: float = 600.0) -> Any:
             return None
 
         @_contextlib.asynccontextmanager
-        async def _fake_provide_driver(
-            eps: Any, *, seq_len: int, base_seed: int
-        ) -> Any:
+        async def _fake_provide_driver(eps: Any, *, seq_len: int, base_seed: int) -> Any:
             yield _RecordingDriver(yield_each=[]), {}
 
         monkeypatch.setattr(
@@ -788,9 +752,7 @@ class TestBuildModalMakeDriverCallable:
         closed: list[int] = []
 
         @_contextlib.asynccontextmanager
-        async def _fake_provide_driver(
-            eps: Any, *, seq_len: int, base_seed: int
-        ) -> Any:
+        async def _fake_provide_driver(eps: Any, *, seq_len: int, base_seed: int) -> Any:
             idx = len(opened)
             opened.append(eps)
             try:
@@ -851,9 +813,7 @@ class TestAnchorDispatcherRecovery:
             return fresh
 
         anchor = build_modal_anchor_dispatcher(dead, make_driver=make_driver)
-        timings = await anchor(
-            cohort="default_grpc", n=4, base_seed=42, seed_offset=0
-        )
+        timings = await anchor(cohort="default_grpc", n=4, base_seed=42, seed_offset=0)
         assert len(timings) == 4, "post-recovery anchor returns all successful timings"
         assert timings[0] == _fake_rpc_success.wall_clock_ms
         # 4 RPCs against the dead driver, then 4 against the fresh one.
@@ -871,9 +831,7 @@ class TestAnchorDispatcherRecovery:
 
         dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
         anchor = build_modal_anchor_dispatcher(dead)
-        timings = await anchor(
-            cohort="default_grpc", n=4, base_seed=42, seed_offset=0
-        )
+        timings = await anchor(cohort="default_grpc", n=4, base_seed=42, seed_offset=0)
         assert timings == [], "no recovery + all-fail → empty timings (legacy shape)"
         assert len(dead.calls) == 4  # only the original attempt
         assert anchor.preemption_events() == 0  # type: ignore[attr-defined]
@@ -901,9 +859,7 @@ class TestAnchorDispatcherRecovery:
             raise AssertionError("make_driver MUST NOT be invoked on partial failure")
 
         anchor = build_modal_anchor_dispatcher(driver, make_driver=make_driver)
-        timings = await anchor(
-            cohort="default_grpc", n=4, base_seed=42, seed_offset=0
-        )
+        timings = await anchor(cohort="default_grpc", n=4, base_seed=42, seed_offset=0)
         assert len(timings) == 2  # the two successes
         assert anchor.preemption_events() == 0  # type: ignore[attr-defined]
 
@@ -929,9 +885,7 @@ class TestAnchorDispatcherRecovery:
             always_dead, make_driver=make_driver, preemption_budget=2
         )
         with pytest.raises(PreemptionBudgetExhausted, match="FR-026"):
-            await anchor(
-                cohort="default_grpc", n=4, base_seed=42, seed_offset=0
-            )
+            await anchor(cohort="default_grpc", n=4, base_seed=42, seed_offset=0)
         # 2 successful (well, attempted) recoveries before the 3rd
         # detection raised — same accounting as the block dispatcher.
         assert anchor.preemption_events() == 2  # type: ignore[attr-defined]
@@ -948,15 +902,11 @@ class TestAnchorDispatcherRecovery:
         dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
 
         async def make_driver() -> Any:
-            raise TimeoutError(
-                "Modal endpoint refresh timed out — new container never published"
-            )
+            raise TimeoutError("Modal endpoint refresh timed out — new container never published")
 
         anchor = build_modal_anchor_dispatcher(dead, make_driver=make_driver)
         with pytest.raises(PreemptionRecoveryFailed, match="TimeoutError"):
-            await anchor(
-                cohort="default_grpc", n=4, base_seed=42, seed_offset=0
-            )
+            await anchor(cohort="default_grpc", n=4, base_seed=42, seed_offset=0)
         assert anchor.preemption_events() == 0  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
@@ -977,9 +927,7 @@ class TestArtifactPreemptionEventsField:
     """
 
     @pytest.mark.asyncio
-    async def test_preemption_events_threads_into_run_meta(
-        self, _fake_rpc_success: Any
-    ) -> None:
+    async def test_preemption_events_threads_into_run_meta(self, _fake_rpc_success: Any) -> None:
         """When the dispatcher recovers from a preemption, the sweep's
         accumulated counter must end up in
         ``artifact.run_meta.preemption_events`` so the JSON consumer can
@@ -1062,9 +1010,7 @@ class TestArtifactPreemptionEventsField:
         anchor_dispatcher = build_modal_anchor_dispatcher(
             anchor_dead, make_driver=anchor_make_driver
         )
-        await anchor_dispatcher(
-            cohort="default_grpc", n=4, base_seed=42, seed_offset=0
-        )
+        await anchor_dispatcher(cohort="default_grpc", n=4, base_seed=42, seed_offset=0)
 
         # The orchestrator's expression for run_meta.preemption_events:
         total = int(block_dispatcher.preemption_events()) + int(  # type: ignore[attr-defined]
@@ -1087,9 +1033,7 @@ class TestBlockDispatcherPreemptionEvents:
         assert dispatcher.preemption_events() == 0  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
-    async def test_counter_increments_per_recovery(
-        self, _fake_rpc_success: Any
-    ) -> None:
+    async def test_counter_increments_per_recovery(self, _fake_rpc_success: Any) -> None:
         from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
 
         dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
@@ -1103,9 +1047,7 @@ class TestBlockDispatcherPreemptionEvents:
         async def make_driver() -> Any:
             return next(sequence)
 
-        dispatcher = build_modal_block_dispatcher(
-            dead, base_seed=42, make_driver=make_driver
-        )
+        dispatcher = build_modal_block_dispatcher(dead, base_seed=42, make_driver=make_driver)
         assert dispatcher.preemption_events() == 0  # type: ignore[attr-defined]
         await dispatcher(
             cell_id="embed_c1",

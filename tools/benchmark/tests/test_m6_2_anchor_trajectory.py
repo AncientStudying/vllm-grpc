@@ -266,8 +266,7 @@ class TestT073StartGuardRegression:
         from vllm_grpc_bench.m6_2_sweep import START_GUARD_HOURS
 
         assert START_GUARD_HOURS < 0.05, (
-            "start guard must be tighter than the 4-h-cadence epsilon, or "
-            "the T073 bug regresses"
+            "start guard must be tighter than the 4-h-cadence epsilon, or the T073 bug regresses"
         )
         assert START_GUARD_HOURS > 0, "guard must still match t=0"
 
@@ -343,8 +342,7 @@ class TestC1WarmupSuppression:
         )
         record = traj["default_grpc"]
         assert record.max_minus_min_wall_p50_ms == 5.0, (
-            "spread must be computed over post-warmup snapshots only "
-            "(t=0 cold-start excluded)"
+            "spread must be computed over post-warmup snapshots only (t=0 cold-start excluded)"
         )
         # The pre-warmup snapshot is retained in the persisted list (visible
         # to the artifact reader) — only the drift computation excludes it.
