@@ -26,11 +26,14 @@ from typing import Any
 from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2NetworkPath
 from vllm_grpc_bench.m6_1_types import M6_1_CELLS
 from vllm_grpc_bench.m6_2_reporter import (
+    EARLY_EOS_AUDIT_MIN_MAX_TOKENS,
+    EARLY_EOS_RATIO_THRESHOLD,
     INTEGRITY_CHANNELS,
     NOT_VALIDATED_MARKER,
     SC011_CLOCK_ANOMALY_FRACTION_THRESHOLD,
     build_integrity_warnings,
     compute_clock_anomaly_fraction,
+    compute_implied_output_tokens,
     fill_validate_mode_placeholders,
     render_json,
     render_markdown,
@@ -60,6 +63,10 @@ def _measurement(
     prompt_corpus_idx: int | None = None,
     clock_anomaly: bool = False,
     n_rpcs: int = 20,
+    tpot_ms: float | None = None,
+    seg_prefill_ms: float | None = None,
+    seg_egress_ms: float | None = None,
+    measurement_regime: str = "natural_eos",
 ) -> M6_2MeasurementPoint:
     return M6_2MeasurementPoint(
         cell_id=cell_id,
@@ -70,19 +77,19 @@ def _measurement(
         wall_p95_ms=None if failed_reason else (wall_p50_ms or 0.0) * 1.5,
         wall_p99_ms=None if failed_reason else (wall_p50_ms or 0.0) * 2.0,
         wall_p50_ms_ci_half_width=None if failed_reason else 1.0,
-        tpot_ms=None,
+        tpot_ms=tpot_ms,
         seg_ab_ms=None,
         seg_queue_ms=None,
-        seg_prefill_ms=None,
+        seg_prefill_ms=seg_prefill_ms,
         seg_ingress_ms=None,
-        seg_egress_ms=None,
+        seg_egress_ms=seg_egress_ms,
         failed_reason=failed_reason,
         block_start_utc="2026-05-20T00:00:00Z",
         block_end_utc="2026-05-20T00:00:05Z",
         retry_attempted=False,
         clock_anomaly=clock_anomaly,
         prompt_source=prompt_source,  # type: ignore[arg-type]
-        measurement_regime="natural_eos",
+        measurement_regime=measurement_regime,  # type: ignore[arg-type]
         prompt_corpus_idx=prompt_corpus_idx,
     )
 
@@ -661,3 +668,170 @@ def test_write_m6_2_report_emits_md_and_json(tmp_path: Any) -> None:
     assert payload["schema_version"] == "m6_1_1.v1"
     assert payload["run_meta"]["sweep_mode"] == "validate"
     assert payload["run_meta"]["iteration_order"] == "cohort_innermost_block"
+
+
+# --- Prompt-driven early-EOS audit (Section 1b) ----------------------------
+
+
+def test_compute_implied_output_tokens_back_of_envelope() -> None:
+    """``(wall - prefill - egress) / tpot`` with the c8/default_grpc[2048]
+    field values reproduces the ~273-token figure logged in the operator
+    note on the 2026-05-24 validate sweep."""
+    point = _measurement(
+        cell_id="chat_stream_c8",
+        cohort="default_grpc",
+        max_tokens=2048,
+        wall_p50_ms=10341.64,
+        tpot_ms=37.54,
+        seg_prefill_ms=77.26,
+        seg_egress_ms=1.99,
+    )
+    implied = compute_implied_output_tokens(point)
+    assert implied is not None
+    assert 270.0 < implied < 280.0
+
+
+def test_compute_implied_output_tokens_returns_none_when_tpot_missing() -> None:
+    point = _measurement(
+        cell_id="chat_stream_c1",
+        cohort="default_grpc",
+        max_tokens=2048,
+        wall_p50_ms=10000.0,
+        tpot_ms=None,
+    )
+    assert compute_implied_output_tokens(point) is None
+
+
+def test_compute_implied_output_tokens_returns_none_on_zero_tpot() -> None:
+    point = _measurement(
+        cell_id="chat_stream_c1",
+        cohort="default_grpc",
+        max_tokens=2048,
+        wall_p50_ms=10000.0,
+        tpot_ms=0.0,
+    )
+    assert compute_implied_output_tokens(point) is None
+
+
+def test_early_eos_audit_silent_when_no_cells_flagged() -> None:
+    artifact = _build_artifact(sweep_mode="validate", measured_axis=M6_2_VALIDATE_MAX_TOKENS_AXIS)
+    md = render_markdown(artifact, sweep_mode="validate")
+    assert "## Prompt-driven early-EOS audit" not in md
+
+
+def test_early_eos_audit_fires_on_short_response_at_2048() -> None:
+    """A chat_stream cell whose ``implied_output_tokens / max_tokens`` falls
+    below ``EARLY_EOS_RATIO_THRESHOLD`` at ``max_tokens >= 256`` is
+    surfaced in the audit section with its cell_id, cohort, and corpus_idx
+    so the reader can correlate to the offending prompt."""
+    artifact = _build_artifact(sweep_mode="validate", measured_axis=M6_2_VALIDATE_MAX_TOKENS_AXIS)
+    # Inject the c8/default_grpc[2048] shape from the 2026-05-24 sweep.
+    artifact.per_cell["chat_stream_c8"]["default_grpc"][2048] = _measurement(
+        cell_id="chat_stream_c8",
+        cohort="default_grpc",
+        max_tokens=2048,
+        wall_p50_ms=10341.64,
+        tpot_ms=37.54,
+        seg_prefill_ms=77.26,
+        seg_egress_ms=1.99,
+        prompt_source="corpus_sharegpt",
+        prompt_corpus_idx=62,
+    )
+    md = render_markdown(artifact, sweep_mode="validate")
+    assert "## Prompt-driven early-EOS audit" in md
+    assert "`chat_stream_c8`" in md.split("## Prompt-driven early-EOS audit", 1)[1]
+    # corpus_idx must appear in the audit table so the reader can map it
+    # back to the offending prompt.
+    audit_block = md.split("## Prompt-driven early-EOS audit", 1)[1].split("## ", 1)[0]
+    assert " 62 " in audit_block
+
+
+def test_early_eos_audit_skips_embed_cells() -> None:
+    """``tpot_ms`` is chat_stream-only; embed cells with a wall-clock
+    matching the same shape must not be surfaced."""
+    artifact = _build_artifact(sweep_mode="validate", measured_axis=M6_2_VALIDATE_MAX_TOKENS_AXIS)
+    artifact.per_cell["embed_c8"]["default_grpc"][2048] = _measurement(
+        cell_id="embed_c8",
+        cohort="default_grpc",
+        max_tokens=2048,
+        wall_p50_ms=10000.0,
+        tpot_ms=37.0,
+        seg_prefill_ms=77.0,
+        seg_egress_ms=2.0,
+        prompt_source="corpus_sharegpt_embed",
+        prompt_corpus_idx=99,
+    )
+    md = render_markdown(artifact, sweep_mode="validate")
+    assert "## Prompt-driven early-EOS audit" not in md
+
+
+def test_early_eos_audit_skips_small_max_tokens() -> None:
+    """At ``max_tokens < EARLY_EOS_AUDIT_MIN_MAX_TOKENS`` a small implied
+    token count is the *expected* hit-the-cap regime, not an audit signal."""
+    artifact = _build_artifact(sweep_mode="validate", measured_axis=M6_2_VALIDATE_MAX_TOKENS_AXIS)
+    # max_tokens=50 with implied≈10 → ratio 0.2 (well below threshold)
+    # but the cell is below the audit gate, so must not fire.
+    artifact.per_cell["chat_stream_c1"]["default_grpc"][50] = _measurement(
+        cell_id="chat_stream_c1",
+        cohort="default_grpc",
+        max_tokens=50,
+        wall_p50_ms=400.0,
+        tpot_ms=37.0,
+        seg_prefill_ms=10.0,
+        seg_egress_ms=1.0,
+        prompt_source="synthetic_seed_derived",
+        prompt_corpus_idx=None,
+    )
+    assert EARLY_EOS_AUDIT_MIN_MAX_TOKENS > 50
+    md = render_markdown(artifact, sweep_mode="validate")
+    assert "## Prompt-driven early-EOS audit" not in md
+
+
+def test_early_eos_audit_threshold_boundary() -> None:
+    """A cell at exactly ``EARLY_EOS_RATIO_THRESHOLD`` does not fire
+    (strict ``<``); a cell just below does."""
+    # ratio = 0.5 exactly → 1024 tokens at max_tokens=2048
+    on_threshold = _measurement(
+        cell_id="chat_stream_c4",
+        cohort="default_grpc",
+        max_tokens=2048,
+        wall_p50_ms=1024 * 37.0 + 77.0 + 1.0,
+        tpot_ms=37.0,
+        seg_prefill_ms=77.0,
+        seg_egress_ms=1.0,
+        prompt_corpus_idx=51,
+    )
+    implied = compute_implied_output_tokens(on_threshold)
+    assert implied is not None
+    assert abs(implied - 1024.0) < 1e-6
+    assert (implied / 2048) == EARLY_EOS_RATIO_THRESHOLD
+
+    artifact = _build_artifact(sweep_mode="validate", measured_axis=M6_2_VALIDATE_MAX_TOKENS_AXIS)
+    artifact.per_cell["chat_stream_c4"]["default_grpc"][2048] = on_threshold
+    md = render_markdown(artifact, sweep_mode="validate")
+    assert "## Prompt-driven early-EOS audit" not in md, "ratio == threshold must NOT fire"
+
+    # Now drop one token below threshold: ratio = 1023/2048 < 0.5.
+    just_below = _measurement(
+        cell_id="chat_stream_c4",
+        cohort="default_grpc",
+        max_tokens=2048,
+        wall_p50_ms=1023 * 37.0 + 77.0 + 1.0,
+        tpot_ms=37.0,
+        seg_prefill_ms=77.0,
+        seg_egress_ms=1.0,
+        prompt_corpus_idx=51,
+    )
+    artifact.per_cell["chat_stream_c4"]["default_grpc"][2048] = just_below
+    md = render_markdown(artifact, sweep_mode="validate")
+    assert "## Prompt-driven early-EOS audit" in md
+
+
+def test_early_eos_audit_silent_when_tpot_unpopulated() -> None:
+    """Fake-driver fixtures that don't carry the M6.1.1 timing payload
+    must not be flagged (insufficient evidence). This is the common
+    integration-test shape."""
+    artifact = _build_artifact(sweep_mode="validate", measured_axis=M6_2_VALIDATE_MAX_TOKENS_AXIS)
+    # default _measurement leaves tpot_ms=None → audit must skip.
+    md = render_markdown(artifact, sweep_mode="validate")
+    assert "## Prompt-driven early-EOS audit" not in md

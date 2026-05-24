@@ -62,11 +62,14 @@ from vllm_grpc_bench.m6_2_types import (
 )
 
 __all__ = [
+    "EARLY_EOS_AUDIT_MIN_MAX_TOKENS",
+    "EARLY_EOS_RATIO_THRESHOLD",
     "INTEGRITY_CHANNELS",
     "NOT_VALIDATED_MARKER",
     "SC011_CLOCK_ANOMALY_FRACTION_THRESHOLD",
     "build_integrity_warnings",
     "compute_clock_anomaly_fraction",
+    "compute_implied_output_tokens",
     "fill_validate_mode_placeholders",
     "render_json",
     "render_markdown",
@@ -106,6 +109,22 @@ SC011_CLOCK_ANOMALY_FRACTION_THRESHOLD: float = 0.005
 fires the ``clock_anomaly_warning`` integrity header."""
 
 
+EARLY_EOS_RATIO_THRESHOLD: float = 0.5
+"""Audit-section trigger: a ``chat_stream`` cell whose
+``implied_output_tokens / max_tokens`` falls below this fraction is flagged
+in the "Prompt-driven early-EOS audit" section. 0.5 catches blocks that
+terminate via natural EOS at < half the cap — the regime where per-cohort
+``wall_p50_ms`` ceases to be a like-for-like protocol comparison and starts
+reflecting prompt-content variance instead."""
+
+
+EARLY_EOS_AUDIT_MIN_MAX_TOKENS: int = 256
+"""Audit-section gate: only inspect cells at ``max_tokens >= 256``. Below this
+the cap is too tight for natural EOS to fire meaningfully before the cap,
+so a small ``implied_output_tokens`` is the *expected* hit-the-cap regime
+rather than an audit-worthy short response."""
+
+
 # --- Section renderers ------------------------------------------------------
 
 
@@ -113,6 +132,32 @@ def _fmt(value: float | None, *, decimals: int = 2) -> str:
     if value is None:
         return "—"
     return f"{value:.{decimals}f}"
+
+
+def compute_implied_output_tokens(point: M6_2MeasurementPoint) -> float | None:
+    """Back out the per-RPC output-token count implied by the block's
+    aggregated wall-clock and segment decomposition.
+
+    Returns ``(wall_p50_ms - seg_prefill_ms - seg_egress_ms) / tpot_ms`` when
+    all four numerators/denominators are populated and ``tpot_ms > 0``;
+    otherwise returns ``None``. Used by
+    :func:`_render_early_eos_audit` to flag chat-stream cells whose
+    natural-EOS termination undershoots the ``max_tokens`` cap by more than
+    ``1 - EARLY_EOS_RATIO_THRESHOLD``.
+
+    This is best-effort: the segment fields come from the M6.1.1 timing
+    payload (which a fake-driver test fixture may not populate). When the
+    helper returns ``None`` the audit treats the cell as non-flagged
+    (insufficient evidence).
+    """
+    wall = point.wall_p50_ms
+    tpot = point.tpot_ms
+    if wall is None or tpot is None or tpot <= 0:
+        return None
+    prefill = point.seg_prefill_ms or 0.0
+    egress = point.seg_egress_ms or 0.0
+    implied = (wall - prefill - egress) / tpot
+    return max(0.0, implied)
 
 
 def _flatten_measurements(artifact: M6_2SweepArtifact) -> list[M6_2MeasurementPoint]:
@@ -478,6 +523,95 @@ def _render_production_latency_budget(
                     f"{_fmt(p.wall_p99_ms)} | `{p.prompt_source}` | "
                     f"`{p.measurement_regime}` | {corpus_idx} | {_row_status(p)} |"
                 )
+    lines.append("")
+    return lines
+
+
+# --- Section 1b: Prompt-driven early-EOS audit ------------------------------
+
+
+def _render_early_eos_audit(artifact: M6_2SweepArtifact) -> list[str]:
+    """Section 1b — flag chat_stream cells whose natural-EOS termination
+    undershoots the ``max_tokens`` cap by more than
+    ``1 - EARLY_EOS_RATIO_THRESHOLD``.
+
+    Why this exists: with ``iteration_order="cohort_innermost_block"`` and a
+    per-block ``iter_idx = len(measurements)`` (m6_2_sweep.py), adjacent
+    cohort blocks for the same ``(cell, max_tokens)`` draw *consecutive*
+    corpus indices via cohort-blind ``assign_symmetric_prompt``. At large
+    ``max_tokens`` a "short" / stub prompt that hits natural EOS early
+    produces a ``wall_p50_ms`` that's 2–8× faster than peer cohorts at the
+    same cell — purely from prompt content, not from protocol cost. This
+    audit makes that confound visible so a downstream reader doesn't
+    mistake prompt-distribution variance for a cohort anomaly.
+
+    Scope: chat_stream cells only (``tpot_ms`` is undefined for embed
+    cells); ``measurement_regime == "natural_eos"`` only (sub-probe forced-cap
+    rows live in §"KV-cache pressure" and are intentionally cap-pinned);
+    ``max_tokens >= EARLY_EOS_AUDIT_MIN_MAX_TOKENS`` (below the cap is too
+    tight for natural EOS to fire meaningfully before it).
+
+    Emits nothing when no cells qualify — the section stays silent on the
+    happy path to keep the report clean.
+    """
+    flagged: list[tuple[M6_2MeasurementPoint, float, float]] = []
+    for point in _flatten_measurements(artifact):
+        if not point.cell_id.startswith("chat_stream"):
+            continue
+        if point.measurement_regime != "natural_eos":
+            continue
+        if point.failed_reason is not None:
+            continue
+        if point.max_tokens < EARLY_EOS_AUDIT_MIN_MAX_TOKENS:
+            continue
+        implied = compute_implied_output_tokens(point)
+        if implied is None:
+            continue
+        ratio = implied / point.max_tokens if point.max_tokens > 0 else 0.0
+        if ratio < EARLY_EOS_RATIO_THRESHOLD:
+            flagged.append((point, implied, ratio))
+
+    if not flagged:
+        return []
+
+    lines: list[str] = ["## Prompt-driven early-EOS audit", ""]
+    lines.append(
+        f"The cells below terminated via natural EOS at fewer than "
+        f"`{EARLY_EOS_RATIO_THRESHOLD:.0%}` of the `max_tokens` cap "
+        f"(threshold `EARLY_EOS_RATIO_THRESHOLD = {EARLY_EOS_RATIO_THRESHOLD}`, "
+        f"minimum cap `EARLY_EOS_AUDIT_MIN_MAX_TOKENS = "
+        f"{EARLY_EOS_AUDIT_MIN_MAX_TOKENS}`). Each cell draws a single "
+        f"corpus prompt per block (see `m6_2_sweep.py:546` + "
+        f"`assign_symmetric_prompt`); adjacent cohort blocks for the same "
+        f"`(cell, max_tokens)` draw *different* prompts, so per-cohort "
+        f"`wall_p50_ms` at high `max_tokens` in `natural_eos` regime "
+        f"confounds protocol cost with prompt-content distribution. The "
+        f"flagged rows are not protocol pathologies — they are cells whose "
+        f"corpus prompt elicited a short response and stopped early."
+    )
+    lines.append("")
+    lines.append(
+        "For a clean cohort-axis protocol comparison at large `max_tokens` "
+        "use either the §\"TPOT curves\" table (protocol-invariant per-token "
+        "decode cost) or the §\"KV-cache pressure\" sub-probe (forced-cap "
+        "via `ignore_eos=True`, prompt-content held constant)."
+    )
+    lines.append("")
+    lines.append(
+        "| cell | cohort | max_tokens | corpus_idx | wall_p50_ms | tpot_ms | "
+        "implied_output_tokens | implied/cap |"
+    )
+    lines.append(
+        "|------|--------|-----------:|-----------:|------------:|--------:|"
+        "---------------------:|------------:|"
+    )
+    for point, implied, ratio in flagged:
+        corpus_idx = "—" if point.prompt_corpus_idx is None else str(point.prompt_corpus_idx)
+        lines.append(
+            f"| `{point.cell_id}` | `{point.cohort}` | {point.max_tokens} | "
+            f"{corpus_idx} | {_fmt(point.wall_p50_ms)} | "
+            f"{_fmt(point.tpot_ms)} | {implied:.0f} | {ratio:.2f} |"
+        )
     lines.append("")
     return lines
 
@@ -892,6 +1026,7 @@ def render_markdown(artifact: M6_2SweepArtifact, *, sweep_mode: M6_2SweepMode) -
     lines.extend(_render_run_meta(artifact))
     lines.extend(_render_leading_integrity_headers(artifact))
     lines.extend(_render_production_latency_budget(artifact, sweep_mode=sweep_mode))
+    lines.extend(_render_early_eos_audit(artifact))
     lines.extend(_render_tpot_curves(artifact, sweep_mode=sweep_mode))
     lines.extend(_render_engine_cost_decomposition(artifact, sweep_mode=sweep_mode))
     lines.extend(_render_protocol_crossover(artifact, sweep_mode=sweep_mode))
