@@ -322,10 +322,28 @@ def test_run_meta_has_all_additive_fields() -> None:
         "embed_corpus_sha256",
         "embed_corpus_path",
         "sub_probe_ran",
+        "preemption_events",
     ):
         assert field in rm, f"run_meta missing additive field {field!r}"
     assert rm["iteration_order"] == "cohort_innermost_block"
     assert rm["validate_axis_subset"] == list(M6_2_VALIDATE_MAX_TOKENS_AXIS)
+
+
+def test_run_meta_preemption_events_defaults_to_zero() -> None:
+    """T074f: happy-path sweeps (no Modal preemption) record
+    ``preemption_events=0``. Non-zero values indicate the sweep survived
+    one or more Modal worker restarts via T074's recovery loop."""
+    artifact = _build_artifact(sweep_mode="validate", measured_axis=M6_2_VALIDATE_MAX_TOKENS_AXIS)
+    payload = render_json(artifact)
+    assert payload["run_meta"]["preemption_events"] == 0
+
+
+def test_run_meta_preemption_events_renders_in_markdown() -> None:
+    """The reporter surfaces the field in the run_meta block so operators
+    can see at a glance whether the sweep encountered preemption."""
+    artifact = _build_artifact(sweep_mode="validate", measured_axis=M6_2_VALIDATE_MAX_TOKENS_AXIS)
+    md = render_markdown(artifact, sweep_mode="validate")
+    assert "- preemption_events: `0`" in md
 
 
 # --- failure_summary always present (SC-014) -------------------------------

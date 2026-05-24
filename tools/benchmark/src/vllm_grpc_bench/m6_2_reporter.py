@@ -461,6 +461,7 @@ def _render_run_meta(artifact: M6_2SweepArtifact) -> list[str]:
         f"- chat_corpus_sha256: `{rm.chat_corpus_sha256}`",
         f"- embed_corpus_sha256: `{rm.embed_corpus_sha256}`",
         f"- sub_probe_ran: `{rm.sub_probe_ran}`",
+        f"- preemption_events: `{getattr(rm, 'preemption_events', 0)}`",
         f"- run_started_at: `{artifact.run_started_at}`",
         f"- run_completed_at: `{artifact.run_completed_at}`",
         "",

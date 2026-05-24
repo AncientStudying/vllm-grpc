@@ -1178,6 +1178,7 @@ def build_artifact(
     run_id: str | None = None,
     m6_1_3_baseline_path: str = "docs/benchmarks/m6_1_3-attribution-closure.json",
     network_paths: dict[M6_1_2CohortKind, list[Any]] | None = None,
+    preemption_events: int = 0,
 ) -> M6_2SweepArtifact:
     """Assemble :class:`M6_2SweepArtifact` from the sweep outputs + ancillary
     inputs collected by :func:`run_m6_2`.
@@ -1310,6 +1311,7 @@ def build_artifact(
         embed_corpus_sha256=embed_corpus_sha256,
         embed_corpus_path=embed_corpus_path,
         sub_probe_ran=sub_probe_ran,
+        preemption_events=preemption_events,
     )
 
     null_anchor_validation = make_null_anchor_validation(
@@ -1561,6 +1563,15 @@ async def _run_modal_backed(
                 base_seed=base_seed,
                 is_transient=is_transient_modal_error,
             )
+            # T074f — capture the per-dispatcher preemption counters BEFORE
+            # the async-with block exits and the dispatcher closures fall
+            # out of scope. Total is sum across both paths; persisted to
+            # run_meta.preemption_events for post-hoc audit. Both
+            # accessors are callable; the .preemption_events attribute is
+            # the function, not the value.
+            preemption_events_total = int(
+                block_dispatcher.preemption_events()
+            ) + int(anchor_dispatcher.preemption_events())
     except ModalDeployError as exc:
         print(
             f"[m6_2_validate] Modal deploy/handshake failed: {exc}",
@@ -1612,6 +1623,7 @@ async def _run_modal_backed(
         sub_probe_rows=sub_probe_results,
         sub_probe_ran=True,
         network_paths=network_paths,
+        preemption_events=preemption_events_total,
     )
     write_m6_2_report(artifact, md_path, json_path, sweep_mode=sweep_mode)
     print(

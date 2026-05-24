@@ -311,6 +311,17 @@ class M6_2RunMeta:
     embed_corpus_sha256: str
     embed_corpus_path: str
     sub_probe_ran: bool  # True in both publish + validate per SC-019
+    # T074c / T074e — Modal preemption recovery telemetry. Total count of
+    # successful (DETECTED → RECOVERED) preemption-recovery cycles across
+    # the block dispatcher AND the anchor dispatcher for this sweep.
+    # ``0`` is the happy-path value (no Modal preemption mid-sweep);
+    # non-zero values indicate the run survived ``preemption_events`` Modal
+    # worker restarts via T074's recovery loop. Capped at
+    # ``M6_2_PREEMPTION_RECURRENCE_THRESHOLD`` per dispatcher (the next
+    # recovery aborts the sweep cleanly via ``PreemptionBudgetExhausted``).
+    # Backward-compatible default ``0`` preserves the M6.1.3 strict-superset
+    # contract — pre-T074 readers ignore the new key cleanly.
+    preemption_events: int = 0
 
 
 @dataclass(slots=True, kw_only=True)

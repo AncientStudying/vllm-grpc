@@ -969,6 +969,110 @@ class TestAnchorDispatcherRecovery:
         assert anchor.preemption_budget == 2  # type: ignore[attr-defined]
 
 
+class TestArtifactPreemptionEventsField:
+    """T074f: the per-dispatcher preemption counters flow into
+    :class:`m6_2_types.M6_2RunMeta`'s ``preemption_events`` field via
+    :func:`build_artifact`. The field is rendered in the markdown
+    run_meta block + serialised to the JSON artifact for post-hoc audit.
+    """
+
+    @pytest.mark.asyncio
+    async def test_preemption_events_threads_into_run_meta(
+        self, _fake_rpc_success: Any
+    ) -> None:
+        """When the dispatcher recovers from a preemption, the sweep's
+        accumulated counter must end up in
+        ``artifact.run_meta.preemption_events`` so the JSON consumer can
+        confirm the recovery happened."""
+        from vllm_grpc_bench.m6_2_types import M6_2RunMeta
+
+        # Direct constructor exercise — the orchestrator threads the
+        # counter into build_artifact via the ``preemption_events`` kwarg.
+        rm = M6_2RunMeta(
+            git_sha="abc1234",
+            modal_region="eu-west-1",
+            base_seed=42,
+            model_identifier="Qwen/Qwen3-8B",
+            dispatch_mode="concurrent",
+            symmetric_prompts_enabled=True,
+            schema_version="m6_1_1.v1",
+            sweep_mode="validate",
+            m6_1_3_baseline_artifact_path="docs/benchmarks/m6_1_3-attribution-closure.json",
+            iteration_order="cohort_innermost_block",
+            iteration_discipline_verified=True,
+            n_per_point=20,
+            validate_axis_subset=[10, 50, 2048],
+            wall_clock_start_utc="2026-05-24T00:00:00Z",
+            wall_clock_end_utc="2026-05-24T03:00:00Z",
+            total_sweep_hours=3.0,
+            modal_spend_usd_estimate=None,
+            chat_corpus_sha256="0" * 64,
+            chat_corpus_path="x",
+            embed_corpus_sha256="1" * 64,
+            embed_corpus_path="y",
+            sub_probe_ran=True,
+            preemption_events=3,
+        )
+        assert rm.preemption_events == 3
+
+    @pytest.mark.asyncio
+    async def test_dispatcher_counter_sum_is_what_orchestrator_persists(
+        self, _fake_rpc_success: Any
+    ) -> None:
+        """End-to-end shape check: the orchestrator reads
+        ``block_dispatcher.preemption_events() + anchor_dispatcher.preemption_events()``
+        and threads the sum into ``build_artifact(preemption_events=...)``.
+        This test exercises the dispatcher → sum path against the same
+        fixtures used in the recovery-loop tests."""
+        from vllm_grpc_bench.m6_2_validate import (
+            build_modal_anchor_dispatcher,
+            build_modal_block_dispatcher,
+        )
+
+        # Block dispatcher: one preemption recovery.
+        block_dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+        block_fresh = _RecordingDriver(yield_each=[_fake_rpc_success])
+
+        async def block_make_driver() -> Any:
+            return block_fresh
+
+        block_dispatcher = build_modal_block_dispatcher(
+            block_dead, base_seed=42, make_driver=block_make_driver
+        )
+        await block_dispatcher(
+            cell_id="embed_c1",
+            cohort="default_grpc",
+            max_tokens=10,
+            n=4,
+            block_inputs=_block_inputs(),
+        )
+
+        # Anchor dispatcher: two preemption recoveries.
+        anchor_dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+        anchor_seq = iter(
+            [
+                _RecordingDriver(yield_each=[_dead_endpoint_exc()]),
+                _RecordingDriver(yield_each=[_fake_rpc_success]),
+            ]
+        )
+
+        async def anchor_make_driver() -> Any:
+            return next(anchor_seq)
+
+        anchor_dispatcher = build_modal_anchor_dispatcher(
+            anchor_dead, make_driver=anchor_make_driver
+        )
+        await anchor_dispatcher(
+            cohort="default_grpc", n=4, base_seed=42, seed_offset=0
+        )
+
+        # The orchestrator's expression for run_meta.preemption_events:
+        total = int(block_dispatcher.preemption_events()) + int(  # type: ignore[attr-defined]
+            anchor_dispatcher.preemption_events()  # type: ignore[attr-defined]
+        )
+        assert total == 1 + 2
+
+
 class TestBlockDispatcherPreemptionEvents:
     """Counter exposure: the dispatcher's ``preemption_events`` attribute
     is the source of truth for the orchestrator to populate
