@@ -69,19 +69,41 @@ python -m vllm_grpc_bench --m6_2-validate --m6_2-skip-deploy  # runs against stu
 
 If any step fails, fix BEFORE proceeding. The validate sweep is ~2.3-2.5h + ~$4 Modal spend; a CLI typo or missing baseline/corpus is cheaper to catch here.
 
-### Stage 1: Validate sweep (~2.3-2.5h wall-clock, ~$4 Modal spend)
+### Stage 1: Validate sweep (~3.5-4 h wall-clock, ~$5-6 Modal spend post-T066 recalibration)
 
 ```bash
-# Drive the validate sweep against Modal A10G eu-west-1
-python -m vllm_grpc_bench --m6_2-validate \
+# Drive the validate sweep against Modal A10G eu-west-1.
+#
+# `2>&1 | tee <log>` merges stdout + stderr into the console AND a log file
+# so the Phase 9 progress events (`[m6_2 SWEEP_START / TUPLE_START / BLOCK_DONE /
+# ANCHOR_START / SUBPROBE_START / SWEEP_END]`) stream live to your terminal
+# while a copy persists for the monitor script + post-hoc forensics. The
+# monitor (`scripts/python/monitor_m6_2_sweep.py`) reads this same log.
+uv run --project tools/benchmark python -m vllm_grpc_bench \
+    --m6_2-validate \
     --m6_2-modal-region=eu-west-1 \
-    --m6_2-modal-token-env=MODAL_BENCH_TOKEN
+    --m6_2-modal-token-env=MODAL_BENCH_TOKEN \
+    2>&1 | tee docs/benchmarks/m6_2-validate.sweep.log
 
-# Expected: ~2.3-2.5h wall-clock; ~$4 Modal spend; produces
-#   docs/benchmarks/m6_2-token-budget-validate.md
-#   docs/benchmarks/m6_2-token-budget-validate.json
-#   docs/benchmarks/m6_2-events.jsonl
+# Expected: ~3.5-4 h wall-clock (2026-05-24 measured 3.57 h post-fix);
+# ~$5-6 Modal spend (2026-05-24 measured $5.39). Produces:
+#   docs/benchmarks/m6_2-token-budget-validate.md   (rendered report)
+#   docs/benchmarks/m6_2-token-budget-validate.json (machine-readable)
+#   docs/benchmarks/m6_2-events.jsonl                (per-RPC sidecar)
+#   docs/benchmarks/m6_2-validate.sweep.log          (tee'd console + monitor input)
 ```
+
+**Progress events** the orchestrator emits to stderr (Phase 9 / T067):
+
+| Tag | Fires at | Key fields |
+|---|---|---|
+| `SWEEP_START` | sweep launch | `mode`, `n`, `axis`, `expected_blocks`, `expected_tuples`, `utc` |
+| `TOPOLOGY_PROBE_START/END` | start + end | `phase=sweep_start|sweep_end` |
+| `ANCHOR_START/END` | start + 4h cadence + end | `sweep_hour_mark`, `duration_s` |
+| `TUPLE_START/END` | per `(cell, max_tokens)` tuple | `i=<idx>/<total>`, `cell`, `max_tokens`, `cohorts`, `elapsed_h` |
+| `BLOCK_DONE` | per cohort block | `i=<idx>/<total>`, `cell`, `cohort`, `max_tokens`, `duration_s`, `wall_p50_ms`, `failed`, `retry` |
+| `SUBPROBE_START/END` | sub-probe phase | `blocks`, `n`, `ignore_eos`, `duration_s` |
+| `SWEEP_END` | sweep completion | `blocks_done`, `elapsed_h`, `utc` |
 
 **Validate sweep characteristics**:
 - 3-point axis subset `{10, 50, 2048}` × 4 cohorts × 6 cells = **72 measurement points** at `n=20` each = 1,440 total RPCs in the main sweep.
@@ -123,10 +145,66 @@ python -c "import json; print(json.load(open('docs/benchmarks/m6_2-token-budget-
 ```
 
 If the integrity_warnings list is non-empty, investigate before proceeding to Stage 2. Possible issues:
-- `null_anchor_drift` → M6.1.3 baseline isn't comparable (rare; investigate engine config drift).
+- `null_anchor_drift` → M6.1.3 baseline isn't comparable (rare; investigate engine config drift, or accept the new baseline if drift is monotonically negative post-fix per the 2026-05-24 closure note).
 - `cohort_csp_mismatch` → Modal consolidated cohorts mid-sweep; rerun against fresh deploy.
-- `intra_sweep_latency_drift` → unlikely in a 2.3h validate sweep but possible; rerun if it fires.
+- `intra_sweep_latency_drift` → unlikely in a 3-4h validate sweep but possible; rerun if it fires.
+- `trajectory_insufficient_snapshots` → C1 fallback (round-8 amendment): at least one cohort has < 2 post-warmup anchor snapshots. Validate-mode start+end trajectories naturally hit this — informational only, NOT publish-blocking.
 - `failure_summary_threshold` → ≥ 3 cells failed; investigate per-reason tally.
+
+### Stage 1b: Monitoring an in-flight sweep
+
+Phase 9 ships a re-runnable monitor at `scripts/python/monitor_m6_2_sweep.py` that combines three signals into a single status line:
+
+1. **Sweep progress** — parses the `[m6_2 *]` events from the tee'd log (Stage 1's `docs/benchmarks/m6_2-validate.sweep.log`).
+2. **Process liveness** — optionally `os.kill(pid, 0)` against the orchestrator PID.
+3. **Network throughput** — `psutil.net_io_counters` → `/proc/net/dev` → `netstat -ibn` fallback chain so you can confirm Modal traffic is flowing even when no new progress event has landed in the last interval.
+
+**One-shot status (use from cron / launchd):**
+
+```bash
+python3 scripts/python/monitor_m6_2_sweep.py \
+    --log docs/benchmarks/m6_2-validate.sweep.log \
+    --json-out docs/benchmarks/m6_2-token-budget-validate.json \
+    --once
+```
+
+**Continuous monitor (use from a second terminal — exits when the artifact JSON lands OR the PID dies):**
+
+```bash
+# Find the orchestrator PID (look for the python child of the tee pipeline).
+SWEEP_PID=$(pgrep -f "vllm_grpc_bench --m6_2-validate" | head -1)
+
+python3 scripts/python/monitor_m6_2_sweep.py \
+    --log docs/benchmarks/m6_2-validate.sweep.log \
+    --json-out docs/benchmarks/m6_2-token-budget-validate.json \
+    --pid "$SWEEP_PID" \
+    --interval 60
+```
+
+**Sample output line** (one per `--interval`, machine-parseable):
+
+```
+[2026-05-24T15:32:00Z] elapsed=2h 17m blocks=45/66 (68%) tuple=12/18 cell=chat_stream_c4×2048 \
+    recent_wall_p50=2050ms eta=1h 02m net_rate=1.84MB/s subprobe=pending alive=yes artifact=no
+```
+
+Fields:
+- `elapsed` — wall-clock since `SWEEP_START`.
+- `blocks=A/B (P%)` — measurement blocks done vs `expected_blocks` from the start banner.
+- `tuple=C/D` — `(cell, max_tokens)` tuples completed vs `expected_tuples`.
+- `cell` — current `(cell × max_tokens)` tuple being measured.
+- `recent_wall_p50` — `wall_p50_ms` from the last `BLOCK_DONE` event.
+- `eta` — linear extrapolation `elapsed × (expected − done) / done`. Stabilizes after the first 5-10 blocks.
+- `net_rate` — sustained MB/s over the last `--interval` seconds across the chosen interface (or all if `--iface` is omitted). `—` if no platform reader is available.
+- `subprobe` — `pending` → `running` → `done` as the sub-probe phase advances after the main sweep.
+- `alive` — `yes` / `no` / `unknown` (when `--pid` is omitted).
+- `artifact` — `yes` once `--json-out` exists AND `SWEEP_END` has been observed.
+
+**Optional flags**:
+
+- `--iface en0` (or `eth0`) — restrict the network-rate sample to one interface. Useful when the workstation has multiple active interfaces.
+- `--once` — single status line and exit. Skips the exit-condition checks; designed for scheduling via `cron`, `launchd`, or `ScheduleWakeup`.
+- `--interval 30` — increase polling frequency (default 60 s).
 
 ### Stage 2: Methodology gate — round-3 closure (CLOSED 2026-05-24)
 
@@ -141,17 +219,59 @@ No further clarify cycle is required before launching publish.
 ### Stage 3: Publish sweep (~13.2 h wall-clock, ~$20 Modal spend; capped at ≤ 16 h / ≤ $25)
 
 ```bash
-# Drive the publish sweep against Modal A10G eu-west-1 at the round-3-pinned n=40
-python -m vllm_grpc_bench --m6_2 \
+# Drive the publish sweep against Modal A10G eu-west-1 at the round-3-pinned n=40.
+# Same `2>&1 | tee <log>` pattern as Stage 1 so progress events stream live to
+# your terminal and persist for the monitor script + post-hoc forensics.
+uv run --project tools/benchmark python -m vllm_grpc_bench \
+    --m6_2 \
     --m6_2-n=40 \
     --m6_2-modal-region=eu-west-1 \
-    --m6_2-modal-token-env=MODAL_BENCH_TOKEN
+    --m6_2-modal-token-env=MODAL_BENCH_TOKEN \
+    2>&1 | tee docs/benchmarks/m6_2-publish.sweep.log
 
 # Expected: ~13.2 h wall-clock; ~$20 Modal spend; produces
 #   docs/benchmarks/m6_2-token-budget.md
 #   docs/benchmarks/m6_2-token-budget.json
-#   docs/benchmarks/m6_2-events.jsonl (appended; the validate sweep's events stay)
+#   docs/benchmarks/m6_2-events.jsonl   (appended; the validate sweep's events stay)
+#   docs/benchmarks/m6_2-publish.sweep.log (tee'd console + monitor input)
 # Caps: FR-023 ≤ 16 h, FR-021 ≤ $25.
+```
+
+**Monitoring the publish sweep** (same pattern as Stage 1b, against the publish log):
+
+```bash
+# Continuous monitor in a second terminal (auto-exits on artifact-present or PID-dead):
+SWEEP_PID=$(pgrep -f "vllm_grpc_bench --m6_2 " | head -1)
+python3 scripts/python/monitor_m6_2_sweep.py \
+    --log docs/benchmarks/m6_2-publish.sweep.log \
+    --json-out docs/benchmarks/m6_2-token-budget.json \
+    --pid "$SWEEP_PID" \
+    --interval 60
+
+# Or one-shot from cron every 10 minutes — append to a status log:
+python3 scripts/python/monitor_m6_2_sweep.py \
+    --log docs/benchmarks/m6_2-publish.sweep.log \
+    --json-out docs/benchmarks/m6_2-token-budget.json \
+    --once >> docs/benchmarks/m6_2-publish.monitor.log 2>&1
+```
+
+For a 13-hour publish sweep, a 60 s monitor interval gives ~780 status lines — small enough to retain. The publish sweep produces ~132 `BLOCK_DONE` events at the round-3-pinned n=40, plus 8-10 anchor blocks at the 4-h cadence per FR-031.
+
+**Backgrounded launch** (so the terminal that started the sweep can be closed):
+
+```bash
+# nohup + & runs the sweep detached. Capture the orchestrator PID for the monitor.
+nohup uv run --project tools/benchmark python -m vllm_grpc_bench \
+    --m6_2 --m6_2-n=40 --m6_2-modal-region=eu-west-1 \
+    > docs/benchmarks/m6_2-publish.sweep.log 2>&1 &
+SWEEP_PID=$!
+echo "Sweep launched: PID=$SWEEP_PID, log=docs/benchmarks/m6_2-publish.sweep.log"
+
+# Monitor from anywhere:
+python3 scripts/python/monitor_m6_2_sweep.py \
+    --log docs/benchmarks/m6_2-publish.sweep.log \
+    --json-out docs/benchmarks/m6_2-token-budget.json \
+    --pid "$SWEEP_PID" --interval 60
 ```
 
 **Publish sweep characteristics**:
