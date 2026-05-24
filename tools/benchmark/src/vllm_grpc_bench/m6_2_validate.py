@@ -58,6 +58,7 @@ from vllm_grpc_bench.m6_2_types import (
 )
 
 __all__ = [
+    "block_failed_with_endpoint_death",
     "build_artifact",
     "build_modal_anchor_dispatcher",
     "build_modal_block_dispatcher",
@@ -66,6 +67,7 @@ __all__ = [
     "derive_anchor_baseline_p50_ms",
     "derive_anchor_drift_threshold",
     "infer_output_path",
+    "is_modal_endpoint_death",
     "is_transient_modal_error",
     "load_m6_1_3_baseline",
     "make_null_anchor_validation",
@@ -224,6 +226,122 @@ def is_transient_modal_error(exc: BaseException) -> bool:
     return isinstance(
         exc,
         httpx.TransportError | httpx.TimeoutException | httpx.RemoteProtocolError,
+    )
+
+
+# T074a — Modal-preemption mid-sweep detection ------------------------------
+#
+# These signatures were observed in the 2026-05-24 13:44 UTC validate run
+# during the post-14:58 cascade after Modal preempted the worker container:
+#
+#   gRPC : "StatusCode.UNAVAILABLE failed to connect to all addresses;
+#           last error: UNKNOWN: ipv4:<old_modal_ip>:<port>: F[ailed to ...]"
+#   REST : httpx.ConnectError("All connection attempts failed")
+#   REST : httpx.ReadError(...)               # streaming read died mid-RPC
+#   REST : httpx.ConnectError(
+#               "[Errno 8] nodename nor servname provided, or not known")
+#                                             # DNS lookup of dead endpoint
+#
+# The block dispatcher uses :func:`is_modal_endpoint_death` together with
+# the "all N RPCs in this block failed" predicate to decide whether to
+# trigger T074b's mid-sweep recovery path. A single endpoint-death exception
+# in isolation could just be a transient connection blip; preemption is
+# diagnosed only when the WHOLE block fails with this shape (a real Modal
+# preemption kills every in-flight RPC against the dead container).
+
+_ENDPOINT_DEATH_GRPC_CODES: frozenset = frozenset(
+    {grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.CANCELLED}
+)
+"""gRPC status codes consistent with the underlying Modal container having
+disappeared. ``UNAVAILABLE`` is the dominant signal (the four-tuple
+"failed to connect to all addresses" pattern); ``CANCELLED`` shows up when
+the gRPC channel itself gives up mid-call after the connection dies."""
+
+
+_ENDPOINT_DEATH_MESSAGE_FRAGMENTS: tuple[str, ...] = (
+    "failed to connect to all addresses",
+    "all connection attempts failed",
+    "nodename nor servname provided",
+    "name or service not known",
+    "connection refused",
+    "connection reset by peer",
+    "no route to host",
+    "broken pipe",
+)
+"""Lower-cased substrings of error messages that indicate the remote
+endpoint is unreachable at the transport layer (TCP / DNS), as distinct
+from a slow-but-alive endpoint (DEADLINE_EXCEEDED / TimeoutException)."""
+
+
+def is_modal_endpoint_death(exc: BaseException) -> bool:
+    """Return ``True`` iff ``exc`` is shaped like a dead Modal endpoint
+    (worker preempted, container restarted on a different IP, DNS stale).
+
+    Distinct from :func:`is_transient_modal_error` — the latter classifies
+    *retry-eligible single-RPC errors*; this one classifies *whole-block
+    failure patterns that imply the endpoint URL needs to be refreshed*.
+
+    Recognises:
+
+    * ``grpc.RpcError`` with ``code() in {UNAVAILABLE, CANCELLED}`` AND
+      a message containing one of the transport-layer fragments listed in
+      :data:`_ENDPOINT_DEATH_MESSAGE_FRAGMENTS`. The plain UNAVAILABLE
+      check is intentionally LESS permissive than
+      :func:`is_transient_modal_error` — DEADLINE_EXCEEDED and the other
+      transient gRPC codes are alive-but-slow, not endpoint-dead.
+    * ``httpx.ConnectError`` — REST connection refused / DNS failure /
+      no route to host. All of these mean the cached endpoint URL no
+      longer points at a live container.
+    * ``httpx.ReadError`` whose payload contains an endpoint-death
+      fragment — streaming response was terminated mid-stream by the
+      container vanishing. (Plain ReadError without that fragment is
+      classified as transient, not endpoint-dead.)
+
+    Always returns ``False`` for non-network exceptions so that genuine
+    bugs (TypeError, KeyError, etc.) don't get masked as preemption.
+    """
+    if isinstance(exc, grpc.RpcError):
+        try:
+            code = exc.code()
+            details = (exc.details() or "").lower()
+        except AttributeError:
+            return False
+        if code not in _ENDPOINT_DEATH_GRPC_CODES:
+            return False
+        return any(frag in details for frag in _ENDPOINT_DEATH_MESSAGE_FRAGMENTS)
+    if isinstance(exc, httpx.ConnectError):
+        return True
+    if isinstance(exc, httpx.ReadError):
+        details = str(exc).lower()
+        return any(frag in details for frag in _ENDPOINT_DEATH_MESSAGE_FRAGMENTS)
+    return False
+
+
+def block_failed_with_endpoint_death(
+    results: list[Any], n: int
+) -> bool:
+    """Return ``True`` iff a whole block dispatched ``n`` RPCs and EVERY
+    one came back as an endpoint-death exception (per
+    :func:`is_modal_endpoint_death`).
+
+    The block dispatcher uses this predicate to decide whether to trigger
+    T074's recovery path: a single endpoint-death in isolation could just
+    be a transient blip absorbed by the FR-033 retry-once policy, but
+    EVERY RPC in the block failing the same way indicates the underlying
+    Modal container has actually disappeared and the dispatcher needs to
+    swap to a refreshed endpoint before continuing.
+
+    ``results`` is the raw ``asyncio.gather(..., return_exceptions=True)``
+    output — exceptions and successful ``RPCResult`` objects intermixed.
+    Returns ``False`` when ``len(results) != n`` (partial/over-collected
+    batch — handled as a normal block failure, not a preemption) and
+    when ``n <= 0`` (vacuous-truth guard — no RPCs means no signal).
+    """
+    if n <= 0 or len(results) != n:
+        return False
+    return all(
+        isinstance(r, BaseException) and is_modal_endpoint_death(r)
+        for r in results
     )
 
 
