@@ -14,6 +14,7 @@ generic transient errors stay on FR-033's retry-once policy.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import grpc
@@ -563,6 +564,270 @@ class TestBlockDispatcherRecoveryBudget:
         assert result.failed_reason is None, "second-recovery success must succeed"
         assert len(result.timings_ms) == 4
         assert dispatcher.preemption_events() == 2  # type: ignore[attr-defined]
+
+
+class TestBuildModalMakeDriverCallable:
+    """T074d: the production ``make_driver`` factory wraps
+    ``modal_endpoint.refresh_rest_grpc_urls`` (real Modal Dict polling) and
+    ``m6_2_rpc_driver.provide_m6_2_rpc_driver`` (real gRPC channel +
+    httpx client). Both are monkey-patched so the test exercises the
+    factory's lifecycle wiring without a Modal connection.
+    """
+
+    @pytest.mark.asyncio
+    async def test_initial_driver_returned_from_provide(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import contextlib as _contextlib
+
+        from vllm_grpc_bench.m6_2_validate import build_modal_make_driver_callable
+
+        opened_endpoints: list[Any] = []
+        closed_count = {"n": 0}
+
+        @_contextlib.asynccontextmanager
+        async def _fake_provide_driver(
+            eps: Any, *, seq_len: int, base_seed: int
+        ) -> Any:
+            opened_endpoints.append(eps)
+            driver = _RecordingDriver(yield_each=[])
+            try:
+                yield driver, {}
+            finally:
+                closed_count["n"] += 1
+
+        monkeypatch.setattr(
+            "vllm_grpc_bench.m6_2_rpc_driver.provide_m6_2_rpc_driver",
+            _fake_provide_driver,
+        )
+        initial_endpoints = SimpleNamespace(
+            grpc_url="host:1",
+            rest_url="https://rest.example/",
+            auth_token_env_var="X",
+            rest_plain_tcp_url="http://tcp.example/",
+            rest_https_edge_url="https://edge.example/",
+        )
+
+        async with _contextlib.AsyncExitStack() as outer_stack:
+            (
+                initial_driver,
+                _make_driver,
+                get_current_endpoints,
+            ) = await build_modal_make_driver_callable(
+                initial_endpoints=initial_endpoints,
+                seq_len=19,
+                base_seed=42,
+                outer_stack=outer_stack,
+            )
+            assert isinstance(initial_driver, _RecordingDriver)
+            assert opened_endpoints == [initial_endpoints]
+            assert get_current_endpoints() is initial_endpoints
+        # Outer stack closes the driver context at exit.
+        assert closed_count["n"] == 1
+
+    @pytest.mark.asyncio
+    async def test_make_driver_refreshes_and_swaps(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the Modal Dict publishes fresh URLs (gRPC URL differs),
+        make_driver closes the old driver context, opens a new one against
+        the refreshed URLs, and returns the new driver."""
+        import contextlib as _contextlib
+
+        from vllm_grpc_bench.m6_2_validate import build_modal_make_driver_callable
+
+        initial_endpoints = SimpleNamespace(
+            grpc_url="old-host:1",
+            rest_url="https://old.example/",
+            auth_token_env_var="X",
+            rest_plain_tcp_url="http://old.example/",
+            rest_https_edge_url="https://old.example/",
+        )
+        refreshed_endpoints = SimpleNamespace(
+            grpc_url="new-host:2",
+            rest_url="https://new.example/",
+            auth_token_env_var="X",
+            rest_plain_tcp_url="http://new.example/",
+            rest_https_edge_url="https://new.example/",
+        )
+
+        async def _fake_refresh(cached: Any, *, poll_timeout_s: float = 600.0) -> Any:
+            return refreshed_endpoints
+
+        opened_endpoints: list[Any] = []
+        close_log: list[int] = []
+
+        @_contextlib.asynccontextmanager
+        async def _fake_provide_driver(
+            eps: Any, *, seq_len: int, base_seed: int
+        ) -> Any:
+            opened_endpoints.append(eps)
+            idx = len(opened_endpoints) - 1
+            driver = _RecordingDriver(yield_each=[])
+            try:
+                yield driver, {}
+            finally:
+                close_log.append(idx)
+
+        monkeypatch.setattr(
+            "vllm_grpc_bench.modal_endpoint.refresh_rest_grpc_urls",
+            _fake_refresh,
+        )
+        monkeypatch.setattr(
+            "vllm_grpc_bench.m6_2_rpc_driver.provide_m6_2_rpc_driver",
+            _fake_provide_driver,
+        )
+
+        async with _contextlib.AsyncExitStack() as outer_stack:
+            (
+                initial_driver,
+                make_driver,
+                get_current_endpoints,
+            ) = await build_modal_make_driver_callable(
+                initial_endpoints=initial_endpoints,
+                seq_len=19,
+                base_seed=42,
+                outer_stack=outer_stack,
+            )
+            assert get_current_endpoints() is initial_endpoints
+
+            new_driver = await make_driver()
+            assert isinstance(new_driver, _RecordingDriver)
+            assert new_driver is not initial_driver
+            assert opened_endpoints == [initial_endpoints, refreshed_endpoints]
+            # Old (index 0) driver context closed by the recovery, new (1)
+            # still open until the outer stack exits.
+            assert close_log == [0]
+            assert get_current_endpoints() is refreshed_endpoints
+
+        # Outer stack exit closes the second driver context.
+        assert close_log == [0, 1]
+
+    @pytest.mark.asyncio
+    async def test_make_driver_raises_when_refresh_times_out(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When refresh_rest_grpc_urls returns None (no fresh URLs within
+        timeout), make_driver raises RuntimeError. The dispatcher wraps
+        that in PreemptionRecoveryFailed; either way the orchestrator
+        aborts cleanly."""
+        import contextlib as _contextlib
+
+        from vllm_grpc_bench.m6_2_validate import build_modal_make_driver_callable
+
+        initial_endpoints = SimpleNamespace(
+            grpc_url="host:1",
+            rest_url="https://rest.example/",
+            auth_token_env_var="X",
+            rest_plain_tcp_url="http://tcp.example/",
+            rest_https_edge_url="https://edge.example/",
+        )
+
+        async def _fake_refresh_returns_none(
+            cached: Any, *, poll_timeout_s: float = 600.0
+        ) -> Any:
+            return None
+
+        @_contextlib.asynccontextmanager
+        async def _fake_provide_driver(
+            eps: Any, *, seq_len: int, base_seed: int
+        ) -> Any:
+            yield _RecordingDriver(yield_each=[]), {}
+
+        monkeypatch.setattr(
+            "vllm_grpc_bench.modal_endpoint.refresh_rest_grpc_urls",
+            _fake_refresh_returns_none,
+        )
+        monkeypatch.setattr(
+            "vllm_grpc_bench.m6_2_rpc_driver.provide_m6_2_rpc_driver",
+            _fake_provide_driver,
+        )
+
+        async with _contextlib.AsyncExitStack() as outer_stack:
+            (
+                _initial,
+                make_driver,
+                _get,
+            ) = await build_modal_make_driver_callable(
+                initial_endpoints=initial_endpoints,
+                seq_len=19,
+                base_seed=42,
+                outer_stack=outer_stack,
+                refresh_timeout_s=1.0,
+            )
+            with pytest.raises(RuntimeError, match="no fresh URLs"):
+                await make_driver()
+
+    @pytest.mark.asyncio
+    async def test_make_driver_survives_multiple_recoveries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two consecutive preemption recoveries (the FR-026 budget) — both
+        succeed. Each one swaps in a fresh driver and the outer stack
+        accumulates the contexts for cleanup."""
+        import contextlib as _contextlib
+
+        from vllm_grpc_bench.m6_2_validate import build_modal_make_driver_callable
+
+        endpoints_seq = [
+            SimpleNamespace(
+                grpc_url=f"host-{i}:1",
+                rest_url=f"https://h{i}.example/",
+                auth_token_env_var="X",
+                rest_plain_tcp_url=f"http://h{i}.example/",
+                rest_https_edge_url=f"https://h{i}.example/",
+            )
+            for i in range(3)
+        ]
+        refresh_calls = iter(endpoints_seq[1:])
+
+        async def _fake_refresh(cached: Any, *, poll_timeout_s: float = 600.0) -> Any:
+            return next(refresh_calls)
+
+        opened: list[Any] = []
+        closed: list[int] = []
+
+        @_contextlib.asynccontextmanager
+        async def _fake_provide_driver(
+            eps: Any, *, seq_len: int, base_seed: int
+        ) -> Any:
+            idx = len(opened)
+            opened.append(eps)
+            try:
+                yield _RecordingDriver(yield_each=[]), {}
+            finally:
+                closed.append(idx)
+
+        monkeypatch.setattr(
+            "vllm_grpc_bench.modal_endpoint.refresh_rest_grpc_urls",
+            _fake_refresh,
+        )
+        monkeypatch.setattr(
+            "vllm_grpc_bench.m6_2_rpc_driver.provide_m6_2_rpc_driver",
+            _fake_provide_driver,
+        )
+
+        async with _contextlib.AsyncExitStack() as outer_stack:
+            (
+                _initial,
+                make_driver,
+                get_endpoints,
+            ) = await build_modal_make_driver_callable(
+                initial_endpoints=endpoints_seq[0],
+                seq_len=19,
+                base_seed=42,
+                outer_stack=outer_stack,
+            )
+            await make_driver()
+            assert get_endpoints() is endpoints_seq[1]
+            await make_driver()
+            assert get_endpoints() is endpoints_seq[2]
+            assert opened == endpoints_seq
+            # Two driver contexts closed during recovery; the third still
+            # open until the outer stack exit.
+            assert closed == [0, 1]
+        # Outer stack exit closes the final driver context.
+        assert closed == [0, 1, 2]
 
 
 class TestBlockDispatcherPreemptionEvents:

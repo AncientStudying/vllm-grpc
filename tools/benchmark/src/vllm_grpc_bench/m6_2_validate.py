@@ -66,6 +66,7 @@ __all__ = [
     "build_artifact",
     "build_modal_anchor_dispatcher",
     "build_modal_block_dispatcher",
+    "build_modal_make_driver_callable",
     "build_stub_anchor_dispatcher",
     "build_stub_dispatcher",
     "derive_anchor_baseline_p50_ms",
@@ -385,6 +386,102 @@ class PreemptionRecoveryFailed(RuntimeError):
     (Modal endpoint never came back online inside the recovery timeout).
     The orchestrator treats this the same as ``PreemptionBudgetExhausted``
     — clean abort, no further block attempts."""
+
+
+# T074d — Modal-side endpoint refresh factory --------------------------------
+
+
+async def build_modal_make_driver_callable(
+    *,
+    initial_endpoints: Any,  # modal_endpoint.RESTGRPCEndpoints
+    seq_len: int,
+    base_seed: int,
+    outer_stack: Any,  # contextlib.AsyncExitStack
+    refresh_timeout_s: float = 600.0,
+) -> tuple[Any, Any, Any]:
+    """Build the initial M6.2 driver + a ``make_driver`` callable wired
+    against ``modal_endpoint.refresh_rest_grpc_urls`` for T074b's recovery
+    loop.
+
+    Returns ``(initial_driver, make_driver, get_current_endpoints)``:
+
+    * ``initial_driver`` — the live M6.2 driver bound to ``initial_endpoints``.
+      Pass this as the first positional argument to
+      :func:`build_modal_block_dispatcher`.
+    * ``make_driver`` — async callable. When the block dispatcher detects
+      whole-block endpoint-death, it awaits this callable. The callable
+      polls the Modal handshake Dict via ``refresh_rest_grpc_urls`` for
+      fresh URLs (up to ``refresh_timeout_s`` — default 600 s, covers the
+      ~2–3 min Modal preemption-restart window plus headroom for the
+      vLLM EngineCore + weight-load), closes the dead driver context,
+      opens a new context against the refreshed URLs, and returns the
+      new driver. Raises :class:`PreemptionRecoveryFailed` upstream if
+      no fresh URLs appear within the timeout.
+    * ``get_current_endpoints`` — sync callable returning the most-recent
+      ``RESTGRPCEndpoints``. Useful for the topology probe whose
+      ``handshake_dict`` would otherwise capture the stale pre-preemption
+      URLs in its closure.
+
+    The factory tracks the driver-lifecycle stack on ``outer_stack`` so
+    every opened driver context is guaranteed to close cleanly at sweep
+    end, even after multiple preemption recoveries.
+    """
+    import contextlib
+
+    from vllm_grpc_bench.m6_2_rpc_driver import provide_m6_2_rpc_driver
+    from vllm_grpc_bench.modal_endpoint import refresh_rest_grpc_urls
+
+    # Open the initial driver context. The inner stack is tracked on
+    # ``outer_stack`` so any leftover driver contexts (from earlier
+    # recoveries) close cleanly when the sweep exits.
+    initial_inner_stack: Any = contextlib.AsyncExitStack()
+    await outer_stack.enter_async_context(initial_inner_stack)
+    initial_driver, _ = await initial_inner_stack.enter_async_context(
+        provide_m6_2_rpc_driver(
+            initial_endpoints, seq_len=seq_len, base_seed=base_seed
+        )
+    )
+
+    state: dict[str, Any] = {
+        "endpoints": initial_endpoints,
+        "driver_stack": initial_inner_stack,
+    }
+
+    async def make_driver() -> Any:
+        new_endpoints = await refresh_rest_grpc_urls(
+            state["endpoints"], poll_timeout_s=refresh_timeout_s
+        )
+        if new_endpoints is None:
+            raise RuntimeError(
+                f"Modal endpoint refresh: no fresh URLs published to the "
+                f"handshake Dict within {refresh_timeout_s:.0f} s. The "
+                f"preempted Modal worker may have failed to restart, or "
+                f"the new container's vLLM EngineCore is still initializing. "
+                f"The block dispatcher will surface this as "
+                f"PreemptionRecoveryFailed and the orchestrator will abort."
+            )
+        # Close the old driver context (best-effort — gRPC channel + httpx
+        # client may already be dead, but we want their cleanup hooks to
+        # run regardless).
+        with contextlib.suppress(Exception):
+            await state["driver_stack"].aclose()
+        # Open a new driver context against the refreshed URLs and register
+        # it on the outer stack so the sweep-end cleanup hits it too.
+        new_inner_stack: Any = contextlib.AsyncExitStack()
+        await outer_stack.enter_async_context(new_inner_stack)
+        new_driver, _ = await new_inner_stack.enter_async_context(
+            provide_m6_2_rpc_driver(
+                new_endpoints, seq_len=seq_len, base_seed=base_seed
+            )
+        )
+        state["driver_stack"] = new_inner_stack
+        state["endpoints"] = new_endpoints
+        return new_driver
+
+    def get_current_endpoints() -> Any:
+        return state["endpoints"]
+
+    return initial_driver, make_driver, get_current_endpoints
 
 
 def build_modal_block_dispatcher(
@@ -1276,7 +1373,6 @@ async def _run_modal_backed(
     from vllm_grpc_bench.m6_1_2_network_probe import run_topology_probe
     from vllm_grpc_bench.m6_1_seq_len import pin_seq_len_at_sweep_start
     from vllm_grpc_bench.m6_2_reporter import write_m6_2_report
-    from vllm_grpc_bench.m6_2_rpc_driver import provide_m6_2_rpc_driver
     from vllm_grpc_bench.m6_2_sweep import M6_2SweepInputs
     from vllm_grpc_bench.modal_endpoint import ModalDeployError, provide_m6_endpoint
 
@@ -1291,28 +1387,49 @@ async def _run_modal_backed(
     axis = _resolve_axis(sweep_mode)
 
     try:
-        async with (
-            provide_m6_endpoint(
-                region=modal_region,
-                token_env=token_env,
-                model_id=model_identifier,
-            ) as endpoints,
-            provide_m6_2_rpc_driver(
-                endpoints,
+        import contextlib
+
+        async with contextlib.AsyncExitStack() as outer_stack:
+            endpoints = await outer_stack.enter_async_context(
+                provide_m6_endpoint(
+                    region=modal_region,
+                    token_env=token_env,
+                    model_id=model_identifier,
+                )
+            )
+            # T074d — build the initial driver + make_driver factory in one
+            # call. The outer_stack tracks every driver context (including
+            # post-preemption refreshed ones) so sweep-end cleanup hits all
+            # of them.
+            (
+                driver,
+                make_driver,
+                get_current_endpoints,
+            ) = await build_modal_make_driver_callable(
+                initial_endpoints=endpoints,
                 seq_len=pinned_seq_len,
                 base_seed=base_seed,
-            ) as (driver, _rtt),
-        ):
-            handshake_dict: dict[str, object] = {
-                "rest_https_edge_url": endpoints.rest_https_edge_url or "",
-                "rest_plain_tcp_url": endpoints.rest_plain_tcp_url or "",
-                "grpc": endpoints.grpc_url,
-            }
+                outer_stack=outer_stack,
+            )
+
             del replace  # imported above for parity with M6.1.3; unused here
-            block_dispatcher = build_modal_block_dispatcher(driver, base_seed=base_seed)
+            block_dispatcher = build_modal_block_dispatcher(
+                driver,
+                base_seed=base_seed,
+                make_driver=make_driver,
+            )
             anchor_dispatcher = build_modal_anchor_dispatcher(driver)
 
             async def _topology_probe() -> dict[M6_1_2CohortKind, Any]:
+                # T074d: re-read endpoints each call so a topology probe
+                # that runs AFTER a preemption recovery sees the refreshed
+                # URLs instead of the stale closure-captured ones.
+                current = get_current_endpoints()
+                handshake_dict: dict[str, object] = {
+                    "rest_https_edge_url": current.rest_https_edge_url or "",
+                    "rest_plain_tcp_url": current.rest_plain_tcp_url or "",
+                    "grpc": current.grpc_url,
+                }
                 return await run_topology_probe(handshake_dict)
 
             inputs = M6_2SweepInputs(
@@ -1343,6 +1460,27 @@ async def _run_modal_backed(
             flush=True,
         )
         return 2
+    except PreemptionBudgetExhausted as exc:
+        # T074c: the FR-026 preemption-recurrence threshold was exhausted
+        # by sustained Modal-side instability. The sweep aborts cleanly
+        # rather than spinning forever. Return a distinct non-zero RC so
+        # the operator (and the monitor script) can tell this apart from
+        # a generic sweep failure.
+        print(
+            f"[m6_2_validate] sweep aborted: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 6
+    except PreemptionRecoveryFailed as exc:
+        # T074c: make_driver() exhausted its refresh_timeout_s without
+        # finding fresh URLs in the Modal Dict. Likely Modal-side outage.
+        print(
+            f"[m6_2_validate] sweep aborted: preemption recovery failed: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 7
     except Exception as exc:  # noqa: BLE001
         print(
             f"[m6_2_validate] sweep failed: {type(exc).__name__}: {exc}",
