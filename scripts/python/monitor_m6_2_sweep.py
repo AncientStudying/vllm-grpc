@@ -94,6 +94,55 @@ def _parse_utc(ts: str) -> _dt.datetime | None:
         return None
 
 
+def compute_artifact_present(
+    json_path: Path | None,
+    sweep_start_utc: str | None,
+) -> bool:
+    """Return ``True`` iff the artifact JSON at ``json_path`` was written
+    AFTER the current sweep's ``SWEEP_START`` event.
+
+    T075 fix: the pre-T075 monitor checked only ``path.exists()``, which
+    false-positived when a previous (e.g. failed / preempted) sweep had
+    left a stale artifact on disk. In ``--interval`` mode the auto-exit
+    condition (``state.sweep_end_utc is not None AND artifact_present``)
+    would then fire prematurely on a fresh sweep that hadn't yet
+    overwritten the stale file — the operator would think the sweep was
+    done when it was actually still in the sub-probe / artifact-write
+    phase.
+
+    The post-T075 predicate compares the file's mtime against the
+    SWEEP_START UTC timestamp parsed from the live progress log. A file
+    that predates the sweep's start by even one second is treated as
+    stale and reports ``False``.
+
+    Returns ``False`` when:
+
+    * ``json_path`` is ``None`` (no artifact requested).
+    * The file doesn't exist yet.
+    * ``sweep_start_utc`` is ``None`` (the SWEEP_START event hasn't
+      landed in the log yet — the monitor was launched before the
+      sweep started its work).
+    * The file's mtime predates the sweep_start_utc (stale leftover
+      from a previous run).
+    * The file's mtime is readable but the sweep_start_utc string is
+      unparseable (defensive — refuse to claim presence on malformed
+      input).
+    """
+    if json_path is None or not json_path.exists():
+        return False
+    if sweep_start_utc is None:
+        return False
+    start = _parse_utc(sweep_start_utc)
+    if start is None:
+        return False
+    try:
+        mtime = json_path.stat().st_mtime
+    except OSError:
+        return False
+    start_unix = start.timestamp()
+    return mtime > start_unix
+
+
 def _fmt_duration(seconds: float | None) -> str:
     if seconds is None or seconds < 0:
         return "—"
@@ -405,8 +454,17 @@ def main(argv: list[str] | None = None) -> int:
         last_net_ts = now_perf
 
         alive = is_process_alive(args.pid) if args.pid else None
+        # T075: artifact_present must be true ONLY when the on-disk file
+        # was written AFTER the current sweep's SWEEP_START event.
+        # ``compute_artifact_present`` enforces the mtime > start check so
+        # a stale leftover from a previous (e.g. preempted) sweep doesn't
+        # trip the --interval auto-exit prematurely. The
+        # ``sweep_end_utc is not None`` gate is preserved so a fresh-but-
+        # incomplete artifact (mid-write race) still reports False until
+        # the sweep itself has signalled completion.
         artifact_present = (
-            args.json_out is not None and args.json_out.exists() and state.sweep_end_utc is not None
+            state.sweep_end_utc is not None
+            and compute_artifact_present(args.json_out, state.sweep_start_utc)
         )
 
         line = format_status_line(
