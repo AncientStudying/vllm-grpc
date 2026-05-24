@@ -206,6 +206,71 @@ Fields:
 - `--once` — single status line and exit. Skips the exit-condition checks; designed for scheduling via `cron`, `launchd`, or `ScheduleWakeup`.
 - `--interval 30` — increase polling frequency (default 60 s).
 
+### Stage 1c: Preemption recovery (T074 / FR-026)
+
+Modal's eu-west-1 workers are preemptible — the cloud reclaims the GPU when capacity is needed elsewhere. The 2026-05-24 13:44 UTC validate run died exactly this way at the 74-minute mark, losing 48 of 66 measurement blocks. T074's recovery loop closes that gap: when the orchestrator detects a Modal worker is gone, it pauses, waits for the restarted container to publish fresh endpoint URLs to the Modal handshake Dict, swaps the dead gRPC channel + REST client for fresh ones, and retries the failed block.
+
+**Expected event sequence on preemption** (the monitor script + the tee'd log both show these in real-time):
+
+```
+[ts] [m6_2 BLOCK_DONE] i=18/66 cell=embed_c4 cohort=tuned_grpc_multiplexed max_tokens=2048 \
+        duration_s=149.8 wall_p50_ms=73892.9 failed=no retry=False
+[ts] [m6_2 TUPLE_END]  i=6/18 cell=embed_c4 max_tokens=2048 duration_s=151.2
+
+<<< Modal preempts the worker; new container begins restarting ~2-3 min >>>
+
+[ts] [m6_2 PREEMPTION_DETECTED] cell=embed_c8 cohort=default_grpc max_tokens=2048 attempt=1/2
+[ts] [m6_2 PREEMPTION_RECOVERED] cell=embed_c8 cohort=default_grpc max_tokens=2048 \
+        attempt=1/2 recovery_s=183.2
+[ts] [m6_2 BLOCK_DONE] i=19/66 cell=embed_c8 cohort=default_grpc max_tokens=2048 \
+        duration_s=81.5 wall_p50_ms=80123.4 failed=no retry=False
+```
+
+The same event vocabulary applies to anchor preemption — the events carry `phase=anchor`:
+
+```
+[ts] [m6_2 PREEMPTION_DETECTED] phase=anchor cohort=default_grpc attempt=1/2
+[ts] [m6_2 PREEMPTION_RECOVERED] phase=anchor cohort=default_grpc attempt=1/2 recovery_s=187.4
+```
+
+**Budget enforcement (FR-026)** — the recovery loop is bounded:
+
+- Each dispatcher (block + anchor) tracks its own `preemption_events` counter.
+- After `M6_2_PREEMPTION_RECURRENCE_THRESHOLD = 2` recoveries, the next detected preemption raises `PreemptionBudgetExhausted` → orchestrator exits with **RC 6**:
+
+  ```
+  [ts] [m6_2 PREEMPTION_BUDGET_EXHAUSTED] cell=... cohort=... attempt=3/2
+  [m6_2_validate] sweep aborted: Modal preemption recurrence threshold (2) exhausted ...
+  ```
+
+- If the Modal Dict never publishes fresh URLs within the recovery timeout (default 600 s), `make_driver` raises `PreemptionRecoveryFailed` → orchestrator exits with **RC 7**:
+
+  ```
+  [ts] [m6_2 PREEMPTION_RECOVERY_FAILED] cell=... attempt=1/2 error=RuntimeError
+  [m6_2_validate] sweep aborted: preemption recovery failed: Modal endpoint refresh ...
+  ```
+
+Both abort codes are distinct from the generic sweep-failure RC 5 and the Modal-deploy-failure RC 2, so the operator + cron can disambiguate.
+
+**Post-sweep audit** — the published artifact's `run_meta` records the recovery count:
+
+```json
+{
+  "run_meta": {
+    "preemption_events": 1,
+    "...": "..."
+  }
+}
+```
+
+Rendered in the markdown run_meta block as `- preemption_events: \`1\``. A value of `0` means the sweep ran without preemption; non-zero values indicate the sweep survived `N` Modal worker restarts via T074's recovery loop. The counter is capped at `M6_2_PREEMPTION_RECURRENCE_THRESHOLD` per dispatcher (so the publish sweep maximum is 4 — 2 block + 2 anchor — before the budget-exhausted abort fires).
+
+**Operator playbook on RC 6 / 7**:
+
+1. **RC 6 (budget exhausted)** — Modal's eu-west-1 region was thrashing. Wait 30-60 min and re-run. The accumulated cost is the wasted Modal time × $1.51/h; the published partial artifact (if any) records `preemption_events=2` for forensics.
+2. **RC 7 (refresh timeout)** — the restarted Modal worker never came back online within 600 s. Likely a Modal regional incident. Check Modal's status page; re-run when the region is healthy.
+3. **Healthy sweep with non-zero `preemption_events`** — the recovery worked; the artifact is publishable. Inspect the affected blocks for unusual wall_p50 (the recovered block's RPCs ran on a fresh container's first invocations, so they may carry warmup jitter — the round-8 C1 warmup-suppression rule handles this on the anchor trajectory; main-sweep blocks at high `max_tokens` already amortise warmup over n=20 RPCs).
+
 ### Stage 2: Methodology gate — round-3 closure (CLOSED 2026-05-24)
 
 Round-3 closure landed 2026-05-24 against the post-fix validate sweep. The publish-mode parameters are now pinned in the spec and code:
