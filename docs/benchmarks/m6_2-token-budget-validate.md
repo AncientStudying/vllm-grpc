@@ -1,6 +1,6 @@
 # M6.2 — Token-Budget Characterization
 
-- run_id: `2026-05-24T00:00:04Z-362d2103`
+- run_id: `2026-05-24T16:17:01Z-e2336315`
 - sweep_mode: `validate`
 - modal_region: `eu-west-1`
 - model: `Qwen/Qwen3-8B`
@@ -9,41 +9,19 @@
 - iteration_discipline_verified: `True`
 - n_per_point: `20`
 - validate_axis_subset: `[10, 50, 2048]`
-- wall_clock_start_utc: `2026-05-24T00:00:04Z`
-- wall_clock_end_utc: `2026-05-24T03:34:06Z`
-- total_sweep_hours: `3.567`
+- wall_clock_start_utc: `2026-05-24T16:17:01Z`
+- wall_clock_end_utc: `2026-05-24T19:54:54Z`
+- total_sweep_hours: `3.631`
 - chat_corpus_sha256: `4442302df439fdc1967e9fb48a88910cee5d0f712592e733d47bdbbc1e0374f1`
 - embed_corpus_sha256: `19a3b43bc34017615d175ea914b362f9d26a39bd2742b27af7e42f2b97df38a0`
 - sub_probe_ran: `True`
-- run_started_at: `2026-05-24T00:00:04Z`
-- run_completed_at: `2026-05-24T03:34:06Z`
+- preemption_events: `0`
+- run_started_at: `2026-05-24T16:17:01Z`
+- run_completed_at: `2026-05-24T19:54:54Z`
 
 > **WARNING (null_anchor_drift)**: ≥ 2 of the 22 cross-checkable null-anchor cells drifted against the M6.1.3 baseline (FR-014 / SC-004). Operator decides publish vs rerun.
-
-## Operator notes (post-hoc annotation, 2026-05-24)
-
-_Hand annotation added after artifact publication; will be overwritten if `render_markdown` regenerates this file. Source: investigation logged in session memory + this report's per-cell records._
-
-**Null-anchor drift (FR-014 / SC-004): accepted.** The 5 drifted cells (3 FAIL / 2 WARN at `max_tokens=50`) all drift in the *negative* direction relative to the M6.1.3 baseline — i.e., post-fix latencies are faster. This is consistent with the M6.1.3 reference having been collected before the asyncio.Semaphore concurrency fix (`f3e0989`), so the baseline itself is the stale measurement. Operator decision: **accept the new baseline**; the post-fix numbers are the truth. Re-baselining of `docs/benchmarks/m6_1_3-attribution-closure.json` is deferred to a follow-up task (not blocking publish).
-
-**Prompt-driven early EOS at `max_tokens=2048` (not a system anomaly).** Two cells in the budget table appear ~2–8× faster than their cohort peers at the same `(cell, max_tokens)`:
-
-- `chat_stream_c8.default_grpc[2048]`: wall_p50 = **10 341 ms** (peers at c8/2048: 73–80 s).
-- `chat_stream_c4.tuned_grpc_multiplexed[2048]`: wall_p50 = **37 096 ms** (peers at c4/2048: 62–77 s).
-
-These are **not** protocol-level pathologies. Root cause: in `natural_eos` regime each block draws one corpus prompt (via `iter_idx = len(measurements)` in `m6_2_sweep.py:546`, routed through cohort-blind `assign_symmetric_prompt(iter_idx, cohort, corpus)`). With `iteration_order="cohort_innermost_block"`, adjacent cohort blocks for the same `(cell, max_tokens)` draw *consecutive* corpus indices — different prompts. The two flagged cells happened to draw bucket=`short` / "stub" prompts that elicit early natural-EOS termination:
-
-- `corpus_idx=62` ("you are my business consultant\nAnswer in English…") → ~273 output tokens at TPOT 37.5 ms ≈ 10.3 s.
-- `corpus_idx=51` ("Write a marketing email to manufacturers promoting Alcumus ISOQAR…") → ~993 output tokens at TPOT 37.3 ms ≈ 37 s.
-
-Cross-checks that confirm "no system bug":
-
-- TPOT is uniform across all c8/2048 cohorts (37.54 / 39.10 / 39.16 / 39.33 ms) — generation speed is protocol-invariant.
-- Block wall-clock matches the per-RPC math (20 RPCs ÷ c=8 × wall_p50 ≈ block window).
-- `failed_reason: null`, `retry_attempted: false`, `clock_anomaly: false` on both flagged cells.
-- The KV-pressure sub-probe (`ignore_eos=True`, see § "KV-cache pressure") shows clean near-linear 2048/1024 ratios (1.80–2.05) across all four chat cohorts — i.e., when prompt content is held constant via forced cap, no cohort anomaly exists.
-
-**Reader guidance.** At `max_tokens=2048` in `natural_eos` regime, per-cohort wall_p50 confounds protocol cost with prompt-content distribution (n=1 prompt per block × 4 cohorts ⇒ 4 different prompts). Use either the TPOT curve or the KV-pressure sub-probe for cohort-axis protocol comparison at 2048; treat the wall_p50 row at 2048 as a *distribution-of-prompts* upper bound, not a like-for-like protocol benchmark. Follow-ups recorded for publish-mode: (a) emit `implied_output_tokens` per block in JSON for direct audit; (b) consider mirroring the 2048 budget row under `ignore_eos=True` for clean cohort comparison.
+>
+> **WARNING (trajectory_insufficient_snapshots)**: At least one cohort has fewer than 2 post-warmup anchor snapshots (C1 round-8 amendment, FR-031). The intra-sweep drift verdict for that cohort was suppressed. Soft diagnostic — informational only, validate-mode start+end trajectories naturally hit this fallback.
 
 ## Production latency budget
 
@@ -51,138 +29,149 @@ Validate-mode axis subset is `{10, 50, 2048}`; interior caps (`{256, 512, 1024}`
 
 | cell | cohort | max_tokens | n | wall_p50_ms | wall_p95_ms | wall_p99_ms | prompt_source | regime | corpus_idx | status |
 |------|--------|-----------:|---:|------------:|------------:|------------:|---------------|--------|-----------:|--------|
-| `embed_c1` | `default_grpc` | 10 | 20 | 580.64 | 673.73 | 836.58 | `synthetic_random_tensor` | `natural_eos` | — | ok |
-| `embed_c1` | `default_grpc` | 50 | 20 | 1891.56 | 2004.18 | 2011.10 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c1` | `default_grpc` | 10 | 20 | 576.36 | 874.53 | 878.36 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c1` | `default_grpc` | 50 | 20 | 1933.81 | 1943.46 | 1952.52 | `synthetic_random_tensor` | `natural_eos` | — | ok |
 | `embed_c1` | `default_grpc` | 256 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c1` | `default_grpc` | 512 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c1` | `default_grpc` | 1024 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
-| `embed_c1` | `default_grpc` | 2048 | 20 | 68048.49 | 68293.13 | 68298.57 | `corpus_sharegpt_embed` | `natural_eos` | 6 | ok |
-| `embed_c1` | `rest_https_edge` | 10 | 20 | 605.17 | 677.07 | 1226.35 | `synthetic_random_tensor` | `natural_eos` | — | ok |
-| `embed_c1` | `rest_https_edge` | 50 | 20 | 1935.50 | 2009.76 | 2542.17 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c1` | `default_grpc` | 2048 | 20 | 70615.65 | 70800.97 | 70879.16 | `corpus_sharegpt_embed` | `natural_eos` | 6 | ok |
+| `embed_c1` | `rest_https_edge` | 10 | 20 | 499.42 | 570.68 | 708.20 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c1` | `rest_https_edge` | 50 | 20 | 1939.73 | 2093.36 | 2105.59 | `synthetic_random_tensor` | `natural_eos` | — | ok |
 | `embed_c1` | `rest_https_edge` | 256 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c1` | `rest_https_edge` | 512 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c1` | `rest_https_edge` | 1024 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
-| `embed_c1` | `rest_https_edge` | 2048 | 20 | 62659.73 | 63528.93 | 63638.50 | `corpus_sharegpt_embed` | `natural_eos` | 7 | ok |
-| `embed_c1` | `rest_plain_tcp` | 10 | 20 | 710.10 | 846.11 | 1339.67 | `synthetic_random_tensor` | `natural_eos` | — | ok |
-| `embed_c1` | `rest_plain_tcp` | 50 | 20 | 2045.78 | 2272.93 | 2630.70 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c1` | `rest_https_edge` | 2048 | 20 | 64833.37 | 65225.21 | 65404.68 | `corpus_sharegpt_embed` | `natural_eos` | 7 | ok |
+| `embed_c1` | `rest_plain_tcp` | 10 | 20 | 530.47 | 622.31 | 719.81 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c1` | `rest_plain_tcp` | 50 | 20 | 1996.26 | 2361.88 | 2592.19 | `synthetic_random_tensor` | `natural_eos` | — | ok |
 | `embed_c1` | `rest_plain_tcp` | 256 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c1` | `rest_plain_tcp` | 512 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c1` | `rest_plain_tcp` | 1024 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
-| `embed_c1` | `rest_plain_tcp` | 2048 | 20 | 69625.42 | 69999.97 | 70000.45 | `corpus_sharegpt_embed` | `natural_eos` | 8 | ok |
-| `embed_c4` | `default_grpc` | 10 | 20 | 733.55 | 1776.82 | 1874.92 | `synthetic_random_tensor` | `natural_eos` | — | ok |
-| `embed_c4` | `default_grpc` | 50 | 20 | 2143.27 | 2235.10 | 2237.41 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c1` | `rest_plain_tcp` | 2048 | 20 | 72525.79 | 72728.68 | 72735.96 | `corpus_sharegpt_embed` | `natural_eos` | 8 | ok |
+| `embed_c4` | `default_grpc` | 10 | 20 | 573.59 | 1115.42 | 1147.26 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c4` | `default_grpc` | 50 | 20 | 2058.67 | 2115.76 | 2144.56 | `synthetic_random_tensor` | `natural_eos` | — | ok |
 | `embed_c4` | `default_grpc` | 256 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c4` | `default_grpc` | 512 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c4` | `default_grpc` | 1024 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
-| `embed_c4` | `default_grpc` | 2048 | 20 | 73427.71 | 74429.88 | 74594.49 | `corpus_sharegpt_embed` | `natural_eos` | 17 | ok |
-| `embed_c4` | `rest_https_edge` | 10 | 20 | 607.53 | 1472.86 | 1477.67 | `synthetic_random_tensor` | `natural_eos` | — | ok |
-| `embed_c4` | `rest_https_edge` | 50 | 20 | 2086.83 | 2861.94 | 2911.28 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c4` | `default_grpc` | 2048 | 20 | 74348.80 | 78213.64 | 78298.48 | `corpus_sharegpt_embed` | `natural_eos` | 17 | ok |
+| `embed_c4` | `rest_https_edge` | 10 | 20 | 628.07 | 893.49 | 1030.04 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c4` | `rest_https_edge` | 50 | 20 | 2026.99 | 2276.73 | 2283.54 | `synthetic_random_tensor` | `natural_eos` | — | ok |
 | `embed_c4` | `rest_https_edge` | 256 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c4` | `rest_https_edge` | 512 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c4` | `rest_https_edge` | 1024 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
-| `embed_c4` | `rest_https_edge` | 2048 | 20 | 77413.06 | 77528.14 | 77590.34 | `corpus_sharegpt_embed` | `natural_eos` | 19 | ok |
-| `embed_c4` | `rest_plain_tcp` | 10 | 20 | 785.98 | 1505.03 | 1572.21 | `synthetic_random_tensor` | `natural_eos` | — | ok |
-| `embed_c4` | `rest_plain_tcp` | 50 | 20 | 2256.40 | 2983.60 | 3016.84 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c4` | `rest_https_edge` | 2048 | 20 | 78037.16 | 78291.40 | 78308.19 | `corpus_sharegpt_embed` | `natural_eos` | 19 | ok |
+| `embed_c4` | `rest_plain_tcp` | 10 | 20 | 595.97 | 938.85 | 982.56 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c4` | `rest_plain_tcp` | 50 | 20 | 2112.10 | 2315.81 | 2328.66 | `synthetic_random_tensor` | `natural_eos` | — | ok |
 | `embed_c4` | `rest_plain_tcp` | 256 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c4` | `rest_plain_tcp` | 512 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c4` | `rest_plain_tcp` | 1024 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
-| `embed_c4` | `rest_plain_tcp` | 2048 | 20 | 77876.50 | 78355.53 | 78462.39 | `corpus_sharegpt_embed` | `natural_eos` | 20 | ok |
-| `embed_c4` | `tuned_grpc_multiplexed` | 10 | 20 | 697.36 | 1728.56 | 1774.00 | `synthetic_random_tensor` | `natural_eos` | — | ok |
-| `embed_c4` | `tuned_grpc_multiplexed` | 50 | 20 | 2145.52 | 2193.36 | 2285.47 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c4` | `rest_plain_tcp` | 2048 | 20 | 78032.75 | 78307.96 | 78308.46 | `corpus_sharegpt_embed` | `natural_eos` | 20 | ok |
+| `embed_c4` | `tuned_grpc_multiplexed` | 10 | 20 | 549.23 | 988.53 | 1020.74 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c4` | `tuned_grpc_multiplexed` | 50 | 20 | 2119.41 | 2353.92 | 2419.05 | `synthetic_random_tensor` | `natural_eos` | — | ok |
 | `embed_c4` | `tuned_grpc_multiplexed` | 256 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c4` | `tuned_grpc_multiplexed` | 512 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c4` | `tuned_grpc_multiplexed` | 1024 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
-| `embed_c4` | `tuned_grpc_multiplexed` | 2048 | 20 | 77396.22 | 78182.48 | 78183.11 | `corpus_sharegpt_embed` | `natural_eos` | 18 | ok |
-| `embed_c8` | `default_grpc` | 10 | 20 | 768.77 | 1541.78 | 1646.54 | `synthetic_random_tensor` | `natural_eos` | — | ok |
-| `embed_c8` | `default_grpc` | 50 | 20 | 2409.85 | 3177.26 | 3180.43 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c4` | `tuned_grpc_multiplexed` | 2048 | 20 | 77864.87 | 78480.07 | 78511.86 | `corpus_sharegpt_embed` | `natural_eos` | 18 | ok |
+| `embed_c8` | `default_grpc` | 10 | 20 | 1111.59 | 1670.16 | 1704.94 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c8` | `default_grpc` | 50 | 20 | 2244.73 | 2919.73 | 3193.65 | `synthetic_random_tensor` | `natural_eos` | — | ok |
 | `embed_c8` | `default_grpc` | 256 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c8` | `default_grpc` | 512 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c8` | `default_grpc` | 1024 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
-| `embed_c8` | `default_grpc` | 2048 | 20 | 81120.70 | 81215.55 | 81289.78 | `corpus_sharegpt_embed` | `natural_eos` | 29 | ok |
-| `embed_c8` | `rest_https_edge` | 10 | 20 | 818.04 | 1551.13 | 1559.28 | `synthetic_random_tensor` | `natural_eos` | — | ok |
-| `embed_c8` | `rest_https_edge` | 50 | 20 | 2373.46 | 2974.57 | 2983.00 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c8` | `default_grpc` | 2048 | 20 | 80981.84 | 81137.62 | 81232.15 | `corpus_sharegpt_embed` | `natural_eos` | 29 | ok |
+| `embed_c8` | `rest_https_edge` | 10 | 20 | 723.02 | 1038.24 | 1041.04 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c8` | `rest_https_edge` | 50 | 20 | 2213.16 | 2775.43 | 2980.01 | `synthetic_random_tensor` | `natural_eos` | — | ok |
 | `embed_c8` | `rest_https_edge` | 256 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c8` | `rest_https_edge` | 512 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c8` | `rest_https_edge` | 1024 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
-| `embed_c8` | `rest_https_edge` | 2048 | 20 | 80085.21 | 81167.77 | 81177.98 | `corpus_sharegpt_embed` | `natural_eos` | 31 | ok |
-| `embed_c8` | `rest_plain_tcp` | 10 | 20 | 967.64 | 1614.95 | 1718.75 | `synthetic_random_tensor` | `natural_eos` | — | ok |
-| `embed_c8` | `rest_plain_tcp` | 50 | 20 | 2451.95 | 3147.44 | 3150.02 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c8` | `rest_https_edge` | 2048 | 20 | 80528.00 | 81249.07 | 81329.14 | `corpus_sharegpt_embed` | `natural_eos` | 31 | ok |
+| `embed_c8` | `rest_plain_tcp` | 10 | 20 | 933.50 | 1093.20 | 1608.52 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c8` | `rest_plain_tcp` | 50 | 20 | 2292.00 | 2532.00 | 2593.07 | `synthetic_random_tensor` | `natural_eos` | — | ok |
 | `embed_c8` | `rest_plain_tcp` | 256 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c8` | `rest_plain_tcp` | 512 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c8` | `rest_plain_tcp` | 1024 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
-| `embed_c8` | `rest_plain_tcp` | 2048 | 20 | 78017.38 | 82648.32 | 82794.55 | `corpus_sharegpt_embed` | `natural_eos` | 32 | ok |
-| `embed_c8` | `tuned_grpc_multiplexed` | 10 | 20 | 769.34 | 1527.65 | 1539.36 | `synthetic_random_tensor` | `natural_eos` | — | ok |
-| `embed_c8` | `tuned_grpc_multiplexed` | 50 | 20 | 2430.45 | 3044.54 | 3055.65 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c8` | `rest_plain_tcp` | 2048 | 20 | 78549.70 | 81072.82 | 81337.88 | `corpus_sharegpt_embed` | `natural_eos` | 32 | ok |
+| `embed_c8` | `tuned_grpc_multiplexed` | 10 | 20 | 772.21 | 1753.82 | 1784.12 | `synthetic_random_tensor` | `natural_eos` | — | ok |
+| `embed_c8` | `tuned_grpc_multiplexed` | 50 | 20 | 2158.28 | 2410.59 | 2468.04 | `synthetic_random_tensor` | `natural_eos` | — | ok |
 | `embed_c8` | `tuned_grpc_multiplexed` | 256 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c8` | `tuned_grpc_multiplexed` | 512 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
 | `embed_c8` | `tuned_grpc_multiplexed` | 1024 | 0 | — | — | — | `corpus_sharegpt_embed` | `natural_eos` | — | `not_validated` |
-| `embed_c8` | `tuned_grpc_multiplexed` | 2048 | 20 | 80875.75 | 81444.60 | 81545.22 | `corpus_sharegpt_embed` | `natural_eos` | 30 | ok |
-| `chat_stream_c1` | `default_grpc` | 10 | 20 | 611.89 | 626.49 | 705.57 | `synthetic_seed_derived` | `natural_eos` | — | ok |
-| `chat_stream_c1` | `default_grpc` | 50 | 20 | 1908.29 | 1983.25 | 1983.66 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `embed_c8` | `tuned_grpc_multiplexed` | 2048 | 20 | 81281.55 | 81817.98 | 81911.90 | `corpus_sharegpt_embed` | `natural_eos` | 30 | ok |
+| `chat_stream_c1` | `default_grpc` | 10 | 20 | 452.70 | 481.67 | 616.88 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c1` | `default_grpc` | 50 | 20 | 1870.01 | 1905.67 | 1907.51 | `synthetic_seed_derived` | `natural_eos` | — | ok |
 | `chat_stream_c1` | `default_grpc` | 256 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c1` | `default_grpc` | 512 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c1` | `default_grpc` | 1024 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
-| `chat_stream_c1` | `default_grpc` | 2048 | 20 | 47288.82 | 68307.36 | 68518.42 | `corpus_sharegpt` | `natural_eos` | 39 | ok |
-| `chat_stream_c1` | `rest_https_edge` | 10 | 20 | 479.53 | 505.19 | 753.93 | `synthetic_seed_derived` | `natural_eos` | — | ok |
-| `chat_stream_c1` | `rest_https_edge` | 50 | 20 | 1825.46 | 1860.11 | 2052.01 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c1` | `default_grpc` | 2048 | 20 | 48690.13 | 71187.63 | 71396.04 | `corpus_sharegpt` | `natural_eos` | 39 | ok |
+| `chat_stream_c1` | `rest_https_edge` | 10 | 20 | 425.16 | 447.43 | 555.03 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c1` | `rest_https_edge` | 50 | 20 | 1837.55 | 1890.99 | 1913.08 | `synthetic_seed_derived` | `natural_eos` | — | ok |
 | `chat_stream_c1` | `rest_https_edge` | 256 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c1` | `rest_https_edge` | 512 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c1` | `rest_https_edge` | 1024 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
-| `chat_stream_c1` | `rest_https_edge` | 2048 | 20 | 69265.04 | 69443.80 | 69568.08 | `corpus_sharegpt` | `natural_eos` | 40 | ok |
-| `chat_stream_c1` | `rest_plain_tcp` | 10 | 20 | 618.79 | 632.45 | 739.54 | `synthetic_seed_derived` | `natural_eos` | — | ok |
-| `chat_stream_c1` | `rest_plain_tcp` | 50 | 20 | 1868.34 | 1991.17 | 2082.70 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c1` | `rest_https_edge` | 2048 | 20 | 72290.98 | 72529.93 | 72674.72 | `corpus_sharegpt` | `natural_eos` | 40 | ok |
+| `chat_stream_c1` | `rest_plain_tcp` | 10 | 20 | 476.47 | 543.99 | 630.88 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c1` | `rest_plain_tcp` | 50 | 20 | 1859.11 | 1917.98 | 1947.35 | `synthetic_seed_derived` | `natural_eos` | — | ok |
 | `chat_stream_c1` | `rest_plain_tcp` | 256 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c1` | `rest_plain_tcp` | 512 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c1` | `rest_plain_tcp` | 1024 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
-| `chat_stream_c1` | `rest_plain_tcp` | 2048 | 20 | 69215.80 | 69533.82 | 69659.13 | `corpus_sharegpt` | `natural_eos` | 41 | ok |
-| `chat_stream_c4` | `default_grpc` | 10 | 20 | 623.23 | 717.27 | 717.45 | `synthetic_seed_derived` | `natural_eos` | — | ok |
-| `chat_stream_c4` | `default_grpc` | 50 | 20 | 2050.23 | 2110.93 | 2115.51 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c1` | `rest_plain_tcp` | 2048 | 20 | 72230.36 | 72520.55 | 72546.42 | `corpus_sharegpt` | `natural_eos` | 41 | ok |
+| `chat_stream_c4` | `default_grpc` | 10 | 20 | 528.99 | 572.40 | 577.53 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c4` | `default_grpc` | 50 | 20 | 2009.23 | 2074.08 | 2074.33 | `synthetic_seed_derived` | `natural_eos` | — | ok |
 | `chat_stream_c4` | `default_grpc` | 256 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c4` | `default_grpc` | 512 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c4` | `default_grpc` | 1024 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
-| `chat_stream_c4` | `default_grpc` | 2048 | 20 | 61827.21 | 74354.21 | 75269.54 | `corpus_sharegpt` | `natural_eos` | 50 | ok |
-| `chat_stream_c4` | `rest_https_edge` | 10 | 20 | 574.62 | 887.07 | 887.60 | `synthetic_seed_derived` | `natural_eos` | — | ok |
-| `chat_stream_c4` | `rest_https_edge` | 50 | 20 | 2037.44 | 2301.80 | 2325.14 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c4` | `default_grpc` | 2048 | 20 | 62530.86 | 74364.68 | 76699.78 | `corpus_sharegpt` | `natural_eos` | 50 | ok |
+| `chat_stream_c4` | `rest_https_edge` | 10 | 20 | 512.55 | 649.98 | 650.45 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c4` | `rest_https_edge` | 50 | 20 | 1956.34 | 2045.69 | 2045.72 | `synthetic_seed_derived` | `natural_eos` | — | ok |
 | `chat_stream_c4` | `rest_https_edge` | 256 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c4` | `rest_https_edge` | 512 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c4` | `rest_https_edge` | 1024 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
-| `chat_stream_c4` | `rest_https_edge` | 2048 | 20 | 76725.82 | 77079.94 | 77080.32 | `corpus_sharegpt` | `natural_eos` | 52 | ok |
-| `chat_stream_c4` | `rest_plain_tcp` | 10 | 20 | 677.54 | 906.42 | 1024.00 | `synthetic_seed_derived` | `natural_eos` | — | ok |
-| `chat_stream_c4` | `rest_plain_tcp` | 50 | 20 | 2168.91 | 2270.05 | 2270.33 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c4` | `rest_https_edge` | 2048 | 20 | 77054.43 | 77399.21 | 77399.88 | `corpus_sharegpt` | `natural_eos` | 52 | ok |
+| `chat_stream_c4` | `rest_plain_tcp` | 10 | 20 | 529.78 | 676.14 | 676.38 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c4` | `rest_plain_tcp` | 50 | 20 | 2016.84 | 2076.17 | 2091.80 | `synthetic_seed_derived` | `natural_eos` | — | ok |
 | `chat_stream_c4` | `rest_plain_tcp` | 256 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c4` | `rest_plain_tcp` | 512 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c4` | `rest_plain_tcp` | 1024 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
-| `chat_stream_c4` | `rest_plain_tcp` | 2048 | 20 | 77377.35 | 77601.01 | 77605.92 | `corpus_sharegpt` | `natural_eos` | 53 | ok |
-| `chat_stream_c4` | `tuned_grpc_multiplexed` | 10 | 20 | 634.50 | 773.41 | 856.80 | `synthetic_seed_derived` | `natural_eos` | — | ok |
-| `chat_stream_c4` | `tuned_grpc_multiplexed` | 50 | 20 | 2084.09 | 2183.67 | 2183.67 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c4` | `rest_plain_tcp` | 2048 | 20 | 77746.74 | 77984.16 | 78000.80 | `corpus_sharegpt` | `natural_eos` | 53 | ok |
+| `chat_stream_c4` | `tuned_grpc_multiplexed` | 10 | 20 | 534.36 | 599.01 | 599.29 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c4` | `tuned_grpc_multiplexed` | 50 | 20 | 1992.49 | 2039.32 | 2039.60 | `synthetic_seed_derived` | `natural_eos` | — | ok |
 | `chat_stream_c4` | `tuned_grpc_multiplexed` | 256 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c4` | `tuned_grpc_multiplexed` | 512 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c4` | `tuned_grpc_multiplexed` | 1024 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
-| `chat_stream_c4` | `tuned_grpc_multiplexed` | 2048 | 20 | 37095.55 | 42447.31 | 43191.17 | `corpus_sharegpt` | `natural_eos` | 51 | ok |
-| `chat_stream_c8` | `default_grpc` | 10 | 20 | 624.59 | 752.53 | 752.58 | `synthetic_seed_derived` | `natural_eos` | — | ok |
-| `chat_stream_c8` | `default_grpc` | 50 | 20 | 2115.13 | 2233.67 | 2233.70 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c4` | `tuned_grpc_multiplexed` | 2048 | 20 | 37912.63 | 43864.92 | 50468.75 | `corpus_sharegpt` | `natural_eos` | 51 | ok |
+| `chat_stream_c8` | `default_grpc` | 10 | 20 | 546.71 | 592.32 | 609.80 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c8` | `default_grpc` | 50 | 20 | 2002.34 | 2014.21 | 2028.01 | `synthetic_seed_derived` | `natural_eos` | — | ok |
 | `chat_stream_c8` | `default_grpc` | 256 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c8` | `default_grpc` | 512 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c8` | `default_grpc` | 1024 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
-| `chat_stream_c8` | `default_grpc` | 2048 | 20 | 10341.64 | 17375.72 | 21574.92 | `corpus_sharegpt` | `natural_eos` | 62 | ok |
-| `chat_stream_c8` | `rest_https_edge` | 10 | 20 | 578.07 | 1050.29 | 1051.21 | `synthetic_seed_derived` | `natural_eos` | — | ok |
-| `chat_stream_c8` | `rest_https_edge` | 50 | 20 | 2065.10 | 2379.06 | 2381.42 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c8` | `default_grpc` | 2048 | 20 | 10167.86 | 17013.94 | 17068.42 | `corpus_sharegpt` | `natural_eos` | 62 | ok |
+| `chat_stream_c8` | `rest_https_edge` | 10 | 20 | 559.78 | 704.22 | 707.14 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c8` | `rest_https_edge` | 50 | 20 | 2036.69 | 2163.14 | 2164.05 | `synthetic_seed_derived` | `natural_eos` | — | ok |
 | `chat_stream_c8` | `rest_https_edge` | 256 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c8` | `rest_https_edge` | 512 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c8` | `rest_https_edge` | 1024 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
-| `chat_stream_c8` | `rest_https_edge` | 2048 | 20 | 78754.36 | 79173.99 | 79174.97 | `corpus_sharegpt` | `natural_eos` | 64 | ok |
-| `chat_stream_c8` | `rest_plain_tcp` | 10 | 20 | 824.63 | 1227.03 | 1227.97 | `synthetic_seed_derived` | `natural_eos` | — | ok |
-| `chat_stream_c8` | `rest_plain_tcp` | 50 | 20 | 2214.25 | 2443.82 | 2445.57 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c8` | `rest_https_edge` | 2048 | 20 | 79290.09 | 79349.88 | 79350.41 | `corpus_sharegpt` | `natural_eos` | 64 | ok |
+| `chat_stream_c8` | `rest_plain_tcp` | 10 | 20 | 563.52 | 671.88 | 673.29 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c8` | `rest_plain_tcp` | 50 | 20 | 2050.13 | 2146.77 | 2159.72 | `synthetic_seed_derived` | `natural_eos` | — | ok |
 | `chat_stream_c8` | `rest_plain_tcp` | 256 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c8` | `rest_plain_tcp` | 512 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c8` | `rest_plain_tcp` | 1024 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
-| `chat_stream_c8` | `rest_plain_tcp` | 2048 | 20 | 80446.83 | 80926.18 | 80940.05 | `corpus_sharegpt` | `natural_eos` | 65 | ok |
-| `chat_stream_c8` | `tuned_grpc_multiplexed` | 10 | 20 | 673.94 | 745.31 | 751.40 | `synthetic_seed_derived` | `natural_eos` | — | ok |
-| `chat_stream_c8` | `tuned_grpc_multiplexed` | 50 | 20 | 2124.60 | 2154.72 | 2175.55 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c8` | `rest_plain_tcp` | 2048 | 20 | 80703.44 | 80965.13 | 80965.70 | `corpus_sharegpt` | `natural_eos` | 65 | ok |
+| `chat_stream_c8` | `tuned_grpc_multiplexed` | 10 | 20 | 536.23 | 566.91 | 566.99 | `synthetic_seed_derived` | `natural_eos` | — | ok |
+| `chat_stream_c8` | `tuned_grpc_multiplexed` | 50 | 20 | 2019.46 | 2050.51 | 2050.72 | `synthetic_seed_derived` | `natural_eos` | — | ok |
 | `chat_stream_c8` | `tuned_grpc_multiplexed` | 256 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c8` | `tuned_grpc_multiplexed` | 512 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
 | `chat_stream_c8` | `tuned_grpc_multiplexed` | 1024 | 0 | — | — | — | `corpus_sharegpt` | `natural_eos` | — | `not_validated` |
-| `chat_stream_c8` | `tuned_grpc_multiplexed` | 2048 | 20 | 73633.91 | 73668.79 | 73670.31 | `corpus_sharegpt` | `natural_eos` | 63 | ok |
+| `chat_stream_c8` | `tuned_grpc_multiplexed` | 2048 | 20 | 73804.57 | 74109.58 | 74109.85 | `corpus_sharegpt` | `natural_eos` | 63 | ok |
+
+## Prompt-driven early-EOS audit
+
+The cells below terminated via natural EOS at fewer than `50%` of the `max_tokens` cap (threshold `EARLY_EOS_RATIO_THRESHOLD = 0.5`, minimum cap `EARLY_EOS_AUDIT_MIN_MAX_TOKENS = 256`). Each cell draws a single corpus prompt per block (see `m6_2_sweep.py:546` + `assign_symmetric_prompt`); adjacent cohort blocks for the same `(cell, max_tokens)` draw *different* prompts, so per-cohort `wall_p50_ms` at high `max_tokens` in `natural_eos` regime confounds protocol cost with prompt-content distribution. The flagged rows are not protocol pathologies — they are cells whose corpus prompt elicited a short response and stopped early.
+
+For a clean cohort-axis protocol comparison at large `max_tokens` use either the §"TPOT curves" table (protocol-invariant per-token decode cost) or the §"KV-cache pressure" sub-probe (forced-cap via `ignore_eos=True`, prompt-content held constant).
+
+| cell | cohort | max_tokens | corpus_idx | wall_p50_ms | tpot_ms | implied_output_tokens | implied/cap |
+|------|--------|-----------:|-----------:|------------:|--------:|---------------------:|------------:|
+| `chat_stream_c4` | `tuned_grpc_multiplexed` | 2048 | 51 | 37912.63 | 37.46 | 1010 | 0.49 |
+| `chat_stream_c8` | `default_grpc` | 2048 | 62 | 10167.86 | 37.77 | 267 | 0.13 |
 
 ## TPOT curves
 
@@ -190,72 +179,72 @@ Interior caps not measured in validate mode (`not_validated`). Curves at `{10, 5
 
 | cell | cohort | max_tokens | tpot_ms | status |
 |------|--------|-----------:|--------:|--------|
-| `chat_stream_c1` | `default_grpc` | 10 | 33.36 | ok |
-| `chat_stream_c1` | `default_grpc` | 50 | 33.64 | ok |
+| `chat_stream_c1` | `default_grpc` | 10 | 34.66 | ok |
+| `chat_stream_c1` | `default_grpc` | 50 | 35.28 | ok |
 | `chat_stream_c1` | `default_grpc` | 256 | — | `not_validated` |
 | `chat_stream_c1` | `default_grpc` | 512 | — | `not_validated` |
 | `chat_stream_c1` | `default_grpc` | 1024 | — | `not_validated` |
-| `chat_stream_c1` | `default_grpc` | 2048 | 33.87 | ok |
-| `chat_stream_c1` | `rest_https_edge` | 10 | 33.42 | ok |
-| `chat_stream_c1` | `rest_https_edge` | 50 | 33.67 | ok |
+| `chat_stream_c1` | `default_grpc` | 2048 | 35.39 | ok |
+| `chat_stream_c1` | `rest_https_edge` | 10 | 34.68 | ok |
+| `chat_stream_c1` | `rest_https_edge` | 50 | 35.19 | ok |
 | `chat_stream_c1` | `rest_https_edge` | 256 | — | `not_validated` |
 | `chat_stream_c1` | `rest_https_edge` | 512 | — | `not_validated` |
 | `chat_stream_c1` | `rest_https_edge` | 1024 | — | `not_validated` |
-| `chat_stream_c1` | `rest_https_edge` | 2048 | 33.94 | ok |
-| `chat_stream_c1` | `rest_plain_tcp` | 10 | 33.31 | ok |
-| `chat_stream_c1` | `rest_plain_tcp` | 50 | 33.62 | ok |
+| `chat_stream_c1` | `rest_https_edge` | 2048 | 35.46 | ok |
+| `chat_stream_c1` | `rest_plain_tcp` | 10 | 34.92 | ok |
+| `chat_stream_c1` | `rest_plain_tcp` | 50 | 35.19 | ok |
 | `chat_stream_c1` | `rest_plain_tcp` | 256 | — | `not_validated` |
 | `chat_stream_c1` | `rest_plain_tcp` | 512 | — | `not_validated` |
 | `chat_stream_c1` | `rest_plain_tcp` | 1024 | — | `not_validated` |
-| `chat_stream_c1` | `rest_plain_tcp` | 2048 | 33.98 | ok |
-| `chat_stream_c4` | `default_grpc` | 10 | 36.47 | ok |
-| `chat_stream_c4` | `default_grpc` | 50 | 36.75 | ok |
+| `chat_stream_c1` | `rest_plain_tcp` | 2048 | 35.49 | ok |
+| `chat_stream_c4` | `default_grpc` | 10 | 36.75 | ok |
+| `chat_stream_c4` | `default_grpc` | 50 | 37.03 | ok |
 | `chat_stream_c4` | `default_grpc` | 256 | — | `not_validated` |
 | `chat_stream_c4` | `default_grpc` | 512 | — | `not_validated` |
 | `chat_stream_c4` | `default_grpc` | 1024 | — | `not_validated` |
-| `chat_stream_c4` | `default_grpc` | 2048 | 37.71 | ok |
-| `chat_stream_c4` | `rest_https_edge` | 10 | 36.58 | ok |
-| `chat_stream_c4` | `rest_https_edge` | 50 | 36.66 | ok |
+| `chat_stream_c4` | `default_grpc` | 2048 | 37.99 | ok |
+| `chat_stream_c4` | `rest_https_edge` | 10 | 37.31 | ok |
+| `chat_stream_c4` | `rest_https_edge` | 50 | 36.76 | ok |
 | `chat_stream_c4` | `rest_https_edge` | 256 | — | `not_validated` |
 | `chat_stream_c4` | `rest_https_edge` | 512 | — | `not_validated` |
 | `chat_stream_c4` | `rest_https_edge` | 1024 | — | `not_validated` |
-| `chat_stream_c4` | `rest_https_edge` | 2048 | 37.91 | ok |
-| `chat_stream_c4` | `rest_plain_tcp` | 10 | 36.41 | ok |
-| `chat_stream_c4` | `rest_plain_tcp` | 50 | 36.81 | ok |
+| `chat_stream_c4` | `rest_https_edge` | 2048 | 38.13 | ok |
+| `chat_stream_c4` | `rest_plain_tcp` | 10 | 36.72 | ok |
+| `chat_stream_c4` | `rest_plain_tcp` | 50 | 36.94 | ok |
 | `chat_stream_c4` | `rest_plain_tcp` | 256 | — | `not_validated` |
 | `chat_stream_c4` | `rest_plain_tcp` | 512 | — | `not_validated` |
 | `chat_stream_c4` | `rest_plain_tcp` | 1024 | — | `not_validated` |
-| `chat_stream_c4` | `rest_plain_tcp` | 2048 | 37.98 | ok |
-| `chat_stream_c4` | `tuned_grpc_multiplexed` | 10 | 36.20 | ok |
-| `chat_stream_c4` | `tuned_grpc_multiplexed` | 50 | 36.75 | ok |
+| `chat_stream_c4` | `rest_plain_tcp` | 2048 | 38.23 | ok |
+| `chat_stream_c4` | `tuned_grpc_multiplexed` | 10 | 37.66 | ok |
+| `chat_stream_c4` | `tuned_grpc_multiplexed` | 50 | 36.94 | ok |
 | `chat_stream_c4` | `tuned_grpc_multiplexed` | 256 | — | `not_validated` |
 | `chat_stream_c4` | `tuned_grpc_multiplexed` | 512 | — | `not_validated` |
 | `chat_stream_c4` | `tuned_grpc_multiplexed` | 1024 | — | `not_validated` |
-| `chat_stream_c4` | `tuned_grpc_multiplexed` | 2048 | 37.30 | ok |
+| `chat_stream_c4` | `tuned_grpc_multiplexed` | 2048 | 37.46 | ok |
 | `chat_stream_c8` | `default_grpc` | 10 | 36.80 | ok |
-| `chat_stream_c8` | `default_grpc` | 50 | 37.08 | ok |
+| `chat_stream_c8` | `default_grpc` | 50 | 37.20 | ok |
 | `chat_stream_c8` | `default_grpc` | 256 | — | `not_validated` |
 | `chat_stream_c8` | `default_grpc` | 512 | — | `not_validated` |
 | `chat_stream_c8` | `default_grpc` | 1024 | — | `not_validated` |
-| `chat_stream_c8` | `default_grpc` | 2048 | 37.54 | ok |
-| `chat_stream_c8` | `rest_https_edge` | 10 | 36.77 | ok |
-| `chat_stream_c8` | `rest_https_edge` | 50 | 37.04 | ok |
+| `chat_stream_c8` | `default_grpc` | 2048 | 37.77 | ok |
+| `chat_stream_c8` | `rest_https_edge` | 10 | 37.08 | ok |
+| `chat_stream_c8` | `rest_https_edge` | 50 | 37.73 | ok |
 | `chat_stream_c8` | `rest_https_edge` | 256 | — | `not_validated` |
 | `chat_stream_c8` | `rest_https_edge` | 512 | — | `not_validated` |
 | `chat_stream_c8` | `rest_https_edge` | 1024 | — | `not_validated` |
-| `chat_stream_c8` | `rest_https_edge` | 2048 | 39.16 | ok |
-| `chat_stream_c8` | `rest_plain_tcp` | 10 | 37.39 | ok |
-| `chat_stream_c8` | `rest_plain_tcp` | 50 | 37.14 | ok |
+| `chat_stream_c8` | `rest_https_edge` | 2048 | 39.47 | ok |
+| `chat_stream_c8` | `rest_plain_tcp` | 10 | 37.17 | ok |
+| `chat_stream_c8` | `rest_plain_tcp` | 50 | 37.29 | ok |
 | `chat_stream_c8` | `rest_plain_tcp` | 256 | — | `not_validated` |
 | `chat_stream_c8` | `rest_plain_tcp` | 512 | — | `not_validated` |
 | `chat_stream_c8` | `rest_plain_tcp` | 1024 | — | `not_validated` |
-| `chat_stream_c8` | `rest_plain_tcp` | 2048 | 39.10 | ok |
-| `chat_stream_c8` | `tuned_grpc_multiplexed` | 10 | 36.82 | ok |
-| `chat_stream_c8` | `tuned_grpc_multiplexed` | 50 | 37.10 | ok |
+| `chat_stream_c8` | `rest_plain_tcp` | 2048 | 39.27 | ok |
+| `chat_stream_c8` | `tuned_grpc_multiplexed` | 10 | 37.23 | ok |
+| `chat_stream_c8` | `tuned_grpc_multiplexed` | 50 | 37.22 | ok |
 | `chat_stream_c8` | `tuned_grpc_multiplexed` | 256 | — | `not_validated` |
 | `chat_stream_c8` | `tuned_grpc_multiplexed` | 512 | — | `not_validated` |
 | `chat_stream_c8` | `tuned_grpc_multiplexed` | 1024 | — | `not_validated` |
-| `chat_stream_c8` | `tuned_grpc_multiplexed` | 2048 | 39.33 | ok |
+| `chat_stream_c8` | `tuned_grpc_multiplexed` | 2048 | 39.50 | ok |
 
 ## Engine-cost decomposition curves
 
@@ -263,138 +252,138 @@ Interior caps not measured in validate mode (`not_validated`). Decomposition onl
 
 | cell | cohort | max_tokens | seg_ab_ms | seg_queue_ms | seg_prefill_ms | seg_ingress_ms | seg_egress_ms | status |
 |------|--------|-----------:|----------:|-------------:|---------------:|---------------:|--------------:|--------|
-| `embed_c1` | `default_grpc` | 10 | 0.90 | 0.02 | 40.76 | — | — | ok |
-| `embed_c1` | `default_grpc` | 50 | 0.66 | 0.02 | 38.96 | — | — | ok |
+| `embed_c1` | `default_grpc` | 10 | 1.33 | 0.02 | 43.49 | — | — | ok |
+| `embed_c1` | `default_grpc` | 50 | 0.71 | 0.02 | 40.95 | — | — | ok |
 | `embed_c1` | `default_grpc` | 256 | — | — | — | — | — | `not_validated` |
 | `embed_c1` | `default_grpc` | 512 | — | — | — | — | — | `not_validated` |
 | `embed_c1` | `default_grpc` | 1024 | — | — | — | — | — | `not_validated` |
-| `embed_c1` | `default_grpc` | 2048 | 0.71 | 0.02 | 35.67 | — | — | ok |
-| `embed_c1` | `rest_https_edge` | 10 | 1.11 | 0.02 | 38.96 | — | — | ok |
-| `embed_c1` | `rest_https_edge` | 50 | 1.02 | 0.02 | 38.98 | — | — | ok |
+| `embed_c1` | `default_grpc` | 2048 | 0.80 | 0.02 | 39.03 | — | — | ok |
+| `embed_c1` | `rest_https_edge` | 10 | 1.07 | 0.01 | 39.94 | — | — | ok |
+| `embed_c1` | `rest_https_edge` | 50 | 1.13 | 0.02 | 41.17 | — | — | ok |
 | `embed_c1` | `rest_https_edge` | 256 | — | — | — | — | — | `not_validated` |
 | `embed_c1` | `rest_https_edge` | 512 | — | — | — | — | — | `not_validated` |
 | `embed_c1` | `rest_https_edge` | 1024 | — | — | — | — | — | `not_validated` |
-| `embed_c1` | `rest_https_edge` | 2048 | 6.05 | 0.02 | 40.17 | — | — | ok |
-| `embed_c1` | `rest_plain_tcp` | 10 | 0.99 | 0.02 | 39.20 | — | — | ok |
-| `embed_c1` | `rest_plain_tcp` | 50 | 0.98 | 0.02 | 39.06 | — | — | ok |
+| `embed_c1` | `rest_https_edge` | 2048 | 6.65 | 0.01 | 42.88 | — | — | ok |
+| `embed_c1` | `rest_plain_tcp` | 10 | 1.07 | 0.01 | 39.94 | — | — | ok |
+| `embed_c1` | `rest_plain_tcp` | 50 | 1.28 | 0.02 | 41.30 | — | — | ok |
 | `embed_c1` | `rest_plain_tcp` | 256 | — | — | — | — | — | `not_validated` |
 | `embed_c1` | `rest_plain_tcp` | 512 | — | — | — | — | — | `not_validated` |
 | `embed_c1` | `rest_plain_tcp` | 1024 | — | — | — | — | — | `not_validated` |
-| `embed_c1` | `rest_plain_tcp` | 2048 | 0.71 | 0.02 | 38.93 | — | — | ok |
-| `embed_c4` | `default_grpc` | 10 | 0.53 | 0.01 | 69.54 | — | — | ok |
-| `embed_c4` | `default_grpc` | 50 | 0.52 | 0.01 | 67.51 | — | — | ok |
+| `embed_c1` | `rest_plain_tcp` | 2048 | 0.96 | 0.02 | 41.42 | — | — | ok |
+| `embed_c4` | `default_grpc` | 10 | 0.97 | 0.01 | 76.92 | — | — | ok |
+| `embed_c4` | `default_grpc` | 50 | 0.95 | 0.01 | 69.81 | — | — | ok |
 | `embed_c4` | `default_grpc` | 256 | — | — | — | — | — | `not_validated` |
 | `embed_c4` | `default_grpc` | 512 | — | — | — | — | — | `not_validated` |
 | `embed_c4` | `default_grpc` | 1024 | — | — | — | — | — | `not_validated` |
-| `embed_c4` | `default_grpc` | 2048 | 0.97 | 0.01 | 75.05 | — | — | ok |
-| `embed_c4` | `rest_https_edge` | 10 | 0.87 | 0.01 | 65.25 | — | — | ok |
-| `embed_c4` | `rest_https_edge` | 50 | 0.94 | 0.01 | 64.21 | — | — | ok |
+| `embed_c4` | `default_grpc` | 2048 | 1.67 | 0.01 | 79.07 | — | — | ok |
+| `embed_c4` | `rest_https_edge` | 10 | 1.51 | 0.01 | 71.42 | — | — | ok |
+| `embed_c4` | `rest_https_edge` | 50 | 1.28 | 0.01 | 72.52 | — | — | ok |
 | `embed_c4` | `rest_https_edge` | 256 | — | — | — | — | — | `not_validated` |
 | `embed_c4` | `rest_https_edge` | 512 | — | — | — | — | — | `not_validated` |
 | `embed_c4` | `rest_https_edge` | 1024 | — | — | — | — | — | `not_validated` |
-| `embed_c4` | `rest_https_edge` | 2048 | 0.89 | 0.01 | 76.30 | — | — | ok |
-| `embed_c4` | `rest_plain_tcp` | 10 | 0.92 | 0.01 | 65.98 | — | — | ok |
-| `embed_c4` | `rest_plain_tcp` | 50 | 0.92 | 0.01 | 64.13 | — | — | ok |
+| `embed_c4` | `rest_https_edge` | 2048 | 2.44 | 0.01 | 78.53 | — | — | ok |
+| `embed_c4` | `rest_plain_tcp` | 10 | 1.60 | 0.01 | 67.18 | — | — | ok |
+| `embed_c4` | `rest_plain_tcp` | 50 | 1.88 | 0.01 | 68.44 | — | — | ok |
 | `embed_c4` | `rest_plain_tcp` | 256 | — | — | — | — | — | `not_validated` |
 | `embed_c4` | `rest_plain_tcp` | 512 | — | — | — | — | — | `not_validated` |
 | `embed_c4` | `rest_plain_tcp` | 1024 | — | — | — | — | — | `not_validated` |
-| `embed_c4` | `rest_plain_tcp` | 2048 | 0.81 | 0.01 | 71.15 | — | — | ok |
-| `embed_c4` | `tuned_grpc_multiplexed` | 10 | 0.52 | 0.01 | 67.64 | — | — | ok |
-| `embed_c4` | `tuned_grpc_multiplexed` | 50 | 0.51 | 0.01 | 67.28 | — | — | ok |
+| `embed_c4` | `rest_plain_tcp` | 2048 | 2.08 | 0.01 | 72.69 | — | — | ok |
+| `embed_c4` | `tuned_grpc_multiplexed` | 10 | 1.20 | 0.01 | 71.28 | — | — | ok |
+| `embed_c4` | `tuned_grpc_multiplexed` | 50 | 0.76 | 0.01 | 69.11 | — | — | ok |
 | `embed_c4` | `tuned_grpc_multiplexed` | 256 | — | — | — | — | — | `not_validated` |
 | `embed_c4` | `tuned_grpc_multiplexed` | 512 | — | — | — | — | — | `not_validated` |
 | `embed_c4` | `tuned_grpc_multiplexed` | 1024 | — | — | — | — | — | `not_validated` |
-| `embed_c4` | `tuned_grpc_multiplexed` | 2048 | 0.59 | 0.01 | 76.85 | — | — | ok |
-| `embed_c8` | `default_grpc` | 10 | 0.64 | 0.01 | 74.83 | — | — | ok |
-| `embed_c8` | `default_grpc` | 50 | 0.65 | 0.01 | 71.27 | — | — | ok |
+| `embed_c4` | `tuned_grpc_multiplexed` | 2048 | 1.40 | 0.01 | 102.67 | — | — | ok |
+| `embed_c8` | `default_grpc` | 10 | 1.02 | 0.01 | 76.34 | — | — | ok |
+| `embed_c8` | `default_grpc` | 50 | 1.03 | 0.01 | 74.37 | — | — | ok |
 | `embed_c8` | `default_grpc` | 256 | — | — | — | — | — | `not_validated` |
 | `embed_c8` | `default_grpc` | 512 | — | — | — | — | — | `not_validated` |
 | `embed_c8` | `default_grpc` | 1024 | — | — | — | — | — | `not_validated` |
-| `embed_c8` | `default_grpc` | 2048 | 0.50 | 0.01 | 72.52 | — | — | ok |
-| `embed_c8` | `rest_https_edge` | 10 | 0.94 | 0.01 | 69.25 | — | — | ok |
-| `embed_c8` | `rest_https_edge` | 50 | 0.98 | 0.01 | 68.61 | — | — | ok |
+| `embed_c8` | `default_grpc` | 2048 | 0.88 | 0.01 | 68.79 | — | — | ok |
+| `embed_c8` | `rest_https_edge` | 10 | 1.66 | 0.02 | 72.54 | — | — | ok |
+| `embed_c8` | `rest_https_edge` | 50 | 1.38 | 0.01 | 75.67 | — | — | ok |
 | `embed_c8` | `rest_https_edge` | 256 | — | — | — | — | — | `not_validated` |
 | `embed_c8` | `rest_https_edge` | 512 | — | — | — | — | — | `not_validated` |
 | `embed_c8` | `rest_https_edge` | 1024 | — | — | — | — | — | `not_validated` |
-| `embed_c8` | `rest_https_edge` | 2048 | 1.19 | 0.01 | 73.74 | — | — | ok |
-| `embed_c8` | `rest_plain_tcp` | 10 | 1.02 | 0.01 | 69.24 | — | — | ok |
-| `embed_c8` | `rest_plain_tcp` | 50 | 0.98 | 0.01 | 69.86 | — | — | ok |
+| `embed_c8` | `rest_https_edge` | 2048 | 1.60 | 0.01 | 81.55 | — | — | ok |
+| `embed_c8` | `rest_plain_tcp` | 10 | 1.36 | 0.01 | 72.07 | — | — | ok |
+| `embed_c8` | `rest_plain_tcp` | 50 | 1.69 | 0.01 | 72.45 | — | — | ok |
 | `embed_c8` | `rest_plain_tcp` | 256 | — | — | — | — | — | `not_validated` |
 | `embed_c8` | `rest_plain_tcp` | 512 | — | — | — | — | — | `not_validated` |
 | `embed_c8` | `rest_plain_tcp` | 1024 | — | — | — | — | — | `not_validated` |
-| `embed_c8` | `rest_plain_tcp` | 2048 | 2.99 | 0.01 | 77.31 | — | — | ok |
-| `embed_c8` | `tuned_grpc_multiplexed` | 10 | 0.58 | 0.01 | 72.71 | — | — | ok |
-| `embed_c8` | `tuned_grpc_multiplexed` | 50 | 0.61 | 0.01 | 71.53 | — | — | ok |
+| `embed_c8` | `rest_plain_tcp` | 2048 | 4.44 | 0.01 | 81.45 | — | — | ok |
+| `embed_c8` | `tuned_grpc_multiplexed` | 10 | 0.99 | 0.01 | 73.29 | — | — | ok |
+| `embed_c8` | `tuned_grpc_multiplexed` | 50 | 0.73 | 0.01 | 73.94 | — | — | ok |
 | `embed_c8` | `tuned_grpc_multiplexed` | 256 | — | — | — | — | — | `not_validated` |
 | `embed_c8` | `tuned_grpc_multiplexed` | 512 | — | — | — | — | — | `not_validated` |
 | `embed_c8` | `tuned_grpc_multiplexed` | 1024 | — | — | — | — | — | `not_validated` |
-| `embed_c8` | `tuned_grpc_multiplexed` | 2048 | 0.48 | 0.01 | 75.10 | — | — | ok |
-| `chat_stream_c1` | `default_grpc` | 10 | 0.28 | 0.02 | 39.17 | 0.05 | 0.97 | ok |
-| `chat_stream_c1` | `default_grpc` | 50 | 0.28 | 0.02 | 39.07 | 0.05 | 0.93 | ok |
+| `embed_c8` | `tuned_grpc_multiplexed` | 2048 | 1.07 | 0.01 | 82.19 | — | — | ok |
+| `chat_stream_c1` | `default_grpc` | 10 | 0.32 | 0.02 | 42.52 | 0.06 | 6.24 | ok |
+| `chat_stream_c1` | `default_grpc` | 50 | 0.42 | 0.02 | 43.03 | 0.06 | 6.10 | ok |
 | `chat_stream_c1` | `default_grpc` | 256 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c1` | `default_grpc` | 512 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c1` | `default_grpc` | 1024 | — | — | — | — | — | `not_validated` |
-| `chat_stream_c1` | `default_grpc` | 2048 | 0.28 | 0.02 | 39.69 | 0.05 | 1.02 | ok |
-| `chat_stream_c1` | `rest_https_edge` | 10 | 0.06 | 0.02 | 39.45 | 0.05 | 1.16 | ok |
-| `chat_stream_c1` | `rest_https_edge` | 50 | 0.05 | 0.02 | 39.40 | 0.05 | 1.27 | ok |
+| `chat_stream_c1` | `default_grpc` | 2048 | 0.44 | 0.02 | 44.46 | 0.12 | 4.62 | ok |
+| `chat_stream_c1` | `rest_https_edge` | 10 | 0.43 | 0.02 | 46.37 | 0.06 | 8.82 | ok |
+| `chat_stream_c1` | `rest_https_edge` | 50 | 0.17 | 0.02 | 44.01 | 0.07 | 8.02 | ok |
 | `chat_stream_c1` | `rest_https_edge` | 256 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c1` | `rest_https_edge` | 512 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c1` | `rest_https_edge` | 1024 | — | — | — | — | — | `not_validated` |
-| `chat_stream_c1` | `rest_https_edge` | 2048 | 0.06 | 0.02 | 39.29 | 0.05 | 1.12 | ok |
-| `chat_stream_c1` | `rest_plain_tcp` | 10 | 0.06 | 0.02 | 39.30 | 0.05 | 1.15 | ok |
-| `chat_stream_c1` | `rest_plain_tcp` | 50 | 0.05 | 0.02 | 39.29 | 0.05 | 1.07 | ok |
+| `chat_stream_c1` | `rest_https_edge` | 2048 | 0.36 | 0.02 | 44.30 | 0.07 | 4.46 | ok |
+| `chat_stream_c1` | `rest_plain_tcp` | 10 | 0.26 | 0.02 | 44.91 | 0.06 | 6.84 | ok |
+| `chat_stream_c1` | `rest_plain_tcp` | 50 | 0.52 | 0.02 | 43.75 | 0.06 | 5.52 | ok |
 | `chat_stream_c1` | `rest_plain_tcp` | 256 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c1` | `rest_plain_tcp` | 512 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c1` | `rest_plain_tcp` | 1024 | — | — | — | — | — | `not_validated` |
-| `chat_stream_c1` | `rest_plain_tcp` | 2048 | 0.06 | 0.02 | 35.79 | 0.06 | 1.22 | ok |
-| `chat_stream_c4` | `default_grpc` | 10 | 0.23 | 0.01 | 67.06 | 0.04 | 1.11 | ok |
-| `chat_stream_c4` | `default_grpc` | 50 | 0.24 | 0.01 | 65.41 | 0.04 | 1.51 | ok |
+| `chat_stream_c1` | `rest_plain_tcp` | 2048 | 0.28 | 0.02 | 39.21 | 0.06 | 5.90 | ok |
+| `chat_stream_c4` | `default_grpc` | 10 | 0.33 | 0.01 | 69.59 | 0.05 | 3.50 | ok |
+| `chat_stream_c4` | `default_grpc` | 50 | 0.68 | 0.01 | 67.52 | 0.06 | 8.05 | ok |
 | `chat_stream_c4` | `default_grpc` | 256 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c4` | `default_grpc` | 512 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c4` | `default_grpc` | 1024 | — | — | — | — | — | `not_validated` |
-| `chat_stream_c4` | `default_grpc` | 2048 | 0.24 | 0.01 | 76.34 | 0.05 | 1.15 | ok |
-| `chat_stream_c4` | `rest_https_edge` | 10 | 0.04 | 0.01 | 69.13 | 0.04 | 1.43 | ok |
-| `chat_stream_c4` | `rest_https_edge` | 50 | 0.04 | 0.01 | 68.68 | 0.03 | 1.24 | ok |
+| `chat_stream_c4` | `default_grpc` | 2048 | 0.62 | 0.01 | 78.98 | 0.07 | 6.45 | ok |
+| `chat_stream_c4` | `rest_https_edge` | 10 | 0.14 | 0.01 | 76.18 | 0.04 | 5.08 | ok |
+| `chat_stream_c4` | `rest_https_edge` | 50 | 0.08 | 0.01 | 73.67 | 0.05 | 3.26 | ok |
 | `chat_stream_c4` | `rest_https_edge` | 256 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c4` | `rest_https_edge` | 512 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c4` | `rest_https_edge` | 1024 | — | — | — | — | — | `not_validated` |
-| `chat_stream_c4` | `rest_https_edge` | 2048 | 0.04 | 0.01 | 73.61 | 0.04 | 1.50 | ok |
-| `chat_stream_c4` | `rest_plain_tcp` | 10 | 0.05 | 0.01 | 70.14 | 0.04 | 1.25 | ok |
-| `chat_stream_c4` | `rest_plain_tcp` | 50 | 0.04 | 0.01 | 65.55 | 0.04 | 1.30 | ok |
+| `chat_stream_c4` | `rest_https_edge` | 2048 | 0.20 | 0.01 | 81.32 | 0.06 | 5.89 | ok |
+| `chat_stream_c4` | `rest_plain_tcp` | 10 | 0.15 | 0.01 | 71.56 | 0.06 | 4.81 | ok |
+| `chat_stream_c4` | `rest_plain_tcp` | 50 | 0.69 | 0.01 | 72.87 | 0.07 | 8.31 | ok |
 | `chat_stream_c4` | `rest_plain_tcp` | 256 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c4` | `rest_plain_tcp` | 512 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c4` | `rest_plain_tcp` | 1024 | — | — | — | — | — | `not_validated` |
-| `chat_stream_c4` | `rest_plain_tcp` | 2048 | 0.04 | 0.01 | 68.55 | 0.04 | 1.49 | ok |
-| `chat_stream_c4` | `tuned_grpc_multiplexed` | 10 | 0.23 | 0.01 | 66.67 | 0.04 | 1.00 | ok |
-| `chat_stream_c4` | `tuned_grpc_multiplexed` | 50 | 0.23 | 0.01 | 65.05 | 0.04 | 1.15 | ok |
+| `chat_stream_c4` | `rest_plain_tcp` | 2048 | 0.18 | 0.01 | 69.40 | 0.06 | 6.07 | ok |
+| `chat_stream_c4` | `tuned_grpc_multiplexed` | 10 | 0.62 | 0.01 | 71.39 | 0.07 | 5.70 | ok |
+| `chat_stream_c4` | `tuned_grpc_multiplexed` | 50 | 0.37 | 0.01 | 69.25 | 0.06 | 5.88 | ok |
 | `chat_stream_c4` | `tuned_grpc_multiplexed` | 256 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c4` | `tuned_grpc_multiplexed` | 512 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c4` | `tuned_grpc_multiplexed` | 1024 | — | — | — | — | — | `not_validated` |
-| `chat_stream_c4` | `tuned_grpc_multiplexed` | 2048 | 0.24 | 0.01 | 74.95 | 0.05 | 1.06 | ok |
-| `chat_stream_c8` | `default_grpc` | 10 | 0.22 | 0.01 | 70.52 | 0.03 | 1.47 | ok |
-| `chat_stream_c8` | `default_grpc` | 50 | 0.19 | 0.01 | 68.48 | 0.03 | 1.31 | ok |
+| `chat_stream_c4` | `tuned_grpc_multiplexed` | 2048 | 0.36 | 0.01 | 76.75 | 0.06 | 4.63 | ok |
+| `chat_stream_c8` | `default_grpc` | 10 | 0.44 | 0.02 | 75.57 | 0.07 | 10.64 | ok |
+| `chat_stream_c8` | `default_grpc` | 50 | 0.51 | 0.02 | 70.04 | 0.05 | 6.92 | ok |
 | `chat_stream_c8` | `default_grpc` | 256 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c8` | `default_grpc` | 512 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c8` | `default_grpc` | 1024 | — | — | — | — | — | `not_validated` |
-| `chat_stream_c8` | `default_grpc` | 2048 | 0.23 | 0.01 | 77.26 | 0.04 | 1.99 | ok |
-| `chat_stream_c8` | `rest_https_edge` | 10 | 0.04 | 0.02 | 69.26 | 0.03 | 1.85 | ok |
-| `chat_stream_c8` | `rest_https_edge` | 50 | 0.04 | 0.01 | 69.01 | 0.03 | 1.90 | ok |
+| `chat_stream_c8` | `default_grpc` | 2048 | 0.37 | 0.01 | 74.44 | 0.06 | 6.68 | ok |
+| `chat_stream_c8` | `rest_https_edge` | 10 | 0.34 | 0.01 | 78.46 | 0.06 | 9.02 | ok |
+| `chat_stream_c8` | `rest_https_edge` | 50 | 0.47 | 0.02 | 82.73 | 0.05 | 9.63 | ok |
 | `chat_stream_c8` | `rest_https_edge` | 256 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c8` | `rest_https_edge` | 512 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c8` | `rest_https_edge` | 1024 | — | — | — | — | — | `not_validated` |
-| `chat_stream_c8` | `rest_https_edge` | 2048 | 0.04 | 0.01 | 76.91 | 0.03 | 1.60 | ok |
-| `chat_stream_c8` | `rest_plain_tcp` | 10 | 0.04 | 0.01 | 76.23 | 0.03 | 2.07 | ok |
-| `chat_stream_c8` | `rest_plain_tcp` | 50 | 0.04 | 0.01 | 74.52 | 0.03 | 1.53 | ok |
+| `chat_stream_c8` | `rest_https_edge` | 2048 | 0.10 | 0.02 | 77.28 | 0.05 | 10.88 | ok |
+| `chat_stream_c8` | `rest_plain_tcp` | 10 | 0.41 | 0.02 | 76.15 | 0.05 | 7.54 | ok |
+| `chat_stream_c8` | `rest_plain_tcp` | 50 | 0.16 | 0.01 | 83.43 | 0.05 | 8.54 | ok |
 | `chat_stream_c8` | `rest_plain_tcp` | 256 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c8` | `rest_plain_tcp` | 512 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c8` | `rest_plain_tcp` | 1024 | — | — | — | — | — | `not_validated` |
-| `chat_stream_c8` | `rest_plain_tcp` | 2048 | 0.04 | 0.01 | 73.79 | 0.03 | 1.67 | ok |
-| `chat_stream_c8` | `tuned_grpc_multiplexed` | 10 | 0.20 | 0.01 | 70.51 | 0.03 | 1.64 | ok |
-| `chat_stream_c8` | `tuned_grpc_multiplexed` | 50 | 0.20 | 0.01 | 74.67 | 0.03 | 1.26 | ok |
+| `chat_stream_c8` | `rest_plain_tcp` | 2048 | 0.19 | 0.02 | 76.44 | 0.06 | 10.58 | ok |
+| `chat_stream_c8` | `tuned_grpc_multiplexed` | 10 | 0.39 | 0.02 | 77.07 | 0.04 | 6.09 | ok |
+| `chat_stream_c8` | `tuned_grpc_multiplexed` | 50 | 0.60 | 0.02 | 71.42 | 0.05 | 9.07 | ok |
 | `chat_stream_c8` | `tuned_grpc_multiplexed` | 256 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c8` | `tuned_grpc_multiplexed` | 512 | — | — | — | — | — | `not_validated` |
 | `chat_stream_c8` | `tuned_grpc_multiplexed` | 1024 | — | — | — | — | — | `not_validated` |
-| `chat_stream_c8` | `tuned_grpc_multiplexed` | 2048 | 0.19 | 0.01 | 77.49 | 0.03 | 1.69 | ok |
+| `chat_stream_c8` | `tuned_grpc_multiplexed` | 2048 | 0.27 | 0.02 | 80.59 | 0.05 | 5.15 | ok |
 
 ## Protocol crossover threshold
 
@@ -415,118 +404,114 @@ Measurements below are from the forced-cap sub-probe regime (`ignore_eos=True`) 
 
 | cohort | cell_type | wall_clock_ratio_2048/1024 | inference | kv_cache_used_fraction_peak | oom | n |
 |--------|-----------|--------------------------:|-----------|----------------------------:|----:|--:|
-| `rest_https_edge` | `chat_stream` | 1.804 | `kv_pressure_not_observable` | — | False | 20 |
-| `rest_plain_tcp` | `chat_stream` | 2.026 | `kv_pressure_not_observable` | — | False | 20 |
-| `default_grpc` | `chat_stream` | 1.998 | `kv_pressure_not_observable` | — | False | 20 |
-| `tuned_grpc_multiplexed` | `chat_stream` | 1.817 | `kv_pressure_not_observable` | — | False | 20 |
-| `rest_https_edge` | `embed` | 2.055 | `kv_pressure_not_observable` | — | False | 20 |
-| `rest_plain_tcp` | `embed` | 1.977 | `kv_pressure_not_observable` | — | False | 20 |
-| `default_grpc` | `embed` | 2.051 | `kv_pressure_not_observable` | — | False | 20 |
-| `tuned_grpc_multiplexed` | `embed` | 2.034 | `kv_pressure_not_observable` | — | False | 20 |
+| `rest_https_edge` | `chat_stream` | 1.803 | `kv_pressure_not_observable` | — | False | 20 |
+| `rest_plain_tcp` | `chat_stream` | 2.015 | `kv_pressure_not_observable` | — | False | 20 |
+| `default_grpc` | `chat_stream` | 2.001 | `kv_pressure_not_observable` | — | False | 20 |
+| `tuned_grpc_multiplexed` | `chat_stream` | 1.831 | `kv_pressure_not_observable` | — | False | 20 |
+| `rest_https_edge` | `embed` | 2.049 | `kv_pressure_not_observable` | — | False | 20 |
+| `rest_plain_tcp` | `embed` | 1.945 | `kv_pressure_not_observable` | — | False | 20 |
+| `default_grpc` | `embed` | 2.045 | `kv_pressure_not_observable` | — | False | 20 |
+| `tuned_grpc_multiplexed` | `embed` | 2.025 | `kv_pressure_not_observable` | — | False | 20 |
 
 ## Null anchor validation
 
-Cross-checkable cells: 11 (≥ 2 drifted → fires FR-014 `null_anchor_drift` header; currently 5 drifted). New-baseline cells: 37 (excluded from the count by construction).
+Cross-checkable cells: 11 (≥ 2 drifted → fires FR-014 `null_anchor_drift` header; currently 9 drifted). New-baseline cells: 37 (excluded from the count by construction).
 
 ### Cross-checkable cells (drift verdict against M6.1.3 baseline)
 
 | cell | cohort | max_tokens | m6_2_p50 | m6_1_3_p50 | drift_fraction | verdict |
 |------|--------|-----------:|---------:|-----------:|---------------:|---------|
-| `chat_stream_c1` | `default_grpc` | 50 | 1908.29 | 1957.91 | -1.824 | `WARN` |
-| `chat_stream_c1` | `rest_https_edge` | 50 | 1825.46 | 1839.34 | -0.514 | `PASS` |
-| `chat_stream_c1` | `rest_plain_tcp` | 50 | 1868.34 | 2258.18 | -14.979 | `FAIL` |
-| `chat_stream_c4` | `default_grpc` | 50 | 2050.23 | 2093.98 | -3.093 | `FAIL` |
-| `chat_stream_c4` | `rest_https_edge` | 50 | 2037.44 | 2036.51 | 0.018 | `PASS` |
-| `chat_stream_c4` | `rest_plain_tcp` | 50 | 2168.91 | 2870.10 | -22.452 | `FAIL` |
-| `chat_stream_c4` | `tuned_grpc_multiplexed` | 50 | 2084.09 | 2094.09 | -0.550 | `PASS` |
-| `chat_stream_c8` | `default_grpc` | 50 | 2115.13 | 2133.63 | -0.735 | `PASS` |
-| `chat_stream_c8` | `rest_https_edge` | 50 | 2065.10 | 2078.25 | -0.179 | `PASS` |
-| `chat_stream_c8` | `rest_plain_tcp` | 50 | 2214.25 | 2157.84 | 1.049 | `WARN` |
-| `chat_stream_c8` | `tuned_grpc_multiplexed` | 50 | 2124.60 | 2130.20 | -0.405 | `PASS` |
+| `chat_stream_c1` | `default_grpc` | 50 | 1870.01 | 1957.91 | -1.796 | `WARN` |
+| `chat_stream_c1` | `rest_https_edge` | 50 | 1837.55 | 1839.34 | -0.039 | `PASS` |
+| `chat_stream_c1` | `rest_plain_tcp` | 50 | 1859.11 | 2258.18 | -7.069 | `FAIL` |
+| `chat_stream_c4` | `default_grpc` | 50 | 2009.23 | 2093.98 | -1.619 | `WARN` |
+| `chat_stream_c4` | `rest_https_edge` | 50 | 1956.34 | 2036.51 | -1.575 | `WARN` |
+| `chat_stream_c4` | `rest_plain_tcp` | 50 | 2016.84 | 2870.10 | -11.892 | `FAIL` |
+| `chat_stream_c4` | `tuned_grpc_multiplexed` | 50 | 1992.49 | 2094.09 | -1.941 | `WARN` |
+| `chat_stream_c8` | `default_grpc` | 50 | 2002.34 | 2133.63 | -2.461 | `WARN` |
+| `chat_stream_c8` | `rest_https_edge` | 50 | 2036.69 | 2078.25 | -0.800 | `PASS` |
+| `chat_stream_c8` | `rest_plain_tcp` | 50 | 2050.13 | 2157.84 | -1.997 | `WARN` |
+| `chat_stream_c8` | `tuned_grpc_multiplexed` | 50 | 2019.46 | 2130.20 | -2.079 | `WARN` |
 
 ### New-baseline cells (no M6.1.3 reference; recorded for posterity)
 
 | cell | cohort | max_tokens | m6_2_p50 | marker |
 |------|--------|-----------:|---------:|--------|
-| `chat_stream_c1` | `default_grpc` | 10 | 611.89 | `new_baseline_marker` |
-| `chat_stream_c1` | `rest_https_edge` | 10 | 479.53 | `new_baseline_marker` |
-| `chat_stream_c1` | `rest_plain_tcp` | 10 | 618.79 | `new_baseline_marker` |
+| `chat_stream_c1` | `default_grpc` | 10 | 452.70 | `new_baseline_marker` |
+| `chat_stream_c1` | `rest_https_edge` | 10 | 425.16 | `new_baseline_marker` |
+| `chat_stream_c1` | `rest_plain_tcp` | 10 | 476.47 | `new_baseline_marker` |
 | `chat_stream_c1` | `tuned_grpc_multiplexed` | 10 | — | `new_baseline_marker` |
 | `chat_stream_c1` | `tuned_grpc_multiplexed` | 50 | — | `new_baseline_marker` |
-| `chat_stream_c4` | `default_grpc` | 10 | 623.23 | `new_baseline_marker` |
-| `chat_stream_c4` | `rest_https_edge` | 10 | 574.62 | `new_baseline_marker` |
-| `chat_stream_c4` | `rest_plain_tcp` | 10 | 677.54 | `new_baseline_marker` |
-| `chat_stream_c4` | `tuned_grpc_multiplexed` | 10 | 634.50 | `new_baseline_marker` |
-| `chat_stream_c8` | `default_grpc` | 10 | 624.59 | `new_baseline_marker` |
-| `chat_stream_c8` | `rest_https_edge` | 10 | 578.07 | `new_baseline_marker` |
-| `chat_stream_c8` | `rest_plain_tcp` | 10 | 824.63 | `new_baseline_marker` |
-| `chat_stream_c8` | `tuned_grpc_multiplexed` | 10 | 673.94 | `new_baseline_marker` |
-| `embed_c1` | `default_grpc` | 10 | 580.64 | `new_baseline_marker` |
-| `embed_c1` | `default_grpc` | 50 | 1891.56 | `new_baseline_marker` |
-| `embed_c1` | `rest_https_edge` | 10 | 605.17 | `new_baseline_marker` |
-| `embed_c1` | `rest_https_edge` | 50 | 1935.50 | `new_baseline_marker` |
-| `embed_c1` | `rest_plain_tcp` | 10 | 710.10 | `new_baseline_marker` |
-| `embed_c1` | `rest_plain_tcp` | 50 | 2045.78 | `new_baseline_marker` |
+| `chat_stream_c4` | `default_grpc` | 10 | 528.99 | `new_baseline_marker` |
+| `chat_stream_c4` | `rest_https_edge` | 10 | 512.55 | `new_baseline_marker` |
+| `chat_stream_c4` | `rest_plain_tcp` | 10 | 529.78 | `new_baseline_marker` |
+| `chat_stream_c4` | `tuned_grpc_multiplexed` | 10 | 534.36 | `new_baseline_marker` |
+| `chat_stream_c8` | `default_grpc` | 10 | 546.71 | `new_baseline_marker` |
+| `chat_stream_c8` | `rest_https_edge` | 10 | 559.78 | `new_baseline_marker` |
+| `chat_stream_c8` | `rest_plain_tcp` | 10 | 563.52 | `new_baseline_marker` |
+| `chat_stream_c8` | `tuned_grpc_multiplexed` | 10 | 536.23 | `new_baseline_marker` |
+| `embed_c1` | `default_grpc` | 10 | 576.36 | `new_baseline_marker` |
+| `embed_c1` | `default_grpc` | 50 | 1933.81 | `new_baseline_marker` |
+| `embed_c1` | `rest_https_edge` | 10 | 499.42 | `new_baseline_marker` |
+| `embed_c1` | `rest_https_edge` | 50 | 1939.73 | `new_baseline_marker` |
+| `embed_c1` | `rest_plain_tcp` | 10 | 530.47 | `new_baseline_marker` |
+| `embed_c1` | `rest_plain_tcp` | 50 | 1996.26 | `new_baseline_marker` |
 | `embed_c1` | `tuned_grpc_multiplexed` | 10 | — | `new_baseline_marker` |
 | `embed_c1` | `tuned_grpc_multiplexed` | 50 | — | `new_baseline_marker` |
-| `embed_c4` | `default_grpc` | 10 | 733.55 | `new_baseline_marker` |
-| `embed_c4` | `default_grpc` | 50 | 2143.27 | `new_baseline_marker` |
-| `embed_c4` | `rest_https_edge` | 10 | 607.53 | `new_baseline_marker` |
-| `embed_c4` | `rest_https_edge` | 50 | 2086.83 | `new_baseline_marker` |
-| `embed_c4` | `rest_plain_tcp` | 10 | 785.98 | `new_baseline_marker` |
-| `embed_c4` | `rest_plain_tcp` | 50 | 2256.40 | `new_baseline_marker` |
-| `embed_c4` | `tuned_grpc_multiplexed` | 10 | 697.36 | `new_baseline_marker` |
-| `embed_c4` | `tuned_grpc_multiplexed` | 50 | 2145.52 | `new_baseline_marker` |
-| `embed_c8` | `default_grpc` | 10 | 768.77 | `new_baseline_marker` |
-| `embed_c8` | `default_grpc` | 50 | 2409.85 | `new_baseline_marker` |
-| `embed_c8` | `rest_https_edge` | 10 | 818.04 | `new_baseline_marker` |
-| `embed_c8` | `rest_https_edge` | 50 | 2373.46 | `new_baseline_marker` |
-| `embed_c8` | `rest_plain_tcp` | 10 | 967.64 | `new_baseline_marker` |
-| `embed_c8` | `rest_plain_tcp` | 50 | 2451.95 | `new_baseline_marker` |
-| `embed_c8` | `tuned_grpc_multiplexed` | 10 | 769.34 | `new_baseline_marker` |
-| `embed_c8` | `tuned_grpc_multiplexed` | 50 | 2430.45 | `new_baseline_marker` |
+| `embed_c4` | `default_grpc` | 10 | 573.59 | `new_baseline_marker` |
+| `embed_c4` | `default_grpc` | 50 | 2058.67 | `new_baseline_marker` |
+| `embed_c4` | `rest_https_edge` | 10 | 628.07 | `new_baseline_marker` |
+| `embed_c4` | `rest_https_edge` | 50 | 2026.99 | `new_baseline_marker` |
+| `embed_c4` | `rest_plain_tcp` | 10 | 595.97 | `new_baseline_marker` |
+| `embed_c4` | `rest_plain_tcp` | 50 | 2112.10 | `new_baseline_marker` |
+| `embed_c4` | `tuned_grpc_multiplexed` | 10 | 549.23 | `new_baseline_marker` |
+| `embed_c4` | `tuned_grpc_multiplexed` | 50 | 2119.41 | `new_baseline_marker` |
+| `embed_c8` | `default_grpc` | 10 | 1111.59 | `new_baseline_marker` |
+| `embed_c8` | `default_grpc` | 50 | 2244.73 | `new_baseline_marker` |
+| `embed_c8` | `rest_https_edge` | 10 | 723.02 | `new_baseline_marker` |
+| `embed_c8` | `rest_https_edge` | 50 | 2213.16 | `new_baseline_marker` |
+| `embed_c8` | `rest_plain_tcp` | 10 | 933.50 | `new_baseline_marker` |
+| `embed_c8` | `rest_plain_tcp` | 50 | 2292.00 | `new_baseline_marker` |
+| `embed_c8` | `tuned_grpc_multiplexed` | 10 | 772.21 | `new_baseline_marker` |
+| `embed_c8` | `tuned_grpc_multiplexed` | 50 | 2158.28 | `new_baseline_marker` |
 
 ## Anchor latency trajectory
 
 ### `default_grpc`
 
-- max_minus_min_wall_p50_ms: `6.821`; latency_drift_warning: `False`
+- max_minus_min_wall_p50_ms: `0.000`; latency_drift_warning: `False`
 
 | sweep_hour_mark | snapshot_timestamp | wall_p50_ms | wall_p95_ms | wall_p99_ms |
 |----------------:|--------------------|------------:|------------:|------------:|
-| 0.00 | `2026-05-24T00:01:02Z` | 620.34 | 630.94 | 661.14 |
-| 0.03 | `2026-05-24T00:02:30Z` | 613.52 | 646.61 | 653.80 |
-| 3.57 | `2026-05-24T03:34:41Z` | 620.21 | 645.42 | 666.73 |
+| 0.00 | `2026-05-24T16:17:52Z` | 457.41 | 463.29 | 463.54 |
+| 3.63 | `2026-05-24T19:55:22Z` | 467.61 | 482.37 | 487.33 |
 
 ### `rest_https_edge`
 
-- max_minus_min_wall_p50_ms: `1.762`; latency_drift_warning: `False`
+- max_minus_min_wall_p50_ms: `0.000`; latency_drift_warning: `False`
 
 | sweep_hour_mark | snapshot_timestamp | wall_p50_ms | wall_p95_ms | wall_p99_ms |
 |----------------:|--------------------|------------:|------------:|------------:|
-| 0.00 | `2026-05-24T00:00:38Z` | 476.53 | 513.84 | 993.96 |
-| 0.03 | `2026-05-24T00:02:05Z` | 476.47 | 524.14 | 714.21 |
-| 3.57 | `2026-05-24T03:34:16Z` | 478.23 | 505.60 | 762.70 |
+| 0.00 | `2026-05-24T16:17:33Z` | 408.47 | 450.93 | 913.45 |
+| 3.63 | `2026-05-24T19:55:03Z` | 423.64 | 449.89 | 556.07 |
 
 ### `rest_plain_tcp`
 
-- max_minus_min_wall_p50_ms: `3.820`; latency_drift_warning: `False`
+- max_minus_min_wall_p50_ms: `0.000`; latency_drift_warning: `False`
 
 | sweep_hour_mark | snapshot_timestamp | wall_p50_ms | wall_p95_ms | wall_p99_ms |
 |----------------:|--------------------|------------:|------------:|------------:|
-| 0.00 | `2026-05-24T00:00:50Z` | 617.62 | 640.94 | 802.35 |
-| 0.03 | `2026-05-24T00:02:18Z` | 615.37 | 636.05 | 709.94 |
-| 3.57 | `2026-05-24T03:34:29Z` | 619.19 | 655.92 | 811.64 |
+| 0.00 | `2026-05-24T16:17:43Z` | 461.43 | 493.84 | 518.14 |
+| 3.63 | `2026-05-24T19:55:12Z` | 472.19 | 493.14 | 579.65 |
 
 ### `tuned_grpc_multiplexed`
 
-- max_minus_min_wall_p50_ms: `0.783`; latency_drift_warning: `False`
+- max_minus_min_wall_p50_ms: `0.000`; latency_drift_warning: `False`
 
 | sweep_hour_mark | snapshot_timestamp | wall_p50_ms | wall_p95_ms | wall_p99_ms |
 |----------------:|--------------------|------------:|------------:|------------:|
-| 0.00 | `2026-05-24T00:01:14Z` | 614.07 | 625.98 | 628.27 |
-| 0.03 | `2026-05-24T00:02:42Z` | 614.55 | 639.07 | 640.34 |
-| 3.57 | `2026-05-24T03:34:54Z` | 613.76 | 628.65 | 633.16 |
+| 0.00 | `2026-05-24T16:18:01Z` | 450.54 | 465.34 | 473.35 |
+| 3.63 | `2026-05-24T19:55:31Z` | 445.42 | 464.92 | 467.98 |
 
 ## Failure summary
 
@@ -536,14 +521,14 @@ _No measurement-cell failures._
 
 | cohort | snapshot # | cloud_provider | region | endpoint_ip | status |
 |--------|-----------:|----------------|--------|-------------|--------|
-| `default_grpc` | 0 | AWS | eu-west-1 | `63.32.89.206` | ok |
-| `default_grpc` | 1 | AWS | eu-west-1 | `63.32.89.206` | ok |
-| `rest_https_edge` | 0 | unknown | — | `158.178.206.14` | ok |
-| `rest_https_edge` | 1 | unknown | — | `158.178.206.14` | ok |
-| `rest_plain_tcp` | 0 | AWS | eu-west-1 | `63.32.89.206` | ok |
-| `rest_plain_tcp` | 1 | AWS | eu-west-1 | `63.32.89.206` | ok |
-| `tuned_grpc_multiplexed` | 0 | AWS | eu-west-1 | `63.32.89.206` | ok |
-| `tuned_grpc_multiplexed` | 1 | AWS | eu-west-1 | `63.32.89.206` | ok |
+| `default_grpc` | 0 | AWS | us-east-1 | `3.237.255.73` | ok |
+| `default_grpc` | 1 | AWS | us-east-1 | `3.237.255.73` | ok |
+| `rest_https_edge` | 0 | AWS | us-east-2 | `52.14.204.126` | ok |
+| `rest_https_edge` | 1 | AWS | us-east-2 | `52.14.204.126` | ok |
+| `rest_plain_tcp` | 0 | AWS | us-east-1 | `44.214.1.122` | ok |
+| `rest_plain_tcp` | 1 | AWS | us-east-1 | `44.214.1.122` | ok |
+| `tuned_grpc_multiplexed` | 0 | AWS | us-east-1 | `3.237.255.73` | ok |
+| `tuned_grpc_multiplexed` | 1 | AWS | us-east-1 | `3.237.255.73` | ok |
 
 ## Method / Background
 
