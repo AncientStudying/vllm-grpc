@@ -14,6 +14,8 @@ generic transient errors stay on FR-033's retry-once policy.
 
 from __future__ import annotations
 
+from typing import Any
+
 import grpc
 import httpx
 import pytest
@@ -284,3 +286,324 @@ class TestBlockFailedWithEndpointDeath:
             httpx.ReadError("connection refused"),
         ]
         assert block_failed_with_endpoint_death(results, n=3) is True
+
+
+# T074b / T074c — block-level recovery wrapper + budget enforcement ---------
+
+
+@pytest.fixture
+def _fake_rpc_success() -> Any:
+    """Build an RPCResult-shaped success record. The dispatcher inspects
+    ``success`` / ``wall_clock_ms`` / ``m6_1_1_timing_payload`` /
+    ``engine_cost`` via ``getattr``, so a small SimpleNamespace satisfies
+    the duck-type."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        success=True,
+        wall_clock_ms=42.0,
+        m6_1_1_timing_payload={},
+        engine_cost=None,
+        failure_reason=None,
+    )
+
+
+class _RecordingDriver:
+    """Test double for an M6_2RPCDriver. Each call appends its
+    (cohort, cell, seed, kwargs) tuple to ``calls`` and returns the
+    next ``yield_each`` element (either an RPCResult-shaped object or an
+    exception to raise).
+
+    Cycles back to the start of ``yield_each`` once exhausted so a test
+    can drive an arbitrary number of RPCs."""
+
+    def __init__(self, yield_each: list[Any]) -> None:
+        self.yield_each = yield_each
+        self.calls: list[tuple[Any, ...]] = []
+        self._idx = 0
+
+    async def __call__(
+        self,
+        cohort: Any,
+        cell: Any,
+        seed: int,
+        *,
+        max_tokens: int,
+        ignore_eos: bool,
+        prompt: Any,
+        prompt_embeds_override: Any,
+    ) -> Any:
+        self.calls.append((cohort, cell, seed, max_tokens, ignore_eos))
+        value = self.yield_each[self._idx % len(self.yield_each)]
+        self._idx += 1
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+
+def _dead_endpoint_exc() -> grpc.RpcError:
+    return _FakeRpcError(
+        code=grpc.StatusCode.UNAVAILABLE,
+        details="failed to connect to all addresses",
+    )
+
+
+def _block_inputs(prompt: str = "hello") -> dict[str, Any]:
+    return {
+        "prompt_text": prompt,
+        "embed_tensor_bytes": None,
+        "ignore_eos": False,
+        "prompt_source": "synthetic_seed_derived",
+        "prompt_corpus_idx": None,
+    }
+
+
+class TestBlockDispatcherRecoveryHappyPath:
+    """T074b: when all n RPCs fail with endpoint-death AND make_driver
+    is supplied, the dispatcher refreshes the driver and retries the
+    block. A second-try success closes the recovery cycle cleanly."""
+
+    @pytest.mark.asyncio
+    async def test_recovery_on_first_preemption_succeeds(
+        self, _fake_rpc_success: Any
+    ) -> None:
+        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+
+        dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+        fresh = _RecordingDriver(yield_each=[_fake_rpc_success])
+
+        async def make_driver() -> Any:
+            return fresh
+
+        dispatcher = build_modal_block_dispatcher(
+            dead, base_seed=42, make_driver=make_driver
+        )
+        result = await dispatcher(
+            cell_id="embed_c1",
+            cohort="default_grpc",
+            max_tokens=10,
+            n=4,
+            block_inputs=_block_inputs(),
+        )
+        assert result.failed_reason is None, "post-recovery block must succeed"
+        assert len(result.timings_ms) == 4
+        # All 4 RPCs against the dead driver, then 4 RPCs against the fresh one.
+        assert len(dead.calls) == 4
+        assert len(fresh.calls) == 4
+        assert dispatcher.preemption_events() == 1  # type: ignore[attr-defined]
+        assert dispatcher.preemption_budget == 2  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_no_recovery_when_make_driver_is_none(
+        self, _fake_rpc_success: Any
+    ) -> None:
+        """Backward compatibility: ``make_driver=None`` (the default)
+        disables recovery entirely. The pre-T074 behaviour is preserved
+        and the block fails with the usual aggregation path."""
+        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+
+        dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+        dispatcher = build_modal_block_dispatcher(dead, base_seed=42)
+        result = await dispatcher(
+            cell_id="embed_c1",
+            cohort="default_grpc",
+            max_tokens=10,
+            n=4,
+            block_inputs=_block_inputs(),
+        )
+        assert result.failed_reason is not None, "no recovery → block must fail"
+        assert "grpc" in result.failed_reason.lower()
+        assert len(dead.calls) == 4  # only the original attempt
+        assert dispatcher.preemption_events() == 0  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_no_recovery_when_only_some_rpcs_fail(
+        self, _fake_rpc_success: Any
+    ) -> None:
+        """Only a WHOLE-block endpoint-death pattern triggers recovery.
+        Mixed success / failure stays on the normal aggregation path
+        (some timings recorded, ``failed_reason=None`` if at least one
+        RPC succeeded)."""
+        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+
+        # Interleave 2 successes and 2 dead-endpoint exceptions.
+        driver = _RecordingDriver(
+            yield_each=[
+                _fake_rpc_success,
+                _dead_endpoint_exc(),
+                _fake_rpc_success,
+                _dead_endpoint_exc(),
+            ]
+        )
+
+        async def make_driver() -> Any:
+            raise AssertionError("make_driver MUST NOT be invoked on partial failure")
+
+        dispatcher = build_modal_block_dispatcher(
+            driver, base_seed=42, make_driver=make_driver
+        )
+        result = await dispatcher(
+            cell_id="embed_c1",
+            cohort="default_grpc",
+            max_tokens=10,
+            n=4,
+            block_inputs=_block_inputs(),
+        )
+        assert len(result.timings_ms) == 2  # the two successes
+        assert dispatcher.preemption_events() == 0  # type: ignore[attr-defined]
+
+
+class TestBlockDispatcherRecoveryBudget:
+    """T074c FR-026 budget enforcement: after
+    ``M6_2_PREEMPTION_RECURRENCE_THRESHOLD`` successful recoveries, the
+    next detected preemption raises :class:`PreemptionBudgetExhausted`
+    so the orchestrator can abort the sweep cleanly."""
+
+    @pytest.mark.asyncio
+    async def test_budget_exhausted_raises_after_threshold(
+        self, _fake_rpc_success: Any
+    ) -> None:
+        from vllm_grpc_bench.m6_2_validate import (
+            PreemptionBudgetExhausted,
+            build_modal_block_dispatcher,
+        )
+
+        always_dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+
+        async def make_driver() -> Any:
+            # The "refreshed" driver is ALSO dead — Modal kept getting
+            # preempted on the new container too. Realistic worst case.
+            return _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+
+        dispatcher = build_modal_block_dispatcher(
+            always_dead, base_seed=42, make_driver=make_driver, preemption_budget=2
+        )
+        with pytest.raises(PreemptionBudgetExhausted, match="FR-026"):
+            await dispatcher(
+                cell_id="embed_c1",
+                cohort="default_grpc",
+                max_tokens=10,
+                n=4,
+                block_inputs=_block_inputs(),
+            )
+        # Counter should reflect the 2 successful (well, attempted)
+        # recoveries before the 3rd detection raised.
+        assert dispatcher.preemption_events() == 2  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_recovery_failed_raises_when_make_driver_throws(
+        self,
+    ) -> None:
+        from vllm_grpc_bench.m6_2_validate import (
+            PreemptionRecoveryFailed,
+            build_modal_block_dispatcher,
+        )
+
+        dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+
+        async def make_driver() -> Any:
+            raise TimeoutError(
+                "Modal endpoint refresh timed out — new container never published"
+            )
+
+        dispatcher = build_modal_block_dispatcher(
+            dead, base_seed=42, make_driver=make_driver
+        )
+        with pytest.raises(PreemptionRecoveryFailed, match="TimeoutError"):
+            await dispatcher(
+                cell_id="embed_c1",
+                cohort="default_grpc",
+                max_tokens=10,
+                n=4,
+                block_inputs=_block_inputs(),
+            )
+        # Recovery never completed → counter stays at 0 (the recovery
+        # cycle wasn't successful, so we don't count it against the
+        # FR-026 budget).
+        assert dispatcher.preemption_events() == 0  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_budget_constant_is_two(self) -> None:
+        """The FR-026 threshold is load-bearing for the sweep-abort
+        contract; a silent drift would change when the orchestrator
+        gives up vs spins forever."""
+        from vllm_grpc_bench.m6_2_validate import (
+            M6_2_PREEMPTION_RECURRENCE_THRESHOLD,
+        )
+
+        assert M6_2_PREEMPTION_RECURRENCE_THRESHOLD == 2
+
+    @pytest.mark.asyncio
+    async def test_recovery_within_budget_succeeds(
+        self, _fake_rpc_success: Any
+    ) -> None:
+        """Two preemptions in a row, both recover successfully (third
+        block succeeds) → no abort, the dispatcher returns a normal
+        BlockDispatchResult."""
+        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+
+        dead1 = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+        dead2 = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+        fresh = _RecordingDriver(yield_each=[_fake_rpc_success])
+        sequence = iter([dead2, fresh])
+
+        async def make_driver() -> Any:
+            return next(sequence)
+
+        dispatcher = build_modal_block_dispatcher(
+            dead1, base_seed=42, make_driver=make_driver, preemption_budget=2
+        )
+        result = await dispatcher(
+            cell_id="embed_c1",
+            cohort="default_grpc",
+            max_tokens=10,
+            n=4,
+            block_inputs=_block_inputs(),
+        )
+        assert result.failed_reason is None, "second-recovery success must succeed"
+        assert len(result.timings_ms) == 4
+        assert dispatcher.preemption_events() == 2  # type: ignore[attr-defined]
+
+
+class TestBlockDispatcherPreemptionEvents:
+    """Counter exposure: the dispatcher's ``preemption_events`` attribute
+    is the source of truth for the orchestrator to populate
+    ``run_meta.preemption_events`` after the sweep completes."""
+
+    @pytest.mark.asyncio
+    async def test_counter_starts_at_zero(self, _fake_rpc_success: Any) -> None:
+        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+
+        driver = _RecordingDriver(yield_each=[_fake_rpc_success])
+        dispatcher = build_modal_block_dispatcher(driver, base_seed=42)
+        assert dispatcher.preemption_events() == 0  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_counter_increments_per_recovery(
+        self, _fake_rpc_success: Any
+    ) -> None:
+        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+
+        dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+        sequence = iter(
+            [
+                _RecordingDriver(yield_each=[_dead_endpoint_exc()]),
+                _RecordingDriver(yield_each=[_fake_rpc_success]),
+            ]
+        )
+
+        async def make_driver() -> Any:
+            return next(sequence)
+
+        dispatcher = build_modal_block_dispatcher(
+            dead, base_seed=42, make_driver=make_driver
+        )
+        assert dispatcher.preemption_events() == 0  # type: ignore[attr-defined]
+        await dispatcher(
+            cell_id="embed_c1",
+            cohort="default_grpc",
+            max_tokens=10,
+            n=2,
+            block_inputs=_block_inputs(),
+        )
+        assert dispatcher.preemption_events() == 2  # type: ignore[attr-defined]

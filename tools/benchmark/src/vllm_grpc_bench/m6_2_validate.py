@@ -36,6 +36,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 
 import grpc
@@ -58,6 +59,9 @@ from vllm_grpc_bench.m6_2_types import (
 )
 
 __all__ = [
+    "M6_2_PREEMPTION_RECURRENCE_THRESHOLD",
+    "PreemptionBudgetExhausted",
+    "PreemptionRecoveryFailed",
     "block_failed_with_endpoint_death",
     "build_artifact",
     "build_modal_anchor_dispatcher",
@@ -353,10 +357,42 @@ def _cell_from_cell_id(cell_id: str) -> M6_1Cell:
     raise ValueError(f"unknown M6.2 cell id {cell_id!r}; not in M6_1_CELLS")
 
 
+# T074c — Modal-preemption budget enforcement -------------------------------
+
+
+M6_2_PREEMPTION_RECURRENCE_THRESHOLD: int = 2
+"""FR-026 inherits the M6.1.3 FR-028 Modal-preemption-recurrence threshold:
+the sweep tolerates up to ``M6_2_PREEMPTION_RECURRENCE_THRESHOLD`` Modal-
+preemption-recovery cycles before aborting. The 3rd detected preemption
+raises :class:`PreemptionBudgetExhausted` so the sweep exits cleanly
+rather than spinning on a Modal app that keeps getting preempted.
+
+A "preemption-recovery cycle" is a (PREEMPTION_DETECTED, PREEMPTION_RECOVERED)
+event pair against a single dead endpoint. The counter accumulates across
+the whole sweep, not per-cohort or per-cell."""
+
+
+class PreemptionBudgetExhausted(RuntimeError):
+    """Raised by the block dispatcher when Modal preemption recovery has
+    been attempted more than ``M6_2_PREEMPTION_RECURRENCE_THRESHOLD`` times
+    in a single sweep. The orchestrator catches this in
+    :func:`_run_modal_backed` and exits with a non-zero return code so the
+    operator (or cron-monitor) sees that the sweep abandoned cleanly."""
+
+
+class PreemptionRecoveryFailed(RuntimeError):
+    """Raised when ``make_driver`` itself fails to produce a fresh driver
+    (Modal endpoint never came back online inside the recovery timeout).
+    The orchestrator treats this the same as ``PreemptionBudgetExhausted``
+    — clean abort, no further block attempts."""
+
+
 def build_modal_block_dispatcher(
     driver: Any,  # M6_2RPCDriver — `Any` to avoid an import cycle at the type level
     *,
     base_seed: int,
+    make_driver: Any = None,  # Callable[[], Awaitable[M6_2RPCDriver]] | None
+    preemption_budget: int = M6_2_PREEMPTION_RECURRENCE_THRESHOLD,
 ) -> Any:
     """Build a :class:`BlockDispatcher` that fires N concurrent RPCs via
     :func:`provide_m6_2_rpc_driver`'s driver callable.
@@ -376,9 +412,67 @@ def build_modal_block_dispatcher(
       the block (with ``no_successful_rpcs`` sentinel when every RPC failed),
       and per-RPC ``m6_1_1_timing_payload`` dicts for the segment
       decomposition.
+
+    **T074b Modal-preemption recovery (2026-05-24)**: when ALL ``n`` RPCs
+    in the block fail with :func:`is_modal_endpoint_death` shapes AND a
+    ``make_driver`` callable is provided, the dispatcher emits a
+    ``PREEMPTION_DETECTED`` progress event, awaits ``make_driver()`` to
+    receive a fresh driver bound to the post-restart Modal endpoint,
+    emits ``PREEMPTION_RECOVERED``, and retries the block once against
+    the refreshed driver. After ``preemption_budget`` recovery cycles the
+    dispatcher raises :class:`PreemptionBudgetExhausted` so the
+    orchestrator aborts cleanly. ``make_driver=None`` (the default for
+    backward compatibility) disables recovery entirely — the dispatcher
+    behaves identically to the pre-T074 implementation.
+
+    The dispatcher function carries the live counters as attributes so
+    the orchestrator can persist them to ``run_meta.preemption_events``::
+
+        dispatcher.preemption_events  # int — total successful recoveries
+        dispatcher.preemption_budget  # int — configured cap
     """
     from vllm_grpc_bench.m6_2_prompt_source import ResolvedBlockInputs
-    from vllm_grpc_bench.m6_2_sweep import BlockDispatchResult
+    from vllm_grpc_bench.m6_2_sweep import BlockDispatchResult, _progress
+
+    # Mutable holder so the recovery loop can swap in a refreshed driver
+    # without disturbing the closure semantics of the inner ``_one_rpc``.
+    state = SimpleNamespace(driver=driver, preemption_events=0)
+
+    async def _gather_block(
+        cell: M6_1Cell,
+        cohort: M6_1_2CohortKind,
+        max_tokens: int,
+        n: int,
+        prompt: Any,
+        prompt_embeds_override: Any,
+        ignore_eos: bool,
+    ) -> list[Any]:
+        # In-flight RPCs MUST be bounded by cell.concurrency so the measured
+        # cell reflects the load it claims to characterize. Without this
+        # semaphore, all n RPCs fire simultaneously regardless of cell.c,
+        # which (a) under-measures c=1/c=4 cells by accidentally batching them
+        # at n-way concurrency, (b) saturates the single-worker REST shim's
+        # event loop with concurrent SSE streams, inflating client-side TPOT
+        # by ~44 ms/token on REST cohorts at n=20. Mirrors the M6.1.3
+        # m6_1_3_sweep.py:468 pattern.
+        sem = asyncio.Semaphore(cell.concurrency)
+
+        async def _one_rpc(i: int) -> Any:
+            seed = base_seed + i
+            async with sem:
+                return await state.driver(
+                    cohort,
+                    cell,
+                    seed,
+                    max_tokens=max_tokens,
+                    ignore_eos=ignore_eos,
+                    prompt=prompt,
+                    prompt_embeds_override=prompt_embeds_override,
+                )
+
+        return await asyncio.gather(
+            *[_one_rpc(i) for i in range(n)], return_exceptions=True
+        )
 
     async def _dispatcher(
         *,
@@ -393,30 +487,73 @@ def build_modal_block_dispatcher(
         prompt_embeds_override = block_inputs.get("embed_tensor_bytes")
         ignore_eos = bool(block_inputs.get("ignore_eos", False))
 
-        # In-flight RPCs MUST be bounded by cell.concurrency so the measured
-        # cell reflects the load it claims to characterize. Without this
-        # semaphore, all n RPCs fire simultaneously regardless of cell.c,
-        # which (a) under-measures c=1/c=4 cells by accidentally batching them
-        # at n-way concurrency, (b) saturates the single-worker REST shim's
-        # event loop with concurrent SSE streams, inflating client-side TPOT
-        # by ~44 ms/token on REST cohorts at n=20. Mirrors the M6.1.3
-        # m6_1_3_sweep.py:468 pattern.
-        sem = asyncio.Semaphore(cell.concurrency)
+        results = await _gather_block(
+            cell, cohort, max_tokens, n, prompt, prompt_embeds_override, ignore_eos
+        )
 
-        async def _one_rpc(i: int) -> Any:
-            seed = base_seed + i
-            async with sem:
-                return await driver(
-                    cohort,
-                    cell,
-                    seed,
+        # T074b recovery loop: when ALL n RPCs failed with endpoint-death
+        # signatures, the Modal worker has been preempted and the cached
+        # endpoint URL is dead. Refresh and retry once per cycle, with the
+        # FR-026 / T074c budget bounding the total recovery count.
+        while make_driver is not None and block_failed_with_endpoint_death(results, n):
+            if state.preemption_events >= preemption_budget:
+                _progress(
+                    "PREEMPTION_BUDGET_EXHAUSTED",
+                    cell=cell_id,
+                    cohort=cohort,
                     max_tokens=max_tokens,
-                    ignore_eos=ignore_eos,
-                    prompt=prompt,
-                    prompt_embeds_override=prompt_embeds_override,
+                    preemption_events=state.preemption_events,
+                    budget=preemption_budget,
                 )
-
-        results = await asyncio.gather(*[_one_rpc(i) for i in range(n)], return_exceptions=True)
+                raise PreemptionBudgetExhausted(
+                    f"Modal preemption recurrence threshold "
+                    f"({preemption_budget}) exhausted at cell={cell_id} "
+                    f"cohort={cohort} max_tokens={max_tokens}; aborting sweep "
+                    f"per FR-026."
+                )
+            attempt = state.preemption_events + 1
+            _progress(
+                "PREEMPTION_DETECTED",
+                cell=cell_id,
+                cohort=cohort,
+                max_tokens=max_tokens,
+                attempt=f"{attempt}/{preemption_budget}",
+            )
+            t0 = asyncio.get_event_loop().time()
+            try:
+                state.driver = await make_driver()
+            except Exception as exc:  # noqa: BLE001
+                _progress(
+                    "PREEMPTION_RECOVERY_FAILED",
+                    cell=cell_id,
+                    cohort=cohort,
+                    max_tokens=max_tokens,
+                    attempt=f"{attempt}/{preemption_budget}",
+                    error=type(exc).__name__,
+                )
+                raise PreemptionRecoveryFailed(
+                    f"make_driver() failed during preemption recovery "
+                    f"at cell={cell_id} cohort={cohort} max_tokens={max_tokens}: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+            state.preemption_events = attempt
+            _progress(
+                "PREEMPTION_RECOVERED",
+                cell=cell_id,
+                cohort=cohort,
+                max_tokens=max_tokens,
+                attempt=f"{attempt}/{preemption_budget}",
+                recovery_s=f"{asyncio.get_event_loop().time() - t0:.1f}",
+            )
+            results = await _gather_block(
+                cell,
+                cohort,
+                max_tokens,
+                n,
+                prompt,
+                prompt_embeds_override,
+                ignore_eos,
+            )
 
         timings_ms: list[float] = []
         per_rpc_metadata: list[dict[str, str]] = []
@@ -470,6 +607,17 @@ def build_modal_block_dispatcher(
             failed_reason=None,
             per_rpc_metadata=per_rpc_metadata,
         )
+
+    # Expose the live preemption-events counter so the orchestrator can
+    # persist it to ``run_meta.preemption_events`` after the sweep
+    # completes. Functions are first-class and can carry attributes; the
+    # ``state`` namespace itself is the source of truth (the closure
+    # references it), so the read is always current.
+    def _get_preemption_events() -> int:
+        return int(state.preemption_events)
+
+    _dispatcher.preemption_events = _get_preemption_events  # type: ignore[attr-defined]
+    _dispatcher.preemption_budget = preemption_budget  # type: ignore[attr-defined]
 
     return _dispatcher
 
