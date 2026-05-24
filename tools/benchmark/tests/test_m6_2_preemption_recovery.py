@@ -830,6 +830,145 @@ class TestBuildModalMakeDriverCallable:
         assert closed == [0, 1, 2]
 
 
+class TestAnchorDispatcherRecovery:
+    """T074e: the FR-031 anchor dispatcher gets the same recovery loop
+    as the block dispatcher. When all n anchor RPCs fail with
+    endpoint-death shapes AND make_driver is supplied, the dispatcher
+    emits PREEMPTION_DETECTED phase=anchor, refreshes the driver,
+    emits PREEMPTION_RECOVERED phase=anchor, and retries the anchor.
+    """
+
+    @pytest.mark.asyncio
+    async def test_anchor_recovery_on_first_preemption_succeeds(
+        self, _fake_rpc_success: Any
+    ) -> None:
+        from vllm_grpc_bench.m6_2_validate import build_modal_anchor_dispatcher
+
+        dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+        fresh = _RecordingDriver(yield_each=[_fake_rpc_success])
+
+        async def make_driver() -> Any:
+            return fresh
+
+        anchor = build_modal_anchor_dispatcher(dead, make_driver=make_driver)
+        timings = await anchor(
+            cohort="default_grpc", n=4, base_seed=42, seed_offset=0
+        )
+        assert len(timings) == 4, "post-recovery anchor returns all successful timings"
+        assert timings[0] == _fake_rpc_success.wall_clock_ms
+        # 4 RPCs against the dead driver, then 4 against the fresh one.
+        assert len(dead.calls) == 4
+        assert len(fresh.calls) == 4
+        assert anchor.preemption_events() == 1  # type: ignore[attr-defined]
+        assert anchor.preemption_budget == 2  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_anchor_no_recovery_when_make_driver_is_none(self) -> None:
+        """Backward compatibility: omit ``make_driver`` and the anchor
+        dispatcher behaves like the pre-T074e implementation — exceptions
+        are swallowed and the anchor returns an empty list of timings."""
+        from vllm_grpc_bench.m6_2_validate import build_modal_anchor_dispatcher
+
+        dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+        anchor = build_modal_anchor_dispatcher(dead)
+        timings = await anchor(
+            cohort="default_grpc", n=4, base_seed=42, seed_offset=0
+        )
+        assert timings == [], "no recovery + all-fail → empty timings (legacy shape)"
+        assert len(dead.calls) == 4  # only the original attempt
+        assert anchor.preemption_events() == 0  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_anchor_no_recovery_when_only_some_rpcs_fail(
+        self, _fake_rpc_success: Any
+    ) -> None:
+        """Partial-failure anchor blocks: the recovery predicate fires only
+        on a whole-block endpoint-death pattern, so a mix of successes and
+        failures returns the successful timings without invoking
+        make_driver."""
+        from vllm_grpc_bench.m6_2_validate import build_modal_anchor_dispatcher
+
+        driver = _RecordingDriver(
+            yield_each=[
+                _fake_rpc_success,
+                _dead_endpoint_exc(),
+                _fake_rpc_success,
+                _dead_endpoint_exc(),
+            ]
+        )
+
+        async def make_driver() -> Any:
+            raise AssertionError("make_driver MUST NOT be invoked on partial failure")
+
+        anchor = build_modal_anchor_dispatcher(driver, make_driver=make_driver)
+        timings = await anchor(
+            cohort="default_grpc", n=4, base_seed=42, seed_offset=0
+        )
+        assert len(timings) == 2  # the two successes
+        assert anchor.preemption_events() == 0  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_anchor_budget_exhausted_raises(self) -> None:
+        """The 3rd consecutive anchor preemption raises
+        :class:`PreemptionBudgetExhausted` — same shape as the block
+        dispatcher path. The orchestrator's outer except clause catches
+        either."""
+        from vllm_grpc_bench.m6_2_validate import (
+            PreemptionBudgetExhausted,
+            build_modal_anchor_dispatcher,
+        )
+
+        always_dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+
+        async def make_driver() -> Any:
+            # The "refreshed" driver is also dead — Modal kept preempting
+            # the new container too.
+            return _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+
+        anchor = build_modal_anchor_dispatcher(
+            always_dead, make_driver=make_driver, preemption_budget=2
+        )
+        with pytest.raises(PreemptionBudgetExhausted, match="FR-026"):
+            await anchor(
+                cohort="default_grpc", n=4, base_seed=42, seed_offset=0
+            )
+        # 2 successful (well, attempted) recoveries before the 3rd
+        # detection raised — same accounting as the block dispatcher.
+        assert anchor.preemption_events() == 2  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_anchor_recovery_failed_raises(self) -> None:
+        """If make_driver itself throws (Modal Dict polling timed out),
+        the dispatcher wraps it in :class:`PreemptionRecoveryFailed`."""
+        from vllm_grpc_bench.m6_2_validate import (
+            PreemptionRecoveryFailed,
+            build_modal_anchor_dispatcher,
+        )
+
+        dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
+
+        async def make_driver() -> Any:
+            raise TimeoutError(
+                "Modal endpoint refresh timed out — new container never published"
+            )
+
+        anchor = build_modal_anchor_dispatcher(dead, make_driver=make_driver)
+        with pytest.raises(PreemptionRecoveryFailed, match="TimeoutError"):
+            await anchor(
+                cohort="default_grpc", n=4, base_seed=42, seed_offset=0
+            )
+        assert anchor.preemption_events() == 0  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_anchor_counter_starts_at_zero(self, _fake_rpc_success: Any) -> None:
+        from vllm_grpc_bench.m6_2_validate import build_modal_anchor_dispatcher
+
+        driver = _RecordingDriver(yield_each=[_fake_rpc_success])
+        anchor = build_modal_anchor_dispatcher(driver)
+        assert anchor.preemption_events() == 0  # type: ignore[attr-defined]
+        assert anchor.preemption_budget == 2  # type: ignore[attr-defined]
+
+
 class TestBlockDispatcherPreemptionEvents:
     """Counter exposure: the dispatcher's ``preemption_events`` attribute
     is the source of truth for the orchestrator to populate

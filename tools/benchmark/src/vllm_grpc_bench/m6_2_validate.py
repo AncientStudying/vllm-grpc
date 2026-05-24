@@ -741,6 +741,8 @@ def build_modal_anchor_dispatcher(
     *,
     anchor_cell: M6_1Cell | None = None,
     anchor_max_tokens: int = 10,
+    make_driver: Any = None,  # Callable[[], Awaitable[M6_2RPCDriver]] | None
+    preemption_budget: int = M6_2_PREEMPTION_RECURRENCE_THRESHOLD,
 ) -> Any:
     """Build an :class:`AnchorRPCDriver` that fires the FR-031 anchor block
     against the real driver.
@@ -749,24 +751,54 @@ def build_modal_anchor_dispatcher(
     back to ``_build_chat_prompt(seed)``), preserving byte-comparability with
     M6.1.3's published anchors per R-3 of research.md. Always at
     ``chat_stream_c1 × max_tokens=10`` unless the caller overrides.
+
+    **T074e Modal-preemption recovery (2026-05-24)**: parallel to
+    :func:`build_modal_block_dispatcher`'s recovery loop. When ALL ``n``
+    anchor RPCs fail with :func:`is_modal_endpoint_death` shapes AND
+    ``make_driver`` is supplied, the dispatcher emits a
+    ``PREEMPTION_DETECTED phase=anchor`` event, awaits the refreshed
+    driver, emits ``PREEMPTION_RECOVERED phase=anchor``, and retries the
+    anchor block once. After ``preemption_budget`` recoveries the
+    dispatcher raises :class:`PreemptionBudgetExhausted` (same exception
+    type as the block dispatcher; the orchestrator's outer ``except``
+    clause catches both).
+
+    The anchor dispatcher tracks its own ``preemption_events`` counter
+    separately from the block dispatcher's. Per-dispatcher budgets are
+    technically more permissive than FR-026's strict sweep-wide threshold,
+    but anchor preemption is rare enough (anchors fire at most ~10 times
+    per publish sweep vs ~132 block dispatches) that the per-dispatcher
+    counter is a practical simplification. Unifying the budgets via the
+    make_driver factory is a future enhancement.
+
+    Counters exposed for orchestrator readback (mirrors the block
+    dispatcher API)::
+
+        anchor_dispatcher.preemption_events  # callable returning int
+        anchor_dispatcher.preemption_budget  # int constant
     """
     from vllm_grpc_bench.m6_1_types import M6_1Cell as _M6_1Cell
+    from vllm_grpc_bench.m6_2_sweep import _progress
 
     cell = anchor_cell or _M6_1Cell(path="chat_stream", hidden_size=4096, concurrency=1)
+    state = SimpleNamespace(driver=driver, preemption_events=0)
 
-    async def _anchor(
-        *, cohort: M6_1_2CohortKind, n: int, base_seed: int, seed_offset: int
-    ) -> list[float]:
+    async def _gather_anchor(
+        cohort: M6_1_2CohortKind, n: int, base_seed: int, seed_offset: int
+    ) -> list[Any]:
+        """Fire the anchor block once and return raw per-RPC results
+        (success records OR exceptions). The caller distinguishes the
+        all-endpoint-death pattern from a normal partial-failure path."""
         # Same in-flight bound as build_modal_block_dispatcher: the anchor is
         # always chat_stream_c1 (concurrency=1), so this enforces strictly
         # serial dispatch and matches M6.1.3's anchor measurement regime.
         sem = asyncio.Semaphore(cell.concurrency)
 
-        async def _one(i: int) -> float | None:
+        async def _one(i: int) -> Any:
             seed = base_seed + seed_offset + i
             async with sem:
                 try:
-                    result = await driver(
+                    return await state.driver(
                         cohort,
                         cell,
                         seed,
@@ -775,14 +807,87 @@ def build_modal_anchor_dispatcher(
                         prompt=None,
                         prompt_embeds_override=None,
                     )
-                except (grpc.RpcError, httpx.HTTPError):
-                    return None
-            if getattr(result, "success", False) and result.wall_clock_ms is not None:
-                return float(result.wall_clock_ms)
-            return None
+                except (grpc.RpcError, httpx.HTTPError) as exc:
+                    # Capture the exception itself so the recovery predicate
+                    # can run is_modal_endpoint_death on it. The legacy
+                    # behavior of returning None on RPC failure is preserved
+                    # in the aggregation step below.
+                    return exc
 
-        raw = await asyncio.gather(*[_one(i) for i in range(n)])
-        return [v for v in raw if v is not None]
+        return await asyncio.gather(*[_one(i) for i in range(n)])
+
+    async def _anchor(
+        *, cohort: M6_1_2CohortKind, n: int, base_seed: int, seed_offset: int
+    ) -> list[float]:
+        results = await _gather_anchor(cohort, n, base_seed, seed_offset)
+
+        # T074e recovery loop: when ALL n anchor RPCs failed with
+        # endpoint-death signatures, the Modal worker is gone. Mirrors the
+        # block dispatcher's recovery sequence.
+        while make_driver is not None and block_failed_with_endpoint_death(
+            results, n
+        ):
+            if state.preemption_events >= preemption_budget:
+                _progress(
+                    "PREEMPTION_BUDGET_EXHAUSTED",
+                    phase="anchor",
+                    cohort=cohort,
+                    preemption_events=state.preemption_events,
+                    budget=preemption_budget,
+                )
+                raise PreemptionBudgetExhausted(
+                    f"Modal preemption recurrence threshold "
+                    f"({preemption_budget}) exhausted during anchor block "
+                    f"cohort={cohort}; aborting sweep per FR-026."
+                )
+            attempt = state.preemption_events + 1
+            _progress(
+                "PREEMPTION_DETECTED",
+                phase="anchor",
+                cohort=cohort,
+                attempt=f"{attempt}/{preemption_budget}",
+            )
+            t0 = asyncio.get_event_loop().time()
+            try:
+                state.driver = await make_driver()
+            except Exception as exc:  # noqa: BLE001
+                _progress(
+                    "PREEMPTION_RECOVERY_FAILED",
+                    phase="anchor",
+                    cohort=cohort,
+                    attempt=f"{attempt}/{preemption_budget}",
+                    error=type(exc).__name__,
+                )
+                raise PreemptionRecoveryFailed(
+                    f"make_driver() failed during anchor-block preemption "
+                    f"recovery cohort={cohort}: {type(exc).__name__}: {exc}"
+                ) from exc
+            state.preemption_events = attempt
+            _progress(
+                "PREEMPTION_RECOVERED",
+                phase="anchor",
+                cohort=cohort,
+                attempt=f"{attempt}/{preemption_budget}",
+                recovery_s=f"{asyncio.get_event_loop().time() - t0:.1f}",
+            )
+            results = await _gather_anchor(cohort, n, base_seed, seed_offset)
+
+        # Convert raw results into the legacy "list of successful timings"
+        # shape the caller (compute_anchor_block) expects. Exceptions and
+        # non-success records are dropped (preserves pre-T074e behavior).
+        timings: list[float] = []
+        for r in results:
+            if isinstance(r, BaseException):
+                continue
+            if getattr(r, "success", False) and getattr(r, "wall_clock_ms", None) is not None:
+                timings.append(float(r.wall_clock_ms))
+        return timings
+
+    def _get_preemption_events() -> int:
+        return int(state.preemption_events)
+
+    _anchor.preemption_events = _get_preemption_events  # type: ignore[attr-defined]
+    _anchor.preemption_budget = preemption_budget  # type: ignore[attr-defined]
 
     return _anchor
 
@@ -1418,7 +1523,10 @@ async def _run_modal_backed(
                 base_seed=base_seed,
                 make_driver=make_driver,
             )
-            anchor_dispatcher = build_modal_anchor_dispatcher(driver)
+            anchor_dispatcher = build_modal_anchor_dispatcher(
+                driver,
+                make_driver=make_driver,
+            )
 
             async def _topology_probe() -> dict[M6_1_2CohortKind, Any]:
                 # T074d: re-read endpoints each call so a topology probe
