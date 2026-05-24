@@ -128,41 +128,34 @@ If the integrity_warnings list is non-empty, investigate before proceeding to St
 - `intra_sweep_latency_drift` → unlikely in a 2.3h validate sweep but possible; rerun if it fires.
 - `failure_summary_threshold` → ≥ 3 cells failed; investigate per-reason tally.
 
-### Stage 2: Methodology gate — `/speckit-clarify` round 3
+### Stage 2: Methodology gate — round-3 closure (CLOSED 2026-05-24)
 
-Once the validate artifact lands and the integrity_warnings list is clean, the operator runs `/speckit-clarify` to pin the publish-mode `n` per FR-004:
+Round-3 closure landed 2026-05-24 against the post-fix validate sweep. The publish-mode parameters are now pinned in the spec and code:
 
-```bash
-# In Claude Code:
-/speckit-clarify Pin publish-mode n based on validate-sweep variance data
-```
+- **Publish `n=40`** (FR-004; constant `m6_2_types.M6_2_PUBLISH_N`). Validate-sweep CI half-widths at n=20 (median 1.95% @ max_tokens=50, 3.94% @ max_tokens=2048) plus `1/sqrt(2)` ≈ 29% tightening from doubling n placed n=40 below the FR-014 / SC-004 pooled-CI WARN bar at every cell.
+- **Wall-clock cap ≤ 16 h** (FR-023). Validate-derived projection at n=40 is ~13.2 h; the cap carries ~20% headroom for FR-026 preemption-retry budget + FR-031 4-hour-mark anchor pulses.
+- **Modal-spend cap ≤ $25** (FR-021). Validate-derived projection at n=40 is ~$20 (extrapolated from 2026-05-24 validate at $5.39 / 3.567 h = $1.51/h). Cap carries ~25% headroom.
 
-The clarify cycle reads the validate-sweep within-cohort stddev at `chat_stream c=1 × max_tokens=2048` and pins one of:
+No further clarify cycle is required before launching publish.
 
-- **`n=100` uniform**: validate stddev high enough that n=50 CI half-width would exceed the M6.1.3 cohort-pair spread (~5-15 ms). Publish wall-clock ~40 h, Modal spend ~$30-40.
-- **adaptive (`n=100` at low caps, `n=50` at high caps `{1024, 2048}`)**: validate stddev acceptable at high caps but borderline at low; saves ~12-14h wall-clock. Publish wall-clock ~26-28 h, Modal spend ~$22-25.
-- **`n=50` uniform**: validate stddev low enough that n=50 CI half-width is below the M6.1.3 cohort-pair spread across the entire axis. Publish wall-clock ~20 h, Modal spend ~$20.
-
-The round-3 outcome updates FR-004 + FR-021 + FR-023 + SC-001 with the pinned bounds. Commit the spec amendment before proceeding.
-
-### Stage 3: Publish sweep (~20-48h wall-clock, ~$20-40 Modal spend)
+### Stage 3: Publish sweep (~13.2 h wall-clock, ~$20 Modal spend; capped at ≤ 16 h / ≤ $25)
 
 ```bash
-# Drive the publish sweep against Modal A10G eu-west-1
-# Replace <ROUND_3_PINNED_N> with 50, 100, or the adaptive split per the round-3 outcome
+# Drive the publish sweep against Modal A10G eu-west-1 at the round-3-pinned n=40
 python -m vllm_grpc_bench --m6_2 \
-    --m6_2-n=<ROUND_3_PINNED_N> \
+    --m6_2-n=40 \
     --m6_2-modal-region=eu-west-1 \
     --m6_2-modal-token-env=MODAL_BENCH_TOKEN
 
-# Expected: 20-48h wall-clock; $20-40 Modal spend; produces
+# Expected: ~13.2 h wall-clock; ~$20 Modal spend; produces
 #   docs/benchmarks/m6_2-token-budget.md
 #   docs/benchmarks/m6_2-token-budget.json
 #   docs/benchmarks/m6_2-events.jsonl (appended; the validate sweep's events stay)
+# Caps: FR-023 ≤ 16 h, FR-021 ≤ $25.
 ```
 
 **Publish sweep characteristics**:
-- Full 6-point axis `{10, 50, 256, 512, 1024, 2048}` × 4 cohorts × 6 cells = **144 measurement points** at the round-3-pinned `n` each.
+- Full 6-point axis `{10, 50, 256, 512, 1024, 2048}` × 4 cohorts × 6 cells = **144 measurement points** at the round-3-pinned `n=40` each.
 - **Plus the KV-pressure sub-probe (round-5 FR-036)**: 320 sub-probe RPCs (4 cohorts × 2 cell-types × 2 caps × n=20). Runs after the main sweep completes; ~30 min – 1 h additional wall-clock (< 2% of the publish budget).
 - Anchor re-anchor at start + end + every 4h mark per FR-031 (~8-10 snapshots/cohort).
 - `network_paths` topology probe co-fires at the same 4h cadence per FR-009 (~8-10 snapshots/cohort).
@@ -293,7 +286,7 @@ If the operator's Modal tunnel rotates after the FR-026 preemption-recurrence th
 
 # Rerun the publish sweep from scratch (no partial-resume logic at the multi-day budget per spec):
 rm docs/benchmarks/m6_2-token-budget.{md,json} docs/benchmarks/m6_2-events.jsonl  # clean slate
-python -m vllm_grpc_bench --m6_2 --m6_2-n=<ROUND_3_PINNED_N> --m6_2-modal-region=eu-west-1
+python -m vllm_grpc_bench --m6_2 --m6_2-n=40 --m6_2-modal-region=eu-west-1
 ```
 
 The single-block-level in-window retry per FR-033 handles transient errors automatically; only the multi-preemption sweep-level abort requires manual rerun.
@@ -330,7 +323,7 @@ for cell, by_cohort in art['per_cell'].items():
 
 ### `--m6_2` invocation fails with "publish mode BLOCKED: --m6_2-n is unset"
 
-Per FR-004 + spec round-2 Q1, publish-mode `n` is gated on the round-3 clarify cycle. Run the validate sweep first, then `/speckit-clarify` to pin `n`, then re-invoke `--m6_2 --m6_2-n=<pinned>`.
+Per FR-004 (round-3 closure 2026-05-24), the CLI gate `m6_2_sweep.gate_publish_mode_n` requires an explicit `--m6_2-n` flag at launch — no silent default — so an operator cannot start the publish sweep at an unintended n by omission. The canonical pinned value is `m6_2_types.M6_2_PUBLISH_N = 40`. Re-invoke as `--m6_2 --m6_2-n=40`. (Pass a different n only if you intend to override the pinned production value.)
 
 ### `--m6_2-asymmetric-prompts` flag not recognized
 

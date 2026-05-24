@@ -43,6 +43,7 @@ from vllm_grpc_bench.m6_1_2_types import (
 )
 from vllm_grpc_bench.m6_1_types import M6_1_CELLS
 from vllm_grpc_bench.m6_2_anchor_trajectory import (
+    compute_insufficient_snapshots_header_fired,
     compute_intra_sweep_drift_header_fired,
 )
 from vllm_grpc_bench.m6_2_null_anchor import (
@@ -87,6 +88,7 @@ INTEGRITY_CHANNELS: frozenset[str] = frozenset(
         "intra_sweep_latency_drift",
         "iteration_discipline_broken",
         "clock_anomaly_warning",
+        "trajectory_insufficient_snapshots",
     }
 )
 """Canonical channel labels the reporter may emit into ``integrity_warnings``.
@@ -95,7 +97,10 @@ The first four are publish-blocking-eligible per FR-014 / FR-029 / FR-009 /
 SC-016. ``iteration_discipline_broken`` is a soft diagnostic per FR-032 /
 SC-017. ``clock_anomaly_warning`` is the SC-011 0.5% RPC-budget gate; the
 reporter computes the fraction and emits the label when it crosses the
-threshold."""
+threshold. ``trajectory_insufficient_snapshots`` is the C1 round-8
+soft-diagnostic channel that fires when any cohort has fewer than 2
+post-warmup anchor snapshots — purely informational, NOT publish-blocking,
+distinct from ``intra_sweep_latency_drift``."""
 
 
 NOT_VALIDATED_MARKER: str = "not_validated"
@@ -298,6 +303,8 @@ def build_integrity_warnings(artifact: M6_2SweepArtifact) -> list[str]:
         warnings.append("cohort_csp_mismatch")
     if compute_intra_sweep_drift_header_fired(artifact.anchor_latency_trajectory):
         warnings.append("intra_sweep_latency_drift")
+    if compute_insufficient_snapshots_header_fired(artifact.anchor_latency_trajectory):
+        warnings.append("trajectory_insufficient_snapshots")
     if not artifact.run_meta.iteration_discipline_verified:
         warnings.append("iteration_discipline_broken")
     if compute_clock_anomaly_fraction(measurements) >= SC011_CLOCK_ANOMALY_FRACTION_THRESHOLD:
@@ -399,6 +406,12 @@ _CHANNEL_DESCRIPTIONS: dict[str, str] = {
     "clock_anomaly_warning": (
         "≥ 0.5% of RPCs flagged for wire-format clock anomaly (SC-011). "
         "Wall-clock measurements may be unreliable; inspect the events sidecar."
+    ),
+    "trajectory_insufficient_snapshots": (
+        "At least one cohort has fewer than 2 post-warmup anchor snapshots "
+        "(C1 round-8 amendment, FR-031). The intra-sweep drift verdict for "
+        "that cohort was suppressed. Soft diagnostic — informational only, "
+        "validate-mode start+end trajectories naturally hit this fallback."
     ),
 }
 

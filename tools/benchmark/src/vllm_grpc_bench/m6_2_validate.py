@@ -63,6 +63,7 @@ __all__ = [
     "build_modal_block_dispatcher",
     "build_stub_anchor_dispatcher",
     "build_stub_dispatcher",
+    "derive_anchor_baseline_p50_ms",
     "derive_anchor_drift_threshold",
     "infer_output_path",
     "is_transient_modal_error",
@@ -541,6 +542,49 @@ def derive_anchor_drift_threshold(baseline_path: str | Path) -> float:
     return max(cis) if cis else 5.0
 
 
+def derive_anchor_baseline_p50_ms(baseline_path: str | Path) -> float:
+    """Read M6.1.3's ``chat_stream_c1`` × ``max_tokens=10`` published
+    ``wall_p50_ms`` and return the MAX across the cohorts M6.1.3 published.
+
+    Feeds B4's ``floor_fraction × baseline_p50_ms`` co-floor in
+    :func:`m6_2_anchor_trajectory.compute_anchor_latency_trajectory`. Using
+    the per-cohort MAX matches :func:`derive_anchor_drift_threshold`'s
+    conservative choice: B4's co-floor scales with the slowest cohort's
+    baseline so a tight gRPC cohort's threshold doesn't fire on operationally-
+    insignificant drift that the slower REST cohorts naturally absorb.
+
+    Falls back to ``0.0`` ms when the baseline file is unreadable or has no
+    ``chat_stream_c1`` × max_tokens=10 row — B4 reduces to a no-op floor
+    (the pre-B4 B2 behavior) so the call site never throws and the
+    threshold formula remains well-defined.
+    """
+    path = Path(baseline_path)
+    if not path.exists():
+        return 0.0
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return 0.0
+    per_cell = (data.get("per_cell") or {}).get("chat_stream_c1") or {}
+    p50s: list[float] = []
+    for cohort_data in per_cell.values():
+        if not isinstance(cohort_data, dict):
+            continue
+        # M6.1.3 baselines are at single max_tokens; tolerate either flat or
+        # max_tokens-keyed shape.
+        row = cohort_data.get("10") or cohort_data
+        if not isinstance(row, dict):
+            continue
+        wall_p50 = row.get("wall_p50_ms")
+        if wall_p50 is None:
+            continue
+        try:
+            p50s.append(float(wall_p50))
+        except (TypeError, ValueError):
+            continue
+    return max(p50s) if p50s else 0.0
+
+
 # --- Null-anchor assembly (T053) --------------------------------------------
 
 
@@ -732,13 +776,15 @@ def build_artifact(
     # + null-anchor cross-checkable verdicts).
     baseline_per_cell, base_verdicts = load_m6_1_3_baseline(m6_1_3_baseline_path)
 
-    # Anchor-latency trajectory (FR-031 / SC-016). T054 wires the threshold
+    # Anchor-latency trajectory (FR-031 / SC-016). T054 wires the CI threshold
     # from M6.1.3's between_run_variance.chat_stream_c1 — the cell the anchor
-    # block exercises. Sentinel 5.0 ms fallback if the baseline JSON is
-    # unavailable.
+    # block exercises. T060/T061 round-8 amendment additionally threads the
+    # baseline p50 (for B4's 2.5% relative co-floor) and the C1 warmup
+    # suppression cutoff. Sentinel fallbacks if the baseline JSON is unavailable.
     anchor_trajectory = compute_anchor_latency_trajectory(
         sweep_outputs.anchor_snapshots,
         m6_1_3_baseline_ci_half_width=derive_anchor_drift_threshold(m6_1_3_baseline_path),
+        baseline_p50_ms=derive_anchor_baseline_p50_ms(m6_1_3_baseline_path),
     )
 
     # US2 crossover compute. Reads M6.1.3 baseline (cohort means + classifier
@@ -894,16 +940,35 @@ async def _drive_main_sweep_and_sub_probe(
             f"got {type(inputs).__name__}"
         )
 
+    import time as _time
+
+    from vllm_grpc_bench.m6_2_sweep import _progress as _sweep_progress
+
     sweep_outputs = await _run_m6_2_sweep(inputs)
-    sub_probe_results = await run_kv_pressure_sub_probe(
-        dispatcher=dispatcher,  # type: ignore[arg-type]
-        is_transient=is_transient if is_transient is not None else _stub_is_transient,
-        base_seed=base_seed,
-        chat_corpus=chat_corpus,
-        embed_corpus=embed_corpus,
+    _sweep_progress(
+        "SUBPROBE_START",
+        blocks=16,
+        n=20,
+        ignore_eos=True,
+        caps="1024,2048",
+    )
+    sub_probe_perf_start = _time.monotonic()
+    sub_probe_results_list = list(
+        await run_kv_pressure_sub_probe(
+            dispatcher=dispatcher,  # type: ignore[arg-type]
+            is_transient=is_transient if is_transient is not None else _stub_is_transient,
+            base_seed=base_seed,
+            chat_corpus=chat_corpus,
+            embed_corpus=embed_corpus,
+        )
+    )
+    _sweep_progress(
+        "SUBPROBE_END",
+        blocks_done=len(sub_probe_results_list),
+        duration_s=f"{_time.monotonic() - sub_probe_perf_start:.1f}",
     )
     del anchor_dispatcher  # not needed by the sub-probe (it dispatches via the main dispatcher)
-    return sweep_outputs, list(sub_probe_results)
+    return sweep_outputs, sub_probe_results_list
 
 
 # --- Real Modal-backed dispatch path ---------------------------------------

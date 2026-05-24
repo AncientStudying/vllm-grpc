@@ -32,7 +32,7 @@ The sub-probe is **additive** to the budget table: the budget-table c=8 rows con
 
 **Implementation discipline (FR-028 — project-wide convention from M6.1.3)**: M6.2 is produced by **copying the M6.1.3 `m6_1_3_*` module family into an `m6_2_*` namespace and refactoring only the deltas**. Regenerating the measurement path from scratch is FORBIDDEN. Round-5's additions extend this discipline: the new `m6_2_prompt_source.py` and `m6_2_sub_probe.py` modules are net-new (no copy source); the changes to existing RPC builders (`m6_rpc_driver.py`, `m6_1_rpc_driver.py`) are additive parameterization (`max_tokens`, `ignore_eos`) — no behavioral change to existing call sites that pass the M6.1.x defaults.
 
-**Round-3 deferral (FR-004)**: Publish-mode `n` (and the wall-clock + Modal-spend caps FR-021/FR-023) deferred to a future clarify cycle gated on validate-sweep variance data. The publish-mode orchestrator MUST refuse `--m6_2` invocation if `--m6_2-n` is unset. The validate sweep runs at `n=20` pinned on the 3-point axis subset `{10, 50, 2048}` (~2.3-2.5 h wall-clock, ~$4 Modal spend). The KV-pressure sub-probe runs at `n=20` pinned (independent of round-3 deferral).
+**Round-3 closure (FR-004, 2026-05-24)**: Publish-mode `n=40` pinned (`m6_2_types.M6_2_PUBLISH_N`) against the 2026-05-24 validate sweep's measured CI half-widths; FR-021 cost cap ≤ $25, FR-023 wall-clock cap ≤ 16 h. The publish-mode orchestrator still REFUSES `--m6_2` invocation if `--m6_2-n` is unset — the constant documents the canonical pinned value but does NOT supply a silent default, so operators must pass `--m6_2-n=40` explicitly. The validate sweep runs at `n=20` hard-pinned on the 3-point axis subset `{10, 50, 2048}` (~2.3-2.5 h wall-clock, ~$4 Modal spend; the 2026-05-24 post-fix run measured 3.567 h / $5.39 at the recalibrated FR-022 budget). The KV-pressure sub-probe runs at `n=20` pinned (independent of FR-004's main-sweep `n`).
 
 **Phase 1 prerequisite (round-5 FR-035)**: A new ShareGPT-derived embed corpus at `hidden_size=4096` MUST exist and be committed before `--m6_2-validate` is invoked. Generated offline via an adapted `scripts/python/gen_embed_corpus.py`: feed each of the 1000 ShareGPT prompts through Qwen3-8B's embedding layer, save 1000 `.pt` files at variable `seq_len × 4096` (fp16, ~400-800 MB), build `tools/benchmark/corpus/completions_embeds_qwen3_8b/manifest.json` with per-entry SHA + `source_prompt_id` + `seq_len` + `bucket`.
 
@@ -72,7 +72,7 @@ The sub-probe is **additive** to the budget table: the budget-table c=8 rows con
 - **Unit tests — `test_m6_2_prompt_source.py`** (NEW per round-5): FR-034 three-regime chat prompt source (synthetic at null anchors, ShareGPT corpus at interior caps + sub-probe); FR-035 three-regime embed prompt source (random tensor at null anchors, ShareGPT-derived embed corpus at interior caps + sub-probe); `symmetric_prompts.assign_symmetric_prompt` cohort-invariance per iteration index; `prompt_corpus_idx` is `None` for synthetic regimes and equals `iter_idx` for corpus regimes; corpus SHA validation (`chat_corpus_sha256` / `embed_corpus_sha256` in `run_meta` match the on-disk corpus provenance files; SC-018 corpus-drift error fires on mismatch).
 - **Unit tests — `test_m6_2_sub_probe.py`** (NEW per round-5): FR-036 sub-probe contract — 16 blocks (4 cohorts × 2 cell-types × 2 caps) at `n=20`, each with `ignore_eos=True`; sub-probe results emit to `KVPressureObservation` only (NOT to the latency budget table); FR-017a wall-clock-ratio inference uses sub-probe `wall_p50_ms` not budget-table rows; sub-probe runs in both publish and validate modes; SC-019 sub-probe schema invariants.
 - **Integration test — `test_m6_2_validate_cli.py`** (NEW): `--m6_2-validate --m6_2-skip-deploy` against stub driver; asserts validate-sibling artifact JSON contents (3-point axis subset, axis-restricted disclaimer, KV-pressure inference from sub-probe, anchor trajectory start+end).
-- **Integration test — `test_m6_2_publish_cli.py`** (NEW): `--m6_2 --m6_2-n=50 --m6_2-skip-deploy` against stub driver (n=50 for test speed); asserts full 6-point axis × 4-cohort × 6-cell table, full crossover vocabulary, `iteration_discipline_verified = true`, wall-clock-timeline subsection, sub-probe contract.
+- **Integration test — `test_m6_2_publish_cli.py`** (NEW): `--m6_2 --m6_2-n=40 --m6_2-skip-deploy` against stub driver (n=40 = the round-3-pinned production value `m6_2_types.M6_2_PUBLISH_N` per FR-004 closure 2026-05-24); asserts full 6-point axis × 4-cohort × 6-cell table, full crossover vocabulary, `iteration_discipline_verified = true`, wall-clock-timeline subsection, sub-probe contract.
 - **CI gate (Constitution IV)**: All new tests run in the same `pytest` invocation as M6.1.x suites; failure blocks merge. Local-lint chain (`ruff check`, `ruff format --check`, `mypy --strict`, `pytest`) per `feedback_local_lint_chain` memory before push.
 
 **Target Platform**:
@@ -80,7 +80,7 @@ The sub-probe is **additive** to the budget table: the budget-table c=8 rows con
 - Code changes: operator workstation only — no Modal compute for code/lint/test gates.
 - Embed corpus generation (Phase 1 prerequisite per FR-035): Modal A10G or local GPU for the offline embedding pass; ~10-30 min compute to embed 1000 prompts through Qwen3-8B's embedding layer.
 - Validate sweep (`--m6_2-validate`): Modal A10G in `eu-west-1` (FR-020 default, verbatim inheritance from M6.1.3).
-- Publish sweep (`--m6_2`): same Modal config. ~20-48 h wall-clock; tunnel must stay alive; FR-026 preemption-recurrence threshold (2) handles transient preemption.
+- Publish sweep (`--m6_2 --m6_2-n=40`): same Modal config. Expected ~13.2 h wall-clock (FR-023 cap ≤ 16 h); tunnel must stay alive; FR-026 preemption-recurrence threshold (2) handles transient preemption.
 
 **Performance Goals**:
 
@@ -113,7 +113,7 @@ The sub-probe is **additive** to the budget table: the budget-table c=8 rows con
 - **New benchmark artifacts**: 2 — validate sibling, canonical publish (FR-015).
 - **New corpus artifact**: 1 — `tools/benchmark/corpus/completions_embeds_qwen3_8b/` directory containing 1000 `.pt` files (~400-800 MB at fp16) + `manifest.json` + provenance metadata (FR-035 Phase 1 prerequisite).
 - **New script**: `scripts/python/gen_embed_corpus_qwen3_8b.py` (or adaptation of the existing `gen_embed_corpus.py` with a `--model qwen3-8b` flag) — offline corpus generator. ~150-200 LOC.
-- **Modal compute**: ~$4 validate + round-3-pinned bound for publish (~$20-$40 provisional) + ~$1-2 one-time for embed corpus generation. Sub-probe adds < 2% to the publish wall-clock (~30 min – 1 h at n=20).
+- **Modal compute**: ~$5.39 measured for the 2026-05-24 post-fix validate sweep (FR-022 recalibrated cap ~$8); ~$20 projected for the publish sweep at the round-3-pinned `n=40` (FR-021 cap ≤ $25); ~$1-2 one-time for embed corpus generation. Sub-probe adds < 2% to the publish wall-clock (~30 min – 1 h at n=20).
 
 ## Constitution Check
 
@@ -214,7 +214,7 @@ tools/benchmark/tests/
 ├── test_m6_2_prompt_source.py         # NEW (round-5) — three-regime chat + three-regime embed + assign_symmetric_prompt cohort-invariance + corpus SHA validation (SC-018 drift error).
 ├── test_m6_2_sub_probe.py             # NEW (round-5) — 16-block contract + n=20 + ignore_eos=True + additive (not in budget table) + FR-017a uses sub-probe rows + runs in both publish + validate modes.
 ├── test_m6_2_validate_cli.py          # NEW — integration test for --m6_2-validate.
-└── test_m6_2_publish_cli.py           # NEW — integration test for --m6_2 --m6_2-n=50.
+└── test_m6_2_publish_cli.py           # NEW — integration test for --m6_2 --m6_2-n=40 (FR-004 round-3 closure).
 
 docs/benchmarks/
 ├── m6_1_3-attribution-closure.{md,json}   # READ-ONLY (JSON); MODIFY (markdown: single leading note line per FR-019).

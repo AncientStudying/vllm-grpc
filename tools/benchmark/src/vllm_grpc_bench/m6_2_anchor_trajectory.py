@@ -34,6 +34,7 @@ from typing import Protocol
 
 from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
 from vllm_grpc_bench.m6_2_null_anchor import (
+    DRIFT_THRESHOLD_FLOOR_FRACTION,
     DRIFT_THRESHOLD_FLOOR_MS,
     pooled_ci_half_width,
 )
@@ -45,10 +46,22 @@ from vllm_grpc_bench.m6_2_types import (
 
 __all__ = [
     "AnchorRPCDriver",
+    "WARMUP_SUPPRESSION_HOURS",
     "compute_anchor_block",
     "compute_anchor_latency_trajectory",
+    "compute_insufficient_snapshots_header_fired",
     "compute_intra_sweep_drift_header_fired",
 ]
+
+
+WARMUP_SUPPRESSION_HOURS: float = 0.05
+"""C1 round-8 amendment (2026-05-23): snapshots with
+``sweep_hour_mark < WARMUP_SUPPRESSION_HOURS`` (default 0.05 h = 3 min) are
+dropped from the spread computation. Suppresses Modal cold-start +
+cudagraph-capture warmup transients that inflated pre-fix validate
+trajectories. 3 min covers Modal first-request + CUDA graph compilation
+(~30-60 s) plus the engine-warmup overhead the chat_stream c=1
+max_tokens=10 anchor block sees on first invocation."""
 
 
 def _snapshot_ci_half_width(snapshots: list[M6_2AnchorLatencySnapshot]) -> float:
@@ -152,39 +165,78 @@ def compute_anchor_latency_trajectory(
     snapshots_by_cohort: dict[M6_1_2CohortKind, list[M6_2AnchorLatencySnapshot]],
     m6_1_3_baseline_ci_half_width: float,
     *,
+    baseline_p50_ms: float = 0.0,
     floor_ms: float = DRIFT_THRESHOLD_FLOOR_MS,
+    floor_fraction: float = DRIFT_THRESHOLD_FLOOR_FRACTION,
+    warmup_suppression_hours: float = WARMUP_SUPPRESSION_HOURS,
 ) -> dict[M6_1_2CohortKind, M6_2AnchorLatencyTrajectory]:
-    """Reduce the per-cohort sequence of snapshots into trajectory entities.
+    """Reduce the per-cohort sequence of snapshots into trajectory entities,
+    applying the round-8 B4 + C1 amendments.
 
-    For each cohort, compute the ``wall_p50_ms`` spread across snapshots and
-    set ``latency_drift_warning=True`` iff
-    ``spread > pooled_ci_half_width(baseline_ci, snapshot_ci, floor_ms)``
-    where ``snapshot_ci`` is the 95% normal-approximation CI over the
-    trajectory's own ``wall_p50_ms`` samples (B2 rule). Cohorts with fewer
-    than 2 snapshots get ``max_minus_min_wall_p50_ms=0.0`` +
-    ``latency_drift_warning=False`` (no meaningful spread can be computed).
+    Per cohort:
+
+    1. **C1 warmup drop**: snapshots with
+       ``sweep_hour_mark < warmup_suppression_hours`` are dropped from the
+       spread computation (cold-start transient suppression).
+    2. **Insufficient post-warmup snapshots** (``len(post_warmup) < 2``):
+       set ``insufficient_post_warmup_snapshots=True``,
+       ``max_minus_min_wall_p50_ms=0.0``, ``latency_drift_warning=False``.
+       Validate-mode start+end trajectories naturally land here.
+    3. **B2 + B4 pooled-CI threshold**: ``latency_drift_warning=True`` iff
+       ``spread > pooled_ci_half_width(baseline_ci, snapshot_ci, floor_ms,
+       floor_fraction * baseline_p50_ms)`` where ``snapshot_ci`` is the 95%
+       normal-approximation CI over the *post-warmup* ``wall_p50_ms``
+       samples.
+
+    The pre-warmup snapshots are retained in the persisted ``snapshots``
+    list (the artifact-narrative reader can still see the cold-start
+    p50/p95/p99 row) — only the drift computation excludes them.
     """
     out: dict[M6_1_2CohortKind, M6_2AnchorLatencyTrajectory] = {}
     for cohort, snapshots in snapshots_by_cohort.items():
-        if len(snapshots) < 2:
-            spread = 0.0
-            warning = False
-        else:
-            p50s = [s.wall_p50_ms for s in snapshots]
-            spread = max(p50s) - min(p50s)
-            threshold = pooled_ci_half_width(
-                m6_1_3_baseline_ci_half_width,
-                _snapshot_ci_half_width(snapshots),
-                floor_ms=floor_ms,
+        post_warmup = [
+            s for s in snapshots if s.sweep_hour_mark >= warmup_suppression_hours
+        ]
+        if len(post_warmup) < 2:
+            out[cohort] = M6_2AnchorLatencyTrajectory(
+                cohort=cohort,
+                snapshots=list(snapshots),
+                max_minus_min_wall_p50_ms=0.0,
+                latency_drift_warning=False,
+                insufficient_post_warmup_snapshots=True,
             )
-            warning = spread > threshold
+            continue
+        p50s = [s.wall_p50_ms for s in post_warmup]
+        spread = max(p50s) - min(p50s)
+        threshold = pooled_ci_half_width(
+            m6_1_3_baseline_ci_half_width,
+            _snapshot_ci_half_width(post_warmup),
+            baseline_p50_ms=baseline_p50_ms,
+            floor_ms=floor_ms,
+            floor_fraction=floor_fraction,
+        )
         out[cohort] = M6_2AnchorLatencyTrajectory(
             cohort=cohort,
             snapshots=list(snapshots),
             max_minus_min_wall_p50_ms=spread,
-            latency_drift_warning=warning,
+            latency_drift_warning=spread > threshold,
+            insufficient_post_warmup_snapshots=False,
         )
     return out
+
+
+def compute_insufficient_snapshots_header_fired(
+    trajectories: dict[M6_1_2CohortKind, M6_2AnchorLatencyTrajectory],
+) -> bool:
+    """C1 soft-diagnostic header rule: fires when any cohort carries
+    ``insufficient_post_warmup_snapshots=True``.
+
+    Distinct from SC-016 ``intra_sweep_latency_drift`` (which fires on
+    actual measured drift); this one signals that the trajectory's drift
+    verdict couldn't be evaluated for at least one cohort because too few
+    post-warmup snapshots were collected. NOT publish-blocking.
+    """
+    return any(t.insufficient_post_warmup_snapshots for t in trajectories.values())
 
 
 def compute_intra_sweep_drift_header_fired(

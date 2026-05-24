@@ -4,7 +4,7 @@
 
 ## Why this contract exists
 
-M6.1.x sweeps ran for ~75 minutes — short enough that exogenous time-varying confounds (day/night cycles, business-hours network traffic, ISP congestion variance) were below the noise floor of the cohort comparison. M6.2 runs for **20-48 hours** (depending on round-3-pinned `n`), and the long wall-clock exposes the sweep to time-of-day variance that can bias the headline cohort-vs-cohort comparison. This contract pins the four implementation-level disciplines that mitigate or expose that variance:
+M6.1.x sweeps ran for ~75 minutes — short enough that exogenous time-varying confounds (day/night cycles, business-hours network traffic, ISP congestion variance) were below the noise floor of the cohort comparison. M6.2 runs for **~13 h (FR-023 cap ≤ 16 h) at the round-3-pinned `n=40`**, and the long wall-clock exposes the sweep to time-of-day variance that can bias the headline cohort-vs-cohort comparison. This contract pins the four implementation-level disciplines that mitigate or expose that variance:
 
 1. **FR-030 cohort-innermost block iteration** — eliminates between-cohort time-of-day bias by ensuring each `(cell, max_tokens)` tuple's 4 cohorts share a tight ~30 min – 4 h time window.
 2. **FR-031 intra-sweep anchor re-measurement at 4h cadence** — makes intra-sweep latency drift observable per cohort.

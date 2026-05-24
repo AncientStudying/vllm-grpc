@@ -225,6 +225,44 @@ def _stderr_ts() -> str:
     return _dt.datetime.now(_dt.UTC).strftime("[%Y-%m-%dT%H:%M:%SZ]")
 
 
+def _progress(tag: str, **fields: object) -> None:
+    """Emit a single-line progress event to stderr.
+
+    Format (machine-parseable by ``scripts/python/monitor_m6_2_sweep.py``):
+    ``[YYYY-MM-DDTHH:MM:SSZ] [m6_2 <TAG>] k1=v1 k2=v2 ...``.
+
+    Lines are flushed eagerly so a tee'd log can be tail'd in near-real-time
+    by the monitor script. Values are stringified verbatim; numeric fields
+    SHOULD already carry their unit suffix (e.g. ``elapsed_s=42.5``) so the
+    monitor doesn't need a per-field unit table."""
+    parts = [f"{_stderr_ts()} [m6_2 {tag}]"]
+    parts.extend(f"{k}={v}" for k, v in fields.items())
+    print(" ".join(parts), file=sys.stderr, flush=True)
+
+
+def _count_expected_blocks(axis: tuple[int, ...]) -> int:
+    """Total measurement blocks the orchestrator will execute against
+    ``axis``: ``sum(len(cohorts_at_concurrency(c)) for each (cell, max_tokens))``.
+
+    Used by the sweep-start progress banner so a monitor consumer can
+    compute completion percentage as ``blocks_done / expected_blocks``.
+    Validate-mode axis subset {10, 50, 2048} → 66 blocks; publish-mode full
+    axis {10, 50, 256, 512, 1024, 2048} → 132 blocks under the M6.1.2
+    live-cohort discipline."""
+    total = 0
+    for _cell_id, concurrency, _max_tokens in iter_main_sweep_tuples(axis):
+        total += len(cohorts_at_concurrency(concurrency))
+    return total
+
+
+def _count_expected_tuples(axis: tuple[int, ...]) -> int:
+    """Total (cell, max_tokens) tuples the orchestrator iterates against
+    ``axis``. Each tuple contains 3 (c=1) or 4 (c=4/c=8) cohort blocks per
+    FR-006. Used by the per-tuple progress line so the monitor can report
+    "tuple X/Y" completion."""
+    return sum(1 for _ in iter_main_sweep_tuples(axis))
+
+
 async def run_block_with_retry(
     *,
     cell_id: str,
@@ -463,17 +501,23 @@ class M6_2SweepOutputs:
 
 
 def gate_publish_mode_n(args_m6_2_n: int | None, sweep_mode: M6_2SweepMode) -> int:
-    """FR-004 round-3 deferral gate.
+    """FR-004 explicit-n gate.
 
-    Publish mode REFUSES to start when ``args.m6_2_n is None``. Validate
-    mode coerces to the pinned ``n=20``. Returns the resolved ``n``.
+    Publish mode REFUSES to start when ``args.m6_2_n is None`` — the
+    operator MUST pass ``--m6_2-n=<N>`` to make the sample-size choice
+    explicit at the command line (no silent default). The canonical
+    round-3-pinned production value is :data:`m6_2_types.M6_2_PUBLISH_N`
+    (currently ``40``, pinned 2026-05-24 against the validate-sweep
+    measured CI half-widths). Validate mode coerces to the hard-pinned
+    ``n=20`` per FR-001 round-1 Q2. Returns the resolved ``n``.
     """
     if sweep_mode == "publish":
         if args_m6_2_n is None:
             raise ValueError(
-                "FR-004 round-3 deferral: --m6_2 cannot start without an explicit "
-                "--m6_2-n value. The publish-mode n is gated on validate-sweep "
-                "variance data (see /speckit-clarify round 6 task in tasks.md T048)."
+                "FR-004 explicit-n gate: --m6_2 cannot start without an explicit "
+                "--m6_2-n value. The round-3-pinned production value is n=40 "
+                "(see m6_2_types.M6_2_PUBLISH_N). Pass --m6_2-n=40 to launch the "
+                "canonical publish sweep, or pass a different n to override."
             )
         return args_m6_2_n
     if args_m6_2_n is not None and args_m6_2_n != 20:
@@ -530,18 +574,54 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
         cohort: [] for cohort in M6_1_2_COHORTS
     }
 
+    expected_blocks = _count_expected_blocks(inputs.axis)
+    expected_tuples = _count_expected_tuples(inputs.axis)
+    _progress(
+        "SWEEP_START",
+        mode=inputs.sweep_mode,
+        n=inputs.n,
+        axis=",".join(str(c) for c in inputs.axis),
+        expected_blocks=expected_blocks,
+        expected_tuples=expected_tuples,
+        utc=sweep_start_utc,
+    )
+
     # FR-009 topology probe at sweep start.
+    _progress("TOPOLOGY_PROBE_START", phase="sweep_start")
     await _capture_topology_probe(network_paths_trajectory, inputs.topology_probe)
+    _progress("TOPOLOGY_PROBE_END", phase="sweep_start")
 
     # Anchor at sweep start (t = 0h).
+    _progress("ANCHOR_START", sweep_hour_mark=f"{0.0:.2f}")
+    anchor_t0_perf = asyncio.get_event_loop().time()
     await _capture_anchor_block(
         snapshots_by_cohort=anchor_snapshots,
         rpc_driver=inputs.anchor_dispatcher,
         base_seed=inputs.base_seed,
         sweep_hour_mark=0.0,
     )
+    _progress(
+        "ANCHOR_END",
+        sweep_hour_mark=f"{0.0:.2f}",
+        duration_s=f"{asyncio.get_event_loop().time() - anchor_t0_perf:.1f}",
+        cohorts_captured=len(anchor_snapshots),
+    )
 
-    for cell_id, concurrency, max_tokens in iter_main_sweep_tuples(inputs.axis):
+    for tuple_idx_minus_one, (cell_id, concurrency, max_tokens) in enumerate(
+        iter_main_sweep_tuples(inputs.axis)
+    ):
+        tuple_idx = tuple_idx_minus_one + 1
+        elapsed_h = (asyncio.get_event_loop().time() - sweep_start_perf) / 3600.0
+        _progress(
+            "TUPLE_START",
+            i=f"{tuple_idx}/{expected_tuples}",
+            cell=cell_id,
+            max_tokens=max_tokens,
+            cohorts=len(cohorts_at_concurrency(concurrency)),
+            elapsed_h=f"{elapsed_h:.3f}",
+            blocks_done=len(measurements),
+        )
+        tuple_start_perf = asyncio.get_event_loop().time()
         for cohort in cohorts_at_concurrency(concurrency):
             iter_idx = len(measurements)
             block_inputs = resolve_block_inputs(
@@ -554,6 +634,7 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
                 embed_corpus=inputs.embed_corpus,
                 ignore_eos_override=None,
             )
+            block_perf_start = asyncio.get_event_loop().time()
             (
                 result,
                 block_start_utc,
@@ -568,19 +649,42 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
                 dispatcher=inputs.dispatcher,
                 is_transient=inputs.is_transient,
             )
-            measurements.append(
-                _build_measurement_point(
-                    cell_id=cell_id,
-                    cohort=cohort,
-                    max_tokens=max_tokens,
-                    n=inputs.n,
-                    result=result,
-                    block_start_utc=block_start_utc,
-                    block_end_utc=block_end_utc,
-                    retry_attempted=retry_attempted,
-                    block_inputs=block_inputs,
-                )
+            measurement = _build_measurement_point(
+                cell_id=cell_id,
+                cohort=cohort,
+                max_tokens=max_tokens,
+                n=inputs.n,
+                result=result,
+                block_start_utc=block_start_utc,
+                block_end_utc=block_end_utc,
+                retry_attempted=retry_attempted,
+                block_inputs=block_inputs,
             )
+            measurements.append(measurement)
+            block_duration_s = asyncio.get_event_loop().time() - block_perf_start
+            _progress(
+                "BLOCK_DONE",
+                i=f"{len(measurements)}/{expected_blocks}",
+                cell=cell_id,
+                cohort=cohort,
+                max_tokens=max_tokens,
+                duration_s=f"{block_duration_s:.1f}",
+                wall_p50_ms=(
+                    f"{measurement.wall_p50_ms:.1f}"
+                    if measurement.wall_p50_ms is not None
+                    else "—"
+                ),
+                failed=measurement.failed_reason or "no",
+                retry=str(retry_attempted),
+            )
+
+        _progress(
+            "TUPLE_END",
+            i=f"{tuple_idx}/{expected_tuples}",
+            cell=cell_id,
+            max_tokens=max_tokens,
+            duration_s=f"{asyncio.get_event_loop().time() - tuple_start_perf:.1f}",
+        )
 
         # After each `(cell, max_tokens)` tuple, check whether the 4h anchor
         # cadence has elapsed. Capture at the cadence + at sweep end.
@@ -589,11 +693,18 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
             sweep_hour_mark=elapsed_hours,
             sweep_mode=inputs.sweep_mode,
         ):
+            _progress("ANCHOR_START", sweep_hour_mark=f"{elapsed_hours:.2f}")
+            anchor_perf = asyncio.get_event_loop().time()
             await _capture_anchor_block(
                 snapshots_by_cohort=anchor_snapshots,
                 rpc_driver=inputs.anchor_dispatcher,
                 base_seed=inputs.base_seed,
                 sweep_hour_mark=elapsed_hours,
+            )
+            _progress(
+                "ANCHOR_END",
+                sweep_hour_mark=f"{elapsed_hours:.2f}",
+                duration_s=f"{asyncio.get_event_loop().time() - anchor_perf:.1f}",
             )
 
     sweep_end_utc = _now_iso_utc()
@@ -601,15 +712,33 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
     # Anchor at sweep end if we haven't already captured one at this mark.
     last_marks = [s.sweep_hour_mark for snapshots in anchor_snapshots.values() for s in snapshots]
     if not last_marks or max(last_marks) < elapsed_hours - 0.05:
+        _progress("ANCHOR_START", sweep_hour_mark=f"{elapsed_hours:.2f}", phase="sweep_end")
+        anchor_perf = asyncio.get_event_loop().time()
         await _capture_anchor_block(
             snapshots_by_cohort=anchor_snapshots,
             rpc_driver=inputs.anchor_dispatcher,
             base_seed=inputs.base_seed,
             sweep_hour_mark=elapsed_hours,
         )
+        _progress(
+            "ANCHOR_END",
+            sweep_hour_mark=f"{elapsed_hours:.2f}",
+            duration_s=f"{asyncio.get_event_loop().time() - anchor_perf:.1f}",
+            phase="sweep_end",
+        )
 
     # FR-009 topology probe at sweep end.
+    _progress("TOPOLOGY_PROBE_START", phase="sweep_end")
     await _capture_topology_probe(network_paths_trajectory, inputs.topology_probe)
+    _progress("TOPOLOGY_PROBE_END", phase="sweep_end")
+
+    _progress(
+        "SWEEP_END",
+        mode=inputs.sweep_mode,
+        blocks_done=len(measurements),
+        elapsed_h=f"{elapsed_hours:.3f}",
+        utc=sweep_end_utc,
+    )
 
     return M6_2SweepOutputs(
         measurements=measurements,

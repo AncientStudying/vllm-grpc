@@ -9,6 +9,7 @@ without the 10 ms operational floor masking the boundary.
 from __future__ import annotations
 
 from vllm_grpc_bench.m6_2_null_anchor import (
+    DRIFT_THRESHOLD_FLOOR_FRACTION,
     DRIFT_THRESHOLD_FLOOR_MS,
     DRIFT_THRESHOLD_WARN_MULTIPLIER,
     compute_drift_verdict,
@@ -17,6 +18,72 @@ from vllm_grpc_bench.m6_2_null_anchor import (
     make_null_anchor,
     pooled_ci_half_width,
 )
+
+
+class TestB4RelativeCoFloor:
+    """Round-8 amendment (T060): pooled-CI threshold now includes a
+    ``floor_fraction × baseline_p50_ms`` relative co-floor on top of B2's
+    10 ms absolute floor. Default is 2.5 % per
+    :data:`DRIFT_THRESHOLD_FLOOR_FRACTION`.
+    """
+
+    def test_constant_pinned_at_2_5_percent(self) -> None:
+        """B4 floor calibration is load-bearing; a silent drift would shift
+        the WARN/FAIL boundary across the cell budget table."""
+        assert DRIFT_THRESHOLD_FLOOR_FRACTION == 0.025
+
+    def test_relative_floor_dominates_on_slow_baseline(self) -> None:
+        # baseline p50 = 80_000 ms (chat_stream c=8 max_tokens=2048 regime);
+        # 2.5% of that = 2000 ms — way above the 10 ms absolute floor.
+        # Pooled threshold = 2000 ms; delta = 1500 ms → PASS (was WARN
+        # under pre-B4 B2-only with pooled = max(0.2, 10) = 10 ms).
+        pooled = pooled_ci_half_width(0.2, baseline_p50_ms=80_000.0)
+        assert pooled == 2000.0
+        assert compute_drift_verdict(81_500.0, 80_000.0, 0.2) == "PASS"
+
+    def test_absolute_floor_dominates_on_fast_baseline(self) -> None:
+        # baseline p50 = 200 ms (chat_stream anchor regime);
+        # 2.5% of that = 5 ms — below the 10 ms absolute floor.
+        # Pooled threshold = 10 ms (B2 wins).
+        pooled = pooled_ci_half_width(0.2, baseline_p50_ms=200.0)
+        assert pooled == 10.0
+
+    def test_baseline_ci_dominates_when_largest(self) -> None:
+        # baseline p50 = 1000 ms (2.5% = 25 ms); baseline CI = 80 ms wins.
+        pooled = pooled_ci_half_width(80.0, baseline_p50_ms=1000.0)
+        assert pooled == 80.0
+
+    def test_m6_2_ci_dominates_when_largest(self) -> None:
+        # baseline p50 = 1000 ms (2.5% = 25 ms); M6.2 block CI = 90 ms wins.
+        pooled = pooled_ci_half_width(0.5, 90.0, baseline_p50_ms=1000.0)
+        assert pooled == 90.0
+
+    def test_b4_default_is_no_op_when_baseline_p50_omitted(self) -> None:
+        """Pre-B4 callers (``baseline_p50_ms`` defaulted to 0) still get the
+        pre-B4 B2-only behavior — backward-compatible default."""
+        with_b4_default = pooled_ci_half_width(5.0)
+        without_p50 = pooled_ci_half_width(5.0, baseline_p50_ms=0.0)
+        assert with_b4_default == without_p50 == DRIFT_THRESHOLD_FLOOR_MS
+
+    def test_compute_drift_verdict_threads_baseline_p50(self) -> None:
+        """Verdict on slow-baseline cells uses B4's relative floor."""
+        # baseline 80_000 ms, M6.2 80_500 ms → delta=500, pooled=2000 → PASS
+        # (pre-B4 this would be FAIL: delta=500 > 3 × 10 ms = 30 ms FAIL band).
+        assert compute_drift_verdict(80_500.0, 80_000.0, 0.2) == "PASS"
+        # delta=3000, pooled=2000 → WARN (in 1× to 3× band: > 2000 and ≤ 6000).
+        assert compute_drift_verdict(83_000.0, 80_000.0, 0.2) == "WARN"
+        # delta=10_000 → FAIL (> 3 × 2000).
+        assert compute_drift_verdict(90_000.0, 80_000.0, 0.2) == "FAIL"
+
+    def test_floor_fraction_override(self) -> None:
+        """Callers MAY tighten the relative co-floor (e.g., diagnostics)."""
+        pooled = pooled_ci_half_width(0.2, baseline_p50_ms=1000.0, floor_fraction=0.05)
+        assert pooled == 50.0  # 5% × 1000
+
+    def test_negative_baseline_p50_coerced_to_zero(self) -> None:
+        """Defensive: a malformed baseline (negative p50) reduces to B2."""
+        pooled = pooled_ci_half_width(0.2, baseline_p50_ms=-1000.0)
+        assert pooled == DRIFT_THRESHOLD_FLOOR_MS
 
 
 class TestDriftVerdict:

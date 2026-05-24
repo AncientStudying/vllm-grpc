@@ -16,7 +16,7 @@ def _parse(*argv: str):
 
 class TestFlagsPresent:
     def test_m6_2_flag_present(self) -> None:
-        args = _parse("--m6_2", "--m6_2-n=50")
+        args = _parse("--m6_2", "--m6_2-n=40")
         assert args.m6_2 is True
 
     def test_m6_2_validate_flag_present(self) -> None:
@@ -46,21 +46,43 @@ class TestDefaultInheritance:
         assert args.m6_2_modal_token_env == "MODAL_BENCH_TOKEN"
 
 
-class TestRound3DeferralGate:
+class TestExplicitNGate:
+    """FR-004 round-3 closure (2026-05-24): publish-mode `n` is pinned at
+    `n=40` (`m6_2_types.M6_2_PUBLISH_N`), but the CLI gate STILL requires
+    an explicit `--m6_2-n` flag — no silent default — so an operator
+    cannot launch the publish sweep at the wrong n by omission."""
+
     def test_publish_default_n_is_none(self) -> None:
         args = _parse("--m6_2")
-        assert args.m6_2_n is None
+        assert args.m6_2_n is None, "no silent default — operator MUST pass --m6_2-n"
 
-    def test_run_publish_without_n_raises_exit_5(self) -> None:
+    def test_publish_n_constant_is_40(self) -> None:
+        """Round-3 closure regression guard: pinning n=40 is load-bearing
+        for FR-021 cost cap + FR-023 wall-clock cap. A silent drift would
+        invalidate both."""
+        from vllm_grpc_bench.m6_2_types import M6_2_PUBLISH_N
+
+        assert M6_2_PUBLISH_N == 40
+
+    def test_run_publish_without_n_raises_explicit_n_error(self) -> None:
         from vllm_grpc_bench.m6_2_sweep import gate_publish_mode_n
 
-        with pytest.raises(ValueError, match="FR-004 round-3 deferral"):
+        with pytest.raises(ValueError, match="FR-004 explicit-n gate"):
             gate_publish_mode_n(None, "publish")
+
+    def test_run_publish_with_explicit_n_passes_through(self) -> None:
+        """The canonical n=40 launches cleanly; other n values are
+        accepted (operator override) but the canonical value is
+        documented in the gate error message."""
+        from vllm_grpc_bench.m6_2_sweep import gate_publish_mode_n
+
+        assert gate_publish_mode_n(40, "publish") == 40
+        assert gate_publish_mode_n(60, "publish") == 60
 
     def test_validate_with_n_not_20_argparse_error(self, capsys) -> None:
         from vllm_grpc_bench.__main__ import _validate_m6_2_args
 
-        args = _parse("--m6_2-validate", "--m6_2-n=50")
+        args = _parse("--m6_2-validate", "--m6_2-n=40")
         rc = _validate_m6_2_args(args)
         assert rc == 1
         captured = capsys.readouterr()
@@ -78,7 +100,7 @@ class TestMutualExclusion:
     def test_m6_2_and_m6_2_validate_mutually_exclusive(self, capsys) -> None:
         from vllm_grpc_bench.__main__ import _validate_m6_2_args
 
-        args = _parse("--m6_2", "--m6_2-n=50", "--m6_2-validate")
+        args = _parse("--m6_2", "--m6_2-n=40", "--m6_2-validate")
         rc = _validate_m6_2_args(args)
         assert rc == 1
         captured = capsys.readouterr()
@@ -87,7 +109,7 @@ class TestMutualExclusion:
     def test_m6_2_excludes_m6_1_3(self, capsys) -> None:
         from vllm_grpc_bench.__main__ import _validate_m6_2_args
 
-        args = _parse("--m6_2", "--m6_2-n=50", "--m6_1_3")
+        args = _parse("--m6_2", "--m6_2-n=40", "--m6_1_3")
         rc = _validate_m6_2_args(args)
         assert rc == 1
 

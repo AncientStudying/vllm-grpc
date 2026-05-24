@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
 from vllm_grpc_bench.m6_2_anchor_trajectory import (
+    WARMUP_SUPPRESSION_HOURS,
     AnchorRPCDriver,
     compute_anchor_block,
     compute_anchor_latency_trajectory,
+    compute_insufficient_snapshots_header_fired,
     compute_intra_sweep_drift_header_fired,
 )
 from vllm_grpc_bench.m6_2_sweep import should_run_anchor_at
@@ -74,9 +76,11 @@ class TestAnchorBlock:
 class TestTrajectoryAndDrift:
     def test_trajectory_drift_fires_above_baseline_ci(self) -> None:
         # Spread 50.0 - 10.0 = 40.0; baseline CI half-width 5.0 → fires.
+        # Use post-warmup snapshot timings (0.5 h, 4 h) so the C1 warmup
+        # suppression doesn't drop the spread-defining samples.
         traj = compute_anchor_latency_trajectory(
             {
-                "default_grpc": [_snapshot(10.0, 0.0), _snapshot(50.0, 4.0)],
+                "default_grpc": [_snapshot(10.0, 0.5), _snapshot(50.0, 4.0)],
             },
             m6_1_3_baseline_ci_half_width=5.0,
         )
@@ -86,7 +90,7 @@ class TestTrajectoryAndDrift:
     def test_trajectory_drift_does_not_fire_when_inside_ci(self) -> None:
         traj = compute_anchor_latency_trajectory(
             {
-                "default_grpc": [_snapshot(10.0, 0.0), _snapshot(11.0, 4.0)],
+                "default_grpc": [_snapshot(10.0, 0.5), _snapshot(11.0, 4.0)],
             },
             m6_1_3_baseline_ci_half_width=5.0,
         )
@@ -94,11 +98,14 @@ class TestTrajectoryAndDrift:
 
     def test_single_snapshot_no_drift_warning(self) -> None:
         traj = compute_anchor_latency_trajectory(
-            {"default_grpc": [_snapshot(10.0, 0.0)]},
+            {"default_grpc": [_snapshot(10.0, 0.5)]},
             m6_1_3_baseline_ci_half_width=5.0,
         )
         assert traj["default_grpc"].latency_drift_warning is False
         assert traj["default_grpc"].max_minus_min_wall_p50_ms == 0.0
+        # C1: a single post-warmup snapshot falls into the insufficient-
+        # snapshots fallback.
+        assert traj["default_grpc"].insufficient_post_warmup_snapshots is True
 
     def test_floor_suppresses_subms_baseline_false_alarm(self) -> None:
         """B2 regression: the original SC-016 rule fired whenever a cohort's
@@ -111,14 +118,15 @@ class TestTrajectoryAndDrift:
         ~570 ms tuned_grpc baseline is ~2.6% — above the 10 ms floor and
         thus reports as drift). Further suppression for low-latency cells
         would need the relative-magnitude floor from option B4."""
-        # spread = 9 ms < 10 ms floor → no warning.
+        # spread = 9 ms < 10 ms floor → no warning. Use post-warmup snapshot
+        # marks (0.06 h, 1.08 h, 4 h, 8 h) so C1 doesn't drop the early ones.
         traj = compute_anchor_latency_trajectory(
             {
                 "tuned_grpc_multiplexed": [
-                    _snapshot(568.0, 0.0),
-                    _snapshot(571.0, 0.01),
-                    _snapshot(573.0, 0.02),
-                    _snapshot(577.0, 1.08),
+                    _snapshot(568.0, 0.06),
+                    _snapshot(571.0, 1.08),
+                    _snapshot(573.0, 4.0),
+                    _snapshot(577.0, 8.0),
                 ],
             },
             m6_1_3_baseline_ci_half_width=0.14,  # M6.1.3 chat_stream_c1 default_grpc
@@ -147,10 +155,12 @@ class TestTrajectoryAndDrift:
         # always fires on the "one outlier" pattern. This is actually correct
         # behavior — a single sustained outlier IS drift evidence.
         # Verify the contrapositive: a tight cluster where pooled wins via floor.
+        # Use post-warmup snapshot marks (0.5/4/8/12 h) so C1 doesn't drop
+        # the t=0 sample.
         traj = compute_anchor_latency_trajectory(
             {
                 "default_grpc": [
-                    _snapshot(100.0, 0.0),
+                    _snapshot(100.0, 0.5),
                     _snapshot(105.0, 4.0),
                     _snapshot(103.0, 8.0),
                     _snapshot(107.0, 12.0),
@@ -237,3 +247,147 @@ class TestCadenceRule:
     def test_validate_long_sweep_uses_publish_cadence(self) -> None:
         # validate mode + total >= 8h → 4h cadence resumes.
         assert should_run_anchor_at(4.0, "validate", total_sweep_hours=10.0) is True
+
+
+class TestC1WarmupSuppression:
+    """Round-8 amendment (T061): snapshots at ``sweep_hour_mark <
+    WARMUP_SUPPRESSION_HOURS`` (default 0.05 h = 3 min) are dropped from
+    the drift verdict; cohorts with < 2 post-warmup snapshots set
+    ``insufficient_post_warmup_snapshots=True`` and
+    ``latency_drift_warning=False``."""
+
+    def test_warmup_constant_pinned_at_3_minutes(self) -> None:
+        """The 0.05 h cutoff is load-bearing for false-positive suppression;
+        a drift would either re-admit Modal cold-start spikes (too small)
+        or silence legitimate early drift (too large)."""
+        assert WARMUP_SUPPRESSION_HOURS == 0.05
+
+    def test_warmup_snapshot_dropped_from_spread(self) -> None:
+        # Three snapshots: t=0 is a 200 ms cold-start spike (warmup);
+        # t=1 and t=2 are 100/105 ms steady-state. Spread over post-warmup
+        # = 5 ms (not 105 ms including the cold-start).
+        traj = compute_anchor_latency_trajectory(
+            {"default_grpc": [_snapshot(200.0, 0.0), _snapshot(100.0, 1.0), _snapshot(105.0, 2.0)]},
+            m6_1_3_baseline_ci_half_width=2.0,
+            baseline_p50_ms=0.0,
+            floor_ms=0.0,
+            floor_fraction=0.0,
+        )
+        record = traj["default_grpc"]
+        assert record.max_minus_min_wall_p50_ms == 5.0, (
+            "spread must be computed over post-warmup snapshots only "
+            "(t=0 cold-start excluded)"
+        )
+        # The pre-warmup snapshot is retained in the persisted list (visible
+        # to the artifact reader) — only the drift computation excludes it.
+        assert len(record.snapshots) == 3
+        assert record.insufficient_post_warmup_snapshots is False
+
+    def test_insufficient_post_warmup_snapshots_fallback(self) -> None:
+        # Only one post-warmup snapshot (validate-mode start+end with start
+        # warmup-dropped). Cohort gets the fallback flag + no drift verdict.
+        traj = compute_anchor_latency_trajectory(
+            {"default_grpc": [_snapshot(200.0, 0.0), _snapshot(100.0, 2.3)]},
+            m6_1_3_baseline_ci_half_width=2.0,
+        )
+        record = traj["default_grpc"]
+        assert record.insufficient_post_warmup_snapshots is True
+        assert record.latency_drift_warning is False
+        assert record.max_minus_min_wall_p50_ms == 0.0
+        # Pre-warmup snapshot still present in the persisted list.
+        assert len(record.snapshots) == 2
+
+    def test_zero_snapshots_hits_fallback(self) -> None:
+        # Empty cohort (RPC driver returned nothing) → also fallback.
+        traj = compute_anchor_latency_trajectory(
+            {"default_grpc": []},
+            m6_1_3_baseline_ci_half_width=2.0,
+        )
+        record = traj["default_grpc"]
+        assert record.insufficient_post_warmup_snapshots is True
+        assert record.latency_drift_warning is False
+
+    def test_b4_relative_co_floor_honored(self) -> None:
+        # Baseline p50 = 80_000 ms (chat_stream c=8 max_tokens=2048 regime);
+        # B4 co-floor = 2.5% × 80_000 = 2000 ms. Spread = 1500 ms < 2000 →
+        # latency_drift_warning=False even though it would exceed B2's 10 ms.
+        traj = compute_anchor_latency_trajectory(
+            {
+                "default_grpc": [
+                    _snapshot(80_000.0, 0.5),
+                    _snapshot(81_500.0, 4.0),
+                ]
+            },
+            m6_1_3_baseline_ci_half_width=5.0,
+            baseline_p50_ms=80_000.0,
+        )
+        assert traj["default_grpc"].latency_drift_warning is False
+
+    def test_b4_co_floor_does_not_mask_real_drift(self) -> None:
+        # Baseline p50 = 80_000 ms (B4 co-floor = 2000 ms); spread = 3000 ms
+        # → drift fires.
+        traj = compute_anchor_latency_trajectory(
+            {
+                "default_grpc": [
+                    _snapshot(80_000.0, 0.5),
+                    _snapshot(83_000.0, 4.0),
+                ]
+            },
+            m6_1_3_baseline_ci_half_width=5.0,
+            baseline_p50_ms=80_000.0,
+        )
+        assert traj["default_grpc"].latency_drift_warning is True
+
+    def test_validate_mode_start_end_naturally_hits_fallback(self) -> None:
+        # Validate-mode 2-snapshot start+end trajectory: start at t=0 is
+        # warmup-dropped, leaving 1 post-warmup snapshot → fallback fires.
+        traj = compute_anchor_latency_trajectory(
+            {
+                "default_grpc": [
+                    _snapshot(100.0, 0.0),  # warmup-dropped
+                    _snapshot(115.0, 2.3),  # sole post-warmup
+                ]
+            },
+            m6_1_3_baseline_ci_half_width=2.0,
+        )
+        assert traj["default_grpc"].insufficient_post_warmup_snapshots is True
+
+
+class TestInsufficientSnapshotsHeader:
+    """C1 soft-diagnostic header: fires when any cohort has
+    ``insufficient_post_warmup_snapshots=True``. Distinct from
+    ``intra_sweep_latency_drift``."""
+
+    def test_fires_when_one_cohort_insufficient(self) -> None:
+        traj = {
+            "default_grpc": _make_trajectory_with_warmup_flag(insufficient=True),
+            "rest_https_edge": _make_trajectory_with_warmup_flag(insufficient=False),
+        }
+        assert compute_insufficient_snapshots_header_fired(traj) is True
+
+    def test_does_not_fire_when_all_cohorts_have_post_warmup_snapshots(self) -> None:
+        traj = {
+            c: _make_trajectory_with_warmup_flag(insufficient=False)
+            for c in ("default_grpc", "rest_https_edge")
+        }
+        assert compute_insufficient_snapshots_header_fired(traj) is False
+
+    def test_independent_of_drift_verdict(self) -> None:
+        # A cohort with insufficient_post_warmup_snapshots=True carries
+        # latency_drift_warning=False by construction (T061 fallback), but
+        # the insufficient header fires regardless of the drift header.
+        traj = {
+            "default_grpc": _make_trajectory_with_warmup_flag(insufficient=True),
+        }
+        assert compute_insufficient_snapshots_header_fired(traj) is True
+        assert compute_intra_sweep_drift_header_fired(traj) is False
+
+
+def _make_trajectory_with_warmup_flag(*, insufficient: bool) -> M6_2AnchorLatencyTrajectory:
+    return M6_2AnchorLatencyTrajectory(
+        cohort="default_grpc",
+        snapshots=[_snapshot(100.0, 0.0)],
+        max_minus_min_wall_p50_ms=0.0,
+        latency_drift_warning=False,
+        insufficient_post_warmup_snapshots=insufficient,
+    )

@@ -35,6 +35,7 @@ from vllm_grpc_bench.m6_2_types import (
 )
 
 __all__ = [
+    "DRIFT_THRESHOLD_FLOOR_FRACTION",
     "DRIFT_THRESHOLD_FLOOR_MS",
     "DRIFT_THRESHOLD_WARN_MULTIPLIER",
     "compute_drift_verdict",
@@ -45,9 +46,21 @@ __all__ = [
 ]
 
 DRIFT_THRESHOLD_FLOOR_MS: float = 10.0
-"""Lower bound on the per-cell drift threshold (ms). Prevents sub-ms baseline
-CIs (M6.1.3 ``chat_stream_c1`` ``default_grpc`` published a 0.14 ms CI) from
-flagging operationally-insignificant drift as a sweep-level failure."""
+"""B2 absolute lower bound on the per-cell drift threshold (ms). Prevents
+sub-ms baseline CIs (M6.1.3 ``chat_stream_c1`` ``default_grpc`` published a
+0.14 ms CI) from flagging operationally-insignificant drift as a sweep-level
+failure."""
+
+DRIFT_THRESHOLD_FLOOR_FRACTION: float = 0.025
+"""B4 relative-magnitude lower bound on the per-cell drift threshold,
+expressed as a fraction of the M6.1.3 baseline ``wall_p50_ms``. Round-8
+amendment (2026-05-23) — extends the B2 absolute floor with a relative
+co-floor that suppresses operationally-insignificant drift on cells whose
+baseline p50 is large enough that the 10 ms absolute floor (B2) is the
+dominant denominator. Pinned at 2.5% (~2× M6.1.3's observed within-baseline
+re-anchor drift) so genuine ~5–10% regressions remain visible while
+sub-3% drift on naturally-slow cells (e.g., chat_stream at max_tokens=2048
+with p50 in the tens of seconds) is treated as PASS."""
 
 DRIFT_THRESHOLD_WARN_MULTIPLIER: float = 3.0
 """Multiplier separating WARN from FAIL on the pooled-CI scale. ``PASS`` when
@@ -60,17 +73,25 @@ def pooled_ci_half_width(
     m6_1_3_ci_half_width: float,
     m6_2_ci_half_width: float = 0.0,
     *,
+    baseline_p50_ms: float = 0.0,
     floor_ms: float = DRIFT_THRESHOLD_FLOOR_MS,
+    floor_fraction: float = DRIFT_THRESHOLD_FLOOR_FRACTION,
 ) -> float:
-    """Compute the per-cell drift threshold (ms).
+    """Compute the per-cell drift threshold (ms) under the round-8 B2+B4 rule.
 
-    ``pooled = max(m6_1_3_ci_half_width, m6_2_ci_half_width, floor_ms)``.
-    Negative inputs are coerced to 0 before the max.
+    ``pooled = max(m6_1_3_ci_half_width, m6_2_ci_half_width, floor_ms,
+    floor_fraction * baseline_p50_ms)``. Negative inputs are coerced to 0
+    before the max.
+
+    The ``baseline_p50_ms=0.0`` default reduces to the pre-B4 B2 behavior so
+    callers that don't have the baseline p50 in scope still get a
+    well-defined threshold; threading the actual baseline activates B4.
     """
     return max(
         max(m6_1_3_ci_half_width, 0.0),
         max(m6_2_ci_half_width, 0.0),
         floor_ms,
+        max(baseline_p50_ms, 0.0) * max(floor_fraction, 0.0),
     )
 
 
@@ -81,11 +102,13 @@ def compute_drift_verdict(
     m6_2_ci_half_width: float = 0.0,
     *,
     floor_ms: float = DRIFT_THRESHOLD_FLOOR_MS,
+    floor_fraction: float = DRIFT_THRESHOLD_FLOOR_FRACTION,
     warn_multiplier: float = DRIFT_THRESHOLD_WARN_MULTIPLIER,
 ) -> M6_2DriftVerdict:
-    """Pooled-CI-with-floor verdict rule (B2).
+    """Pooled-CI-with-floor verdict rule (B2 + B4 round-8 amendment).
 
-    ``pooled = max(m6_1_3_ci_half_width, m6_2_ci_half_width, floor_ms)``.
+    ``pooled = max(m6_1_3_ci_half_width, m6_2_ci_half_width, floor_ms,
+    floor_fraction * m6_1_3_wall_p50_ms)``.
     ``PASS``: ``|m6_2 - m6_1_3| <= pooled``.
     ``WARN``: ``pooled < |m6_2 - m6_1_3| <= warn_multiplier * pooled``.
     ``FAIL``: ``|m6_2 - m6_1_3| > warn_multiplier * pooled``.
@@ -98,7 +121,9 @@ def compute_drift_verdict(
     pooled = pooled_ci_half_width(
         m6_1_3_ci_half_width,
         m6_2_ci_half_width,
+        baseline_p50_ms=m6_1_3_wall_p50_ms,
         floor_ms=floor_ms,
+        floor_fraction=floor_fraction,
     )
     if delta <= pooled:
         return "PASS"
@@ -144,7 +169,11 @@ def make_null_anchor(
         m6_1_3_ci_half_width,
         m6_2_ci_half_width,
     )
-    pooled = pooled_ci_half_width(m6_1_3_ci_half_width, m6_2_ci_half_width)
+    pooled = pooled_ci_half_width(
+        m6_1_3_ci_half_width,
+        m6_2_ci_half_width,
+        baseline_p50_ms=m6_1_3_wall_p50_ms,
+    )
     drift_fraction = (m6_2_wall_p50_ms - m6_1_3_wall_p50_ms) / pooled if pooled > 0 else 0.0
     return M6_2NullAnchor(
         cell_id=cell_id,

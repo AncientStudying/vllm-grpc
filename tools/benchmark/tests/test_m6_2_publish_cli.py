@@ -1,8 +1,8 @@
 """T044 — M6.2 publish-mode CLI integration test.
 
-Exercises ``--m6_2 --m6_2-n=50 --m6_2-skip-deploy`` end-to-end against the
-stub RPC driver. ``n=50`` is used for test speed (the spec's round-3 publish
-``n`` decision is still deferred per FR-004; T048 will pin it). Asserts the
+Exercises ``--m6_2 --m6_2-n=40 --m6_2-skip-deploy`` end-to-end against the
+stub RPC driver. ``n=40`` is the round-3-pinned production value
+(:data:`m6_2_types.M6_2_PUBLISH_N`, FR-004 closure 2026-05-24). Asserts the
 canonical publish-mode artifact shape:
 
 - Full 6-point axis × 4-cohort × 6-cell table (132 rows under the M6.1.2
@@ -17,6 +17,8 @@ canonical publish-mode artifact shape:
   conditionally (the stub data hits none of them).
 - Sub-probe contract: 16 blocks × n=20 × ``ignore_eos=True`` per T042;
   ``run_meta.sub_probe_ran=true``.
+- ``run_meta.n_per_point == M6_2_PUBLISH_N`` (regression guard against
+  silently drifting the pinned production n).
 """
 
 from __future__ import annotations
@@ -26,12 +28,17 @@ import json
 from pathlib import Path
 
 from vllm_grpc_bench.m6_2_reporter import INTEGRITY_CHANNELS, NOT_VALIDATED_MARKER
+from vllm_grpc_bench.m6_2_types import M6_2_PUBLISH_N
 from vllm_grpc_bench.m6_2_validate import run_m6_2
 
 
-def _build_publish_args(*, md_path: Path, json_path: Path, n: int = 50) -> argparse.Namespace:
+def _build_publish_args(
+    *, md_path: Path, json_path: Path, n: int = M6_2_PUBLISH_N
+) -> argparse.Namespace:
     """Construct the ``argparse.Namespace`` shape ``run_m6_2`` expects for
-    ``--m6_2 --m6_2-n=<n> --m6_2-skip-deploy`` invocations."""
+    ``--m6_2 --m6_2-n=<n> --m6_2-skip-deploy`` invocations. Default ``n``
+    matches :data:`m6_2_types.M6_2_PUBLISH_N` (40) so the test exercises
+    the round-3-pinned production value verbatim."""
     return argparse.Namespace(
         m6_2=True,
         m6_2_validate=False,
@@ -178,4 +185,4 @@ def test_publish_artifact_run_meta_validate_axis_subset_is_null(tmp_path: Path) 
     payload = json.loads(json_path.read_text())
     assert payload["run_meta"]["validate_axis_subset"] is None
     assert payload["run_meta"]["sweep_mode"] == "publish"
-    assert payload["run_meta"]["n_per_point"] == 50
+    assert payload["run_meta"]["n_per_point"] == M6_2_PUBLISH_N

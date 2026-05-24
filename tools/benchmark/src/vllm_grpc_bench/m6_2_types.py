@@ -58,6 +58,24 @@ M6_2_SUB_PROBE_MAX_TOKENS: tuple[int, ...] = (1024, 2048)
 M6_2_SUB_PROBE_N: int = 20
 """Per-block sample size for the KV-pressure sub-probe (FR-036)."""
 
+
+M6_2_PUBLISH_N: int = 40
+"""Per-(cell × cohort × max_tokens) sample size for the publish sweep,
+pinned in clarify round 3 (2026-05-24) against the 2026-05-24 validate
+sweep's measured CI half-widths.
+
+Round-3 closure rationale: the validate sweep at n=20 produced median
+CI half-widths of 1.95% at max_tokens=50 and 3.94% at max_tokens=2048;
+n=40 tightens both by 1/sqrt(2) ≈ 29% (to ~1.4% and ~2.8% median), well
+under the FR-014 / SC-004 pooled-CI WARN bar, while keeping the publish
+sweep at ~13 h wall-clock and ~$20 Modal spend at the bottom of the
+spec's provisional ``$20–$40`` envelope.
+
+The CLI gate (:func:`m6_2_sweep.gate_publish_mode_n`) still REQUIRES an
+explicit ``--m6_2-n`` flag — this constant documents the canonical pinned
+value but does NOT supply a default, so an operator cannot launch the
+publish sweep at an unintended n by omission."""
+
 M6_2_KV_PRESSURE_THRESHOLD: float = 2.2
 """Wall-clock ratio threshold above which KV-pressure is inferred (FR-017a)."""
 
@@ -251,6 +269,16 @@ class M6_2AnchorLatencyTrajectory:
     snapshots: list[M6_2AnchorLatencySnapshot]
     max_minus_min_wall_p50_ms: float
     latency_drift_warning: bool
+    insufficient_post_warmup_snapshots: bool = False
+    """C1 round-8 amendment (2026-05-23): set ``True`` when the cohort has
+    fewer than 2 snapshots after the ``WARMUP_SUPPRESSION_HOURS`` cold-start
+    drop. The trajectory's spread and ``latency_drift_warning`` are
+    suppressed in this case (set to 0.0 / False). The soft
+    ``trajectory_insufficient_snapshots`` integrity diagnostic fires when
+    any cohort carries this flag — purely informational, NOT
+    publish-blocking, distinct from SC-016 ``intra_sweep_latency_drift``.
+    Validate-mode 2-snapshot start+end trajectories hit this fallback by
+    construction once the start snapshot is warmup-dropped."""
 
 
 @dataclass(slots=True, kw_only=True)
@@ -336,6 +364,7 @@ __all__ = [
     "M6_2_INTERIOR_CAP_MAX_TOKENS",
     "M6_2_SUB_PROBE_MAX_TOKENS",
     "M6_2_SUB_PROBE_N",
+    "M6_2_PUBLISH_N",
     "M6_2_KV_PRESSURE_THRESHOLD",
     "M6_2_NULL_ANCHOR_DRIFT_COUNT_THRESHOLD",
     "M6_2_LATENCY_DRIFT_COHORT_COUNT_THRESHOLD",

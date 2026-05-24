@@ -8,7 +8,7 @@ Two mutually-exclusive top-level mode flags added to `tools/benchmark/src/vllm_g
 
 | Flag | Action | Description |
 |------|--------|-------------|
-| `--m6_2` | `store_true` | Run the M6.2 publish sweep — full 6-point `max_tokens` axis × 4-cohort × 6-cell matrix at the round-3-pinned `n`. Produces `docs/benchmarks/m6_2-token-budget.{md,json}`. **Refuses to start if `--m6_2-n` is unset** (FR-004 round-3 deferral). |
+| `--m6_2` | `store_true` | Run the M6.2 publish sweep — full 6-point `max_tokens` axis × 4-cohort × 6-cell matrix at the round-3-pinned `n=40` (`m6_2_types.M6_2_PUBLISH_N`). Produces `docs/benchmarks/m6_2-token-budget.{md,json}`. **Refuses to start if `--m6_2-n` is unset** (FR-004 explicit-n gate — no silent default). Canonical invocation: `--m6_2 --m6_2-n=40`. |
 | `--m6_2-validate` | `store_true` | Run the validate sweep — 3-point axis subset `{10, 50, 2048}` × 4-cohort × 6-cell matrix at `n=20` (hard-pinned). Produces `docs/benchmarks/m6_2-token-budget-validate.{md,json}`. Variance-gate input for the round-3 clarify cycle. |
 
 **Mutual exclusion** (FR-020): both flags mutually exclusive with each other AND with every prior mode flag:
@@ -33,7 +33,7 @@ Both `--m6_2` and `--m6_2-validate` route to `run_m6_2(args, *, sweep_mode: Lite
 
 | Flag | Type | Default under `--m6_2` | Default under `--m6_2-validate` | Notes |
 |------|------|------------------------|----------------------------------|-------|
-| `--m6_2-n` | `int \| None` | **`None` (REQUIRED — round-3 deferral)** | `20` (hard-pinned) | FR-004. Publish-mode value pinned in a future clarify cycle; orchestrator refuses to start if unset. Validate-mode value is hard-pinned at 20; `--m6_2-n=<X != 20>` under `--m6_2-validate` raises argparse error. |
+| `--m6_2-n` | `int \| None` | **`None` (REQUIRED — operator MUST pass explicit value; canonical `--m6_2-n=40` per `m6_2_types.M6_2_PUBLISH_N`)** | `20` (hard-pinned) | FR-004. Publish-mode value pinned in round-3 closure (2026-05-24) at `n=40`; the CLI gate still requires an explicit `--m6_2-n` flag (no silent default) so launching at the wrong n by omission is impossible. Validate-mode value is hard-pinned at 20; `--m6_2-n=<X != 20>` under `--m6_2-validate` raises argparse error. |
 
 **No `--m6_2-asymmetric-prompts` flag** (FR-008 + spec round-3 Q1). The flag MUST NOT be added to argparse. Symmetric prompts are operative-by-default via `symmetric_prompts.assign_symmetric_prompt(...)` per FR-008 round-5 amendment.
 
@@ -69,23 +69,24 @@ The orchestrator validates the on-disk corpus SHA against the provenance file at
 def test_m6_2_inheritable_defaults_match_m6_1_3() -> None:
     """FR-020: --m6_2 defaults for modal-region, base-seed, model MUST match M6.1.3's verbatim."""
     parser = build_parser()
-    args = parser.parse_args(["--m6_2", "--m6_2-n=50"])
+    args = parser.parse_args(["--m6_2", "--m6_2-n=40"])
     assert args.m6_2_modal_region == "eu-west-1"
     assert args.m6_2_base_seed == 42
     assert args.m6_2_model == "Qwen/Qwen3-8B"
 ```
 
-## Round-3 deferral gate (FR-004) + round-5 corpus validation gate (SC-018)
+## Explicit-n gate (FR-004 round-3 closure) + round-5 corpus validation gate (SC-018)
 
 ```python
 def run_m6_2(args, *, sweep_mode):
-    # Round-3 deferral gate
+    # Explicit-n gate (FR-004 round-3 closure 2026-05-24; canonical n=40)
     if sweep_mode == "publish":
         if args.m6_2_n is None:
             raise SystemExit(
-                "M6.2 publish BLOCKED: --m6_2-n unset. Per FR-004, publish n is gated on the round-3 "
-                "clarify cycle that fires after validate-sweep variance data. Run --m6_2-validate first; "
-                "then /speckit-clarify to pin n; then --m6_2 --m6_2-n=<pinned>."
+                "M6.2 publish BLOCKED: --m6_2-n unset. Per FR-004 round-3 closure (2026-05-24), the "
+                "canonical pinned n is 40 (m6_2_types.M6_2_PUBLISH_N). The CLI gate refuses to start "
+                "without an explicit value to prevent launching at the wrong n by omission. Re-invoke as "
+                "--m6_2 --m6_2-n=40, or pass a different n if intentionally overriding the pinned value."
             )
     elif sweep_mode == "validate":
         if args.m6_2_n is not None and args.m6_2_n != 20:
@@ -125,16 +126,16 @@ python -m vllm_grpc_bench --m6_2-validate --m6_2-modal-region=eu-west-1
 # Includes the KV-pressure sub-probe automatically per SC-019.
 ```
 
-**Publish sweep** (after `/speckit-clarify` pins n):
+**Publish sweep** (round-3-pinned `n=40`):
 ```bash
-python -m vllm_grpc_bench --m6_2 --m6_2-n=<ROUND_3_PINNED_N> --m6_2-modal-region=eu-west-1
-# 20-48 h wall-clock, $20-$40 Modal spend (depending on n).
+python -m vllm_grpc_bench --m6_2 --m6_2-n=40 --m6_2-modal-region=eu-west-1
+# ~13.2 h wall-clock, ~$20 Modal spend (FR-023 cap ≤ 16 h, FR-021 cap ≤ $25).
 ```
 
 **Local dev / integration test** (no Modal compute):
 ```bash
 python -m vllm_grpc_bench --m6_2-validate --m6_2-skip-deploy
-python -m vllm_grpc_bench --m6_2 --m6_2-n=50 --m6_2-skip-deploy
+python -m vllm_grpc_bench --m6_2 --m6_2-n=40 --m6_2-skip-deploy
 ```
 
 ## Mutual-exclusion enforcement test
