@@ -871,6 +871,24 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="M6.2: acknowledge an engine_version divergence (dev escape hatch).",
     )
+    parser.add_argument(
+        "--m6_2-checkpoint-out",
+        type=Path,
+        default=None,
+        help="M6.2: JSONL checkpoint sidecar path (per-block + per-anchor; crash-safe "
+        "fsync after every write). Default: <artifact-json>.checkpoint.jsonl. "
+        "Pass the empty string to disable checkpointing entirely.",
+    )
+    parser.add_argument(
+        "--m6_2-resume",
+        type=Path,
+        default=None,
+        help="M6.2: resume from a checkpoint JSONL. The current invocation's "
+        "sweep_mode, n_per_point, axis, base_seed, model, modal_region, git_sha, "
+        "and corpus SHAs MUST match the checkpoint header; mismatch aborts the "
+        "sweep with a precise diagnostic. The sweep skips every (cell, cohort, "
+        "max_tokens) block already in the checkpoint and continues appending.",
+    )
 
     # ---- M5.1 mode (REST vs gRPC head-to-head on real wire) ----
     parser.add_argument(

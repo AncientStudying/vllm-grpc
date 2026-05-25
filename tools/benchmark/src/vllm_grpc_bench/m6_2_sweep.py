@@ -44,6 +44,7 @@ import statistics
 import sys
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from vllm_grpc_bench.corpus import (
@@ -495,6 +496,18 @@ class M6_2SweepInputs:
     round-3-pinned (publish) or 20 (validate) per-block sample size;
     ``dispatcher`` + ``anchor_dispatcher`` are pluggable so the validate-CLI
     tests can inject a stub. ``is_transient`` is the FR-033 retry predicate.
+
+    Phase-1 resume support (2026-05-25):
+
+    * ``checkpoint_path`` — when set, the orchestrator appends each
+      successful ``BLOCK_DONE`` / ``ANCHOR_END`` to a JSONL sidecar at
+      this path so the sweep can be resumed across a crash. ``None``
+      disables checkpointing.
+    * ``preloaded_measurements`` / ``preloaded_anchor_snapshots`` — when
+      ``--m6_2-resume`` is passed, the orchestrator pre-populates the
+      sweep state from the checkpoint and passes them here. The main
+      loop merges them into the in-flight collections and skips any
+      already-completed ``(cell, cohort, max_tokens)`` block.
     """
 
     sweep_mode: M6_2SweepMode
@@ -512,6 +525,28 @@ class M6_2SweepInputs:
     Fires at sweep start + end (validate sweeps < 8 h); publish sweeps
     additionally fire at every 4 h mark per the same cadence as the anchor
     block. ``None`` disables the probe (stub / test paths)."""
+    checkpoint_path: Path | None = None
+    """Phase-1 resume: when set, every block + anchor result is appended
+    to a JSONL sidecar at this path for crash-safe resume. ``None``
+    disables checkpointing entirely (backward-compatible default)."""
+    preloaded_measurements: list[M6_2MeasurementPoint] | None = None
+    """Phase-1 resume: pre-populated measurements from a prior partial
+    run. The main loop seeds its ``measurements`` list with these before
+    iterating, and skips any ``(cell, cohort, max_tokens)`` block already
+    present. ``None`` = no resume; start fresh."""
+    preloaded_anchor_snapshots: dict[M6_1_2CohortKind, list[M6_2AnchorLatencySnapshot]] | None = (
+        None
+    )
+    """Phase-1 resume: pre-populated anchor snapshots from a prior
+    partial run. ``None`` = no resume; start fresh."""
+    wall_clock_start_utc_override: str | None = None
+    """Phase-1 resume: when set, the sweep records this as its
+    ``wall_clock_start_utc`` instead of capturing fresh ``now``. Used by
+    resumed sweeps so the artifact's ``run_started_at`` reports the
+    ORIGINAL run start, not the resume-time start. The resumed sweep's
+    elapsed-hour computation still uses fresh ``now`` internally for
+    anchor-cadence purposes (Phase-1 known limitation: anchor cadence
+    drifts relative to the original run)."""
 
 
 @dataclass(slots=True, kw_only=True)
@@ -597,11 +632,24 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
     the same iteration sequence after the main loop. US1's reporter (T022)
     consumes the returned :class:`M6_2SweepOutputs` to render the artifact.
     """
-    sweep_start_utc = _now_iso_utc()
+    sweep_start_utc = inputs.wall_clock_start_utc_override or _now_iso_utc()
     sweep_start_perf = asyncio.get_event_loop().time()
 
-    measurements: list[M6_2MeasurementPoint] = []
-    anchor_snapshots: dict[M6_1_2CohortKind, list[M6_2AnchorLatencySnapshot]] = {}
+    # Phase-1 resume: pre-populate measurements + anchor snapshots from a
+    # prior partial run when ``--m6_2-resume`` was passed. The skip
+    # predicate below uses ``completed`` to bypass blocks the prior run
+    # already finished; iter_idx (= len(measurements)) stays consistent
+    # because the dispatcher derives per-RPC seeds from base_seed + iter_idx
+    # and the iteration order is deterministic.
+    measurements: list[M6_2MeasurementPoint] = list(inputs.preloaded_measurements or [])
+    anchor_snapshots: dict[M6_1_2CohortKind, list[M6_2AnchorLatencySnapshot]] = (
+        {cohort: list(snaps) for cohort, snaps in (inputs.preloaded_anchor_snapshots or {}).items()}
+        if inputs.preloaded_anchor_snapshots is not None
+        else {}
+    )
+    completed: frozenset[tuple[str, M6_1_2CohortKind, int]] = frozenset(
+        (m.cell_id, m.cohort, m.max_tokens) for m in measurements
+    )
     network_paths_trajectory: dict[M6_1_2CohortKind, list[Any]] = {
         cohort: [] for cohort in M6_1_2_COHORTS
     }
@@ -623,21 +671,35 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
     await _capture_topology_probe(network_paths_trajectory, inputs.topology_probe)
     _progress("TOPOLOGY_PROBE_END", phase="sweep_start")
 
-    # Anchor at sweep start (t = 0h).
-    _progress("ANCHOR_START", sweep_hour_mark=f"{0.0:.2f}")
-    anchor_t0_perf = asyncio.get_event_loop().time()
-    await _capture_anchor_block(
-        snapshots_by_cohort=anchor_snapshots,
-        rpc_driver=inputs.anchor_dispatcher,
-        base_seed=inputs.base_seed,
-        sweep_hour_mark=0.0,
-    )
-    _progress(
-        "ANCHOR_END",
-        sweep_hour_mark=f"{0.0:.2f}",
-        duration_s=f"{asyncio.get_event_loop().time() - anchor_t0_perf:.1f}",
-        cohorts_captured=len(anchor_snapshots),
-    )
+    # Anchor at sweep start (t = 0h). Resumed sweeps skip the t=0 anchor
+    # if the checkpoint already carries snapshots — those snapshots
+    # belong to the prior run's t=0 capture and re-firing here would
+    # double-count + capture under a fresh sweep-clock that no longer
+    # matches the original baseline.
+    sweep_start_anchor_already_captured = any(anchor_snapshots.values())
+    if not sweep_start_anchor_already_captured:
+        _progress("ANCHOR_START", sweep_hour_mark=f"{0.0:.2f}")
+        anchor_t0_perf = asyncio.get_event_loop().time()
+        await _capture_anchor_block(
+            snapshots_by_cohort=anchor_snapshots,
+            rpc_driver=inputs.anchor_dispatcher,
+            base_seed=inputs.base_seed,
+            sweep_hour_mark=0.0,
+            checkpoint_path=inputs.checkpoint_path,
+        )
+        _progress(
+            "ANCHOR_END",
+            sweep_hour_mark=f"{0.0:.2f}",
+            duration_s=f"{asyncio.get_event_loop().time() - anchor_t0_perf:.1f}",
+            cohorts_captured=len(anchor_snapshots),
+        )
+    else:
+        _progress(
+            "ANCHOR_SKIPPED",
+            sweep_hour_mark=f"{0.0:.2f}",
+            reason="resumed_from_checkpoint",
+            cohorts_carried=len([c for c, snaps in anchor_snapshots.items() if snaps]),
+        )
 
     for tuple_idx_minus_one, (cell_id, concurrency, max_tokens) in enumerate(
         iter_main_sweep_tuples(inputs.axis)
@@ -655,6 +717,22 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
         )
         tuple_start_perf = asyncio.get_event_loop().time()
         for cohort in cohorts_at_concurrency(concurrency):
+            # Phase-1 resume: skip blocks already present in the
+            # pre-loaded checkpoint. iter_idx (= len(measurements)) stays
+            # correct because the pre-loaded measurements are at indices
+            # [0, len(preloaded)) and any block we skip here doesn't
+            # advance the index — it was already counted when the prior
+            # run appended it.
+            if (cell_id, cohort, max_tokens) in completed:
+                _progress(
+                    "BLOCK_SKIPPED",
+                    i=f"{len(measurements)}/{expected_blocks}",
+                    cell=cell_id,
+                    cohort=cohort,
+                    max_tokens=max_tokens,
+                    reason="resumed_from_checkpoint",
+                )
+                continue
             iter_idx = len(measurements)
             block_inputs = resolve_block_inputs(
                 cell=cell_id,
@@ -693,6 +771,13 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
                 block_inputs=block_inputs,
             )
             measurements.append(measurement)
+            # Phase-1 resume: append to the JSONL checkpoint sidecar
+            # immediately after the in-memory append, so a crash between
+            # blocks loses at most one in-flight block's worth of work.
+            if inputs.checkpoint_path is not None:
+                from vllm_grpc_bench.m6_2_resume import append_measurement
+
+                append_measurement(inputs.checkpoint_path, measurement)
             block_duration_s = asyncio.get_event_loop().time() - block_perf_start
             _progress(
                 "BLOCK_DONE",
@@ -730,6 +815,7 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
                 rpc_driver=inputs.anchor_dispatcher,
                 base_seed=inputs.base_seed,
                 sweep_hour_mark=elapsed_hours,
+                checkpoint_path=inputs.checkpoint_path,
             )
             _progress(
                 "ANCHOR_END",
@@ -749,6 +835,7 @@ async def run_m6_2_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
             rpc_driver=inputs.anchor_dispatcher,
             base_seed=inputs.base_seed,
             sweep_hour_mark=elapsed_hours,
+            checkpoint_path=inputs.checkpoint_path,
         )
         _progress(
             "ANCHOR_END",
@@ -1081,9 +1168,14 @@ async def _capture_anchor_block(
     rpc_driver: AnchorRPCDriver,
     base_seed: int,
     sweep_hour_mark: float,
+    checkpoint_path: Path | None = None,
 ) -> None:
     """Invoke :func:`compute_anchor_block` and append the per-cohort
-    snapshots to ``snapshots_by_cohort``."""
+    snapshots to ``snapshots_by_cohort``.
+
+    Phase-1 resume: when ``checkpoint_path`` is set, every per-cohort
+    snapshot is also appended to the JSONL sidecar so a crash mid-anchor
+    loses at most one cohort's worth of snapshot."""
     new_snapshots = await compute_anchor_block(
         cohorts=list(M6_1_2_COHORTS),
         rpc_driver=rpc_driver,
@@ -1092,6 +1184,10 @@ async def _capture_anchor_block(
     )
     for cohort, snapshot in new_snapshots.items():
         snapshots_by_cohort.setdefault(cohort, []).append(snapshot)
+        if checkpoint_path is not None:
+            from vllm_grpc_bench.m6_2_resume import append_anchor
+
+            append_anchor(checkpoint_path, cohort, snapshot)
 
 
 async def _capture_topology_probe(

@@ -1595,6 +1595,11 @@ async def _run_modal_backed(
     base_seed: int,
     modal_region: str,
     model_identifier: str,
+    checkpoint_path: Path | None = None,
+    preloaded_measurements: list[Any] | None = None,
+    preloaded_anchor_snapshots: dict[M6_1_2CohortKind, list[Any]] | None = None,
+    resumed_run_id: str | None = None,
+    resumed_run_started_at: str | None = None,
 ) -> int:
     """Open Modal deploy + M6.2 RPC driver, run the sweep with real adapters,
     write the artifact. Returns the exit code per ``contracts/cli.md``.
@@ -1688,6 +1693,10 @@ async def _run_modal_backed(
                 anchor_dispatcher=anchor_dispatcher,
                 is_transient=is_transient_modal_error,
                 topology_probe=_topology_probe,
+                checkpoint_path=checkpoint_path,
+                preloaded_measurements=preloaded_measurements,
+                preloaded_anchor_snapshots=preloaded_anchor_snapshots,
+                wall_clock_start_utc_override=resumed_run_started_at,
             )
             sweep_outputs, sub_probe_results = await _drive_main_sweep_and_sub_probe(
                 inputs=inputs,
@@ -1759,17 +1768,154 @@ async def _run_modal_backed(
         sub_probe_ran=True,
         network_paths=network_paths,
         preemption_events=preemption_events_total,
+        run_id=resumed_run_id,
     )
     write_m6_2_report(artifact, md_path, json_path, sweep_mode=sweep_mode)
+    extra = (f" resumed_run_id={resumed_run_id}" if resumed_run_id else "") + (
+        f" checkpoint={checkpoint_path}" if checkpoint_path else ""
+    )
     print(
         f"[m6_2_validate] sweep_mode={sweep_mode} n_per_point={n_per_point} "
-        f"axis={list(axis)} md_out={md_path} json_out={json_path}",
+        f"axis={list(axis)} md_out={md_path} json_out={json_path}{extra}",
         flush=True,
     )
     return 0
 
 
 # --- Entry function --------------------------------------------------------
+
+
+class _CheckpointMismatchAdapter(RuntimeError):
+    """Local alias used by :func:`_resolve_resume_state` so the m6_2_validate
+    layer doesn't leak ``m6_2_resume.CheckpointMismatchError`` into its
+    public surface. The orchestrator catches the local class and renders
+    its ``str(exc)`` to stderr; the exit code is rc=8 (distinct from the
+    rc=5 / rc=6 / rc=7 used by gates / deploy / preemption budget)."""
+
+
+def _resolve_resume_state(
+    args: argparse.Namespace,
+    *,
+    json_path: Path,
+    sweep_mode: M6_2SweepMode,
+    n_per_point: int,
+    axis: tuple[int, ...],
+    base_seed: int,
+    model_identifier: str,
+    modal_region: str,
+    chat_corpus_sha256: str,
+    embed_corpus_sha256: str,
+) -> tuple[
+    Path | None,  # checkpoint_path
+    list[Any] | None,  # preloaded_measurements (M6_2MeasurementPoint)
+    dict[M6_1_2CohortKind, list[Any]] | None,  # preloaded_anchor_snapshots
+    str | None,  # resumed_run_id (Phase-1: propagate from checkpoint header on resume)
+    str | None,  # resumed_run_started_at
+]:
+    """Read ``--m6_2-resume`` + ``--m6_2-checkpoint-out`` from ``args``,
+    load + validate the checkpoint (if any), and return the tuple the
+    sweep entrypoints thread into :class:`M6_2SweepInputs`.
+
+    Three cases:
+
+    1. ``--m6_2-resume PATH`` set → load the checkpoint, validate every
+       integrity-gated field against the current invocation, return the
+       pre-populated measurements + anchor snapshots and the original
+       run_id / run_started_at carried over from the checkpoint header.
+       Subsequent writes continue appending to the same path.
+    2. No resume; ``--m6_2-checkpoint-out`` defaulted (``None``) → use
+       ``<json_path>.checkpoint.jsonl``, write a fresh header, return
+       empty pre-loaded state.
+    3. No resume; ``--m6_2-checkpoint-out`` explicitly empty (``Path("")``)
+       → disable checkpointing entirely, return ``checkpoint_path=None``
+       and empty pre-loaded state.
+
+    Raises :class:`_CheckpointMismatchAdapter` on integrity-gate failure;
+    the orchestrator surfaces it and exits rc=8."""
+    from vllm_grpc_bench.m6_2_resume import (
+        RESUME_SCHEMA_VERSION,
+        CheckpointHeader,
+        CheckpointMismatchError,
+        load_checkpoint,
+        validate_checkpoint_against_current_run,
+        write_checkpoint_header,
+    )
+
+    resume_path = getattr(args, "m6_2_resume", None)
+    checkpoint_out = getattr(args, "m6_2_checkpoint_out", None)
+
+    if resume_path is not None:
+        try:
+            header, measurements, anchor_snapshots = load_checkpoint(Path(resume_path))
+            validate_checkpoint_against_current_run(
+                header,
+                sweep_mode=sweep_mode,
+                n_per_point=n_per_point,
+                axis=axis,
+                base_seed=base_seed,
+                model_identifier=model_identifier,
+                modal_region=modal_region,
+                git_sha=_git_sha(),
+                chat_corpus_sha256=chat_corpus_sha256,
+                embed_corpus_sha256=embed_corpus_sha256,
+            )
+        except CheckpointMismatchError as exc:
+            raise _CheckpointMismatchAdapter(str(exc)) from exc
+        print(
+            f"[m6_2_validate] resumed from checkpoint {resume_path} "
+            f"({len(measurements)} measurements + "
+            f"{sum(len(v) for v in anchor_snapshots.values())} anchor snapshots carried over)",
+            file=sys.stderr,
+            flush=True,
+        )
+        return (
+            Path(resume_path),
+            list(measurements),
+            dict(anchor_snapshots) if anchor_snapshots else None,
+            header.run_id,
+            header.run_started_at,
+        )
+
+    # No resume — fresh sweep. Decide checkpoint output path.
+    if checkpoint_out is not None and str(checkpoint_out) == "":
+        # Explicit opt-out via empty path.
+        return (None, None, None, None, None)
+
+    checkpoint_path: Path
+    if checkpoint_out is None:
+        checkpoint_path = Path(str(json_path) + ".checkpoint.jsonl")
+    else:
+        checkpoint_path = Path(checkpoint_out)
+
+    from vllm_grpc_bench.m6_2_sweep import _now_iso_utc
+
+    run_started_at = _now_iso_utc()
+    run_id = f"{run_started_at}-{uuid.uuid4().hex[:8]}"
+    header = CheckpointHeader(
+        schema_version=RESUME_SCHEMA_VERSION,
+        run_id=run_id,
+        run_started_at=run_started_at,
+        sweep_mode=sweep_mode,
+        n_per_point=n_per_point,
+        axis=tuple(axis),
+        base_seed=base_seed,
+        model_identifier=model_identifier,
+        modal_region=modal_region,
+        git_sha=_git_sha(),
+        chat_corpus_sha256=chat_corpus_sha256,
+        embed_corpus_sha256=embed_corpus_sha256,
+    )
+    write_checkpoint_header(checkpoint_path, header)
+    print(
+        f"[m6_2_validate] checkpoint sidecar opened at {checkpoint_path} (run_id={run_id})",
+        file=sys.stderr,
+        flush=True,
+    )
+    # Phase-1 contract: the header's run_id + run_started_at are pinned at
+    # this moment and threaded through build_artifact even on a fresh run
+    # so the artifact's run_id matches the checkpoint's run_id (so the
+    # operator can correlate the two in post-mortem audits).
+    return (checkpoint_path, None, None, run_id, run_started_at)
 
 
 def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
@@ -1826,6 +1972,39 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
     model_identifier = str(getattr(args, "m6_2_model", "Qwen/Qwen3-8B"))
     skip_deploy = bool(getattr(args, "m6_2_skip_deploy", False))
 
+    # Phase-1 resume / checkpoint resolution. Three cases:
+    #
+    # 1. ``--m6_2-resume PATH`` set → load + validate header against the
+    #    current run identity, pre-populate measurements + anchor snapshots,
+    #    continue appending to the same checkpoint path.
+    # 2. No resume; ``--m6_2-checkpoint-out`` defaulted (None) → checkpoint
+    #    at ``<json_path>.checkpoint.jsonl``, write a fresh header.
+    # 3. No resume; ``--m6_2-checkpoint-out`` explicitly empty (Path("")) →
+    #    disable checkpointing entirely (back-compat with pre-Phase-1
+    #    invocations that don't want a sidecar).
+    try:
+        (
+            checkpoint_path,
+            preloaded_measurements,
+            preloaded_anchor_snapshots,
+            resumed_run_id,
+            resumed_run_started_at,
+        ) = _resolve_resume_state(
+            args,
+            json_path=json_path,
+            sweep_mode=sweep_mode,
+            n_per_point=n_per_point,
+            axis=axis,
+            base_seed=base_seed,
+            model_identifier=model_identifier,
+            modal_region=modal_region,
+            chat_corpus_sha256=chat_corpus_sha256,
+            embed_corpus_sha256=embed_corpus_sha256,
+        )
+    except _CheckpointMismatchAdapter as exc:
+        print(f"ERROR: {exc}", file=sys.stderr, flush=True)
+        return 8
+
     if not skip_deploy:
         return asyncio.run(
             _run_modal_backed(
@@ -1843,6 +2022,11 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
                 base_seed=base_seed,
                 modal_region=modal_region,
                 model_identifier=model_identifier,
+                checkpoint_path=checkpoint_path,
+                preloaded_measurements=preloaded_measurements,
+                preloaded_anchor_snapshots=preloaded_anchor_snapshots,
+                resumed_run_id=resumed_run_id,
+                resumed_run_started_at=resumed_run_started_at,
             )
         )
 
@@ -1862,6 +2046,10 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
         anchor_dispatcher=anchor_dispatcher,  # type: ignore[arg-type]
         is_transient=_stub_is_transient,
         topology_probe=None,
+        checkpoint_path=checkpoint_path,
+        preloaded_measurements=preloaded_measurements,
+        preloaded_anchor_snapshots=preloaded_anchor_snapshots,
+        wall_clock_start_utc_override=resumed_run_started_at,
     )
     sub_probe_rows = asyncio.run(
         _drive_main_sweep_and_sub_probe(
@@ -1889,11 +2077,15 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
         sub_probe_rows=sub_probe_results,
         sub_probe_ran=True,
         network_paths=getattr(sweep_outputs, "network_paths", None),
+        run_id=resumed_run_id,
     )
     write_m6_2_report(artifact, md_path, json_path, sweep_mode=sweep_mode)
+    extra = (f" resumed_run_id={resumed_run_id}" if resumed_run_id else "") + (
+        f" checkpoint={checkpoint_path}" if checkpoint_path else ""
+    )
     print(
         f"[m6_2_validate] sweep_mode={sweep_mode} n_per_point={n_per_point} "
-        f"axis={list(axis)} md_out={md_path} json_out={json_path}",
+        f"axis={list(axis)} md_out={md_path} json_out={json_path}{extra}",
         flush=True,
     )
     return 0
