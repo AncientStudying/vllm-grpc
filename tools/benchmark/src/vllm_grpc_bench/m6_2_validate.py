@@ -59,10 +59,12 @@ from vllm_grpc_bench.m6_2_types import (
 )
 
 __all__ = [
+    "M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD",
     "M6_2_PREEMPTION_RECURRENCE_THRESHOLD",
     "PreemptionBudgetExhausted",
     "PreemptionRecoveryFailed",
     "block_failed_with_endpoint_death",
+    "block_has_endpoint_death",
     "build_artifact",
     "build_modal_anchor_dispatcher",
     "build_modal_block_dispatcher",
@@ -73,6 +75,7 @@ __all__ = [
     "derive_anchor_drift_threshold",
     "infer_output_path",
     "is_modal_endpoint_death",
+    "is_modal_endpoint_death_reason",
     "is_transient_modal_error",
     "load_m6_1_3_baseline",
     "make_null_anchor_validation",
@@ -322,10 +325,42 @@ def is_modal_endpoint_death(exc: BaseException) -> bool:
     return False
 
 
+def is_modal_endpoint_death_reason(reason: str | None) -> bool:
+    """Return ``True`` iff a recorded ``RPCResult.failure_reason`` string
+    carries one of the endpoint-death message fragments.
+
+    Some cohorts (notably ``tuned_grpc_multiplexed`` over a shared HTTP/2
+    channel) catch transport-layer errors inside the RPC driver and surface
+    them as ``RPCResult(success=False, failure_reason=...)`` — a non-exception
+    result — instead of letting the exception escape ``asyncio.gather``.
+    The 2026-05-24 publish sweep's post-mortem showed this hides the
+    preemption from the original :func:`is_modal_endpoint_death` predicate,
+    which only inspects raised exceptions. Matching against
+    :data:`_ENDPOINT_DEATH_MESSAGE_FRAGMENTS` recovers the signal.
+    """
+    if not isinstance(reason, str) or not reason:
+        return False
+    lower = reason.lower()
+    return any(frag in lower for frag in _ENDPOINT_DEATH_MESSAGE_FRAGMENTS)
+
+
+def _is_endpoint_death_result(r: Any) -> bool:
+    """Classify a single per-RPC result (exception OR ``RPCResult``-shaped
+    record) as endpoint-death. Used by :func:`block_failed_with_endpoint_death`
+    and :func:`block_has_endpoint_death`."""
+    if isinstance(r, BaseException):
+        return is_modal_endpoint_death(r)
+    if getattr(r, "success", None) is False:
+        return is_modal_endpoint_death_reason(getattr(r, "failure_reason", None))
+    return False
+
+
 def block_failed_with_endpoint_death(results: list[Any], n: int) -> bool:
     """Return ``True`` iff a whole block dispatched ``n`` RPCs and EVERY
-    one came back as an endpoint-death exception (per
-    :func:`is_modal_endpoint_death`).
+    one came back as an endpoint-death failure — either a raised
+    :func:`is_modal_endpoint_death` exception OR a non-exception
+    ``RPCResult(success=False, failure_reason=...)`` whose ``failure_reason``
+    matches :func:`is_modal_endpoint_death_reason`.
 
     The block dispatcher uses this predicate to decide whether to trigger
     T074's recovery path: a single endpoint-death in isolation could just
@@ -335,14 +370,29 @@ def block_failed_with_endpoint_death(results: list[Any], n: int) -> bool:
     swap to a refreshed endpoint before continuing.
 
     ``results`` is the raw ``asyncio.gather(..., return_exceptions=True)``
-    output — exceptions and successful ``RPCResult`` objects intermixed.
-    Returns ``False`` when ``len(results) != n`` (partial/over-collected
-    batch — handled as a normal block failure, not a preemption) and
-    when ``n <= 0`` (vacuous-truth guard — no RPCs means no signal).
+    output — exceptions and ``RPCResult`` objects intermixed. Returns
+    ``False`` when ``len(results) != n`` (partial/over-collected batch —
+    handled as a normal block failure, not a preemption) and when
+    ``n <= 0`` (vacuous-truth guard — no RPCs means no signal).
     """
     if n <= 0 or len(results) != n:
         return False
-    return all(isinstance(r, BaseException) and is_modal_endpoint_death(r) for r in results)
+    return all(_is_endpoint_death_result(r) for r in results)
+
+
+def block_has_endpoint_death(results: list[Any]) -> bool:
+    """Return ``True`` iff ``results`` contains at least one endpoint-death
+    failure (either exception or :func:`RPCResult`-shaped failure-reason).
+
+    Distinct from :func:`block_failed_with_endpoint_death`: this is the
+    *any* predicate that feeds the secondary "two-consecutive-blocks"
+    trigger in :func:`build_modal_block_dispatcher`. Partial-failure blocks
+    are not by themselves a preemption signal — a single transport blip
+    can land on one RPC mid-block — but two consecutive blocks with at
+    least one endpoint-death apiece is a strong enough signal that the
+    cached endpoint URL is stale.
+    """
+    return any(_is_endpoint_death_result(r) for r in results)
 
 
 def _cell_from_cell_id(cell_id: str) -> M6_1Cell:
@@ -354,6 +404,22 @@ def _cell_from_cell_id(cell_id: str) -> M6_1Cell:
 
 
 # T074c — Modal-preemption budget enforcement -------------------------------
+
+
+M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD: int = 2
+"""Secondary preemption trigger: when this many *consecutive* blocks each
+report at least one endpoint-death failure, the dispatcher forces a
+``make_driver()`` refresh even if no individual block tripped the
+strict whole-block ``block_failed_with_endpoint_death`` predicate.
+
+The 2026-05-24 publish sweep died because the ``tuned_grpc_multiplexed``
+cohort's shared HTTP/2 channel surfaced connection failures as
+``RPCResult(success=False, failure_reason=...)`` records mixed with
+late-arriving exceptions, leaving the whole-block predicate just-barely
+unsatisfied while every downstream block still failed. Two consecutive
+partial-death blocks is a strong enough signal that the cached endpoint
+URL is stale; one is not (could be a single transport blip).
+"""
 
 
 M6_2_PREEMPTION_RECURRENCE_THRESHOLD: int = 2
@@ -481,6 +547,7 @@ def build_modal_block_dispatcher(
     base_seed: int,
     make_driver: Any = None,  # Callable[[], Awaitable[M6_2RPCDriver]] | None
     preemption_budget: int = M6_2_PREEMPTION_RECURRENCE_THRESHOLD,
+    consecutive_death_threshold: int = M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD,
 ) -> Any:
     """Build a :class:`BlockDispatcher` that fires N concurrent RPCs via
     :func:`provide_m6_2_rpc_driver`'s driver callable.
@@ -513,6 +580,19 @@ def build_modal_block_dispatcher(
     backward compatibility) disables recovery entirely — the dispatcher
     behaves identically to the pre-T074 implementation.
 
+    **Secondary trigger (2026-05-25 publish-sweep autopsy fix)**: when
+    the whole-block predicate is *just barely* unsatisfied — e.g. the
+    ``tuned_grpc_multiplexed`` cohort's shared-channel driver surfaces
+    transport errors as non-exception ``RPCResult`` records mixed with
+    late-arriving exceptions — but every block keeps reporting at least
+    one endpoint-death failure, the dispatcher counts consecutive
+    partial-death blocks. Once that count reaches
+    ``consecutive_death_threshold`` (default
+    :data:`M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD` = 2), the
+    dispatcher forces a recovery + retry of the current block. The
+    counter resets to zero on any block that finishes without an
+    endpoint-death failure or whose primary trigger fires.
+
     The dispatcher function carries the live counters as attributes so
     the orchestrator can persist them to ``run_meta.preemption_events``::
 
@@ -524,7 +604,13 @@ def build_modal_block_dispatcher(
 
     # Mutable holder so the recovery loop can swap in a refreshed driver
     # without disturbing the closure semantics of the inner ``_one_rpc``.
-    state = SimpleNamespace(driver=driver, preemption_events=0)
+    # ``consecutive_death_blocks`` survives across dispatcher calls so the
+    # secondary "two consecutive partial-death blocks" trigger can fire.
+    state = SimpleNamespace(
+        driver=driver,
+        preemption_events=0,
+        consecutive_death_blocks=0,
+    )
 
     async def _gather_block(
         cell: M6_1Cell,
@@ -577,11 +663,41 @@ def build_modal_block_dispatcher(
             cell, cohort, max_tokens, n, prompt, prompt_embeds_override, ignore_eos
         )
 
-        # T074b recovery loop: when ALL n RPCs failed with endpoint-death
-        # signatures, the Modal worker has been preempted and the cached
-        # endpoint URL is dead. Refresh and retry once per cycle, with the
-        # FR-026 / T074c budget bounding the total recovery count.
-        while make_driver is not None and block_failed_with_endpoint_death(results, n):
+        # T074b primary trigger: every RPC in the block came back as
+        # endpoint-death — the Modal container is gone, refresh and
+        # retry. Secondary trigger (2026-05-25 publish-sweep fix):
+        # ``consecutive_death_threshold`` partial-death blocks in a row
+        # ALSO trigger a refresh, even when the whole-block predicate
+        # never tripped. The two triggers share one recovery branch.
+        while make_driver is not None:
+            primary = block_failed_with_endpoint_death(results, n)
+            secondary = False
+            trigger_reason: str
+            if primary:
+                # A clean preemption signal — reset the consecutive
+                # counter so the next block starts from zero.
+                state.consecutive_death_blocks = 0
+                trigger_reason = "whole_block_endpoint_death"
+            elif block_has_endpoint_death(results):
+                state.consecutive_death_blocks += 1
+                if state.consecutive_death_blocks >= consecutive_death_threshold:
+                    secondary = True
+                    trigger_reason = "consecutive_endpoint_death"
+                    # Reset the counter on trigger so we don't refire
+                    # immediately on the next partial-death block.
+                    state.consecutive_death_blocks = 0
+                else:
+                    # Partial-death block but below threshold — return it
+                    # to the caller as a normal failure-aggregation case.
+                    break
+            else:
+                # No endpoint-death this block; reset the streak.
+                state.consecutive_death_blocks = 0
+                break
+
+            if not (primary or secondary):  # pragma: no cover — defensive
+                break
+
             if state.preemption_events >= preemption_budget:
                 _progress(
                     "PREEMPTION_BUDGET_EXHAUSTED",
@@ -590,6 +706,7 @@ def build_modal_block_dispatcher(
                     max_tokens=max_tokens,
                     preemption_events=state.preemption_events,
                     budget=preemption_budget,
+                    trigger=trigger_reason,
                 )
                 raise PreemptionBudgetExhausted(
                     f"Modal preemption recurrence threshold "
@@ -604,6 +721,7 @@ def build_modal_block_dispatcher(
                 cohort=cohort,
                 max_tokens=max_tokens,
                 attempt=f"{attempt}/{preemption_budget}",
+                trigger=trigger_reason,
             )
             t0 = asyncio.get_event_loop().time()
             try:
@@ -615,6 +733,7 @@ def build_modal_block_dispatcher(
                     cohort=cohort,
                     max_tokens=max_tokens,
                     attempt=f"{attempt}/{preemption_budget}",
+                    trigger=trigger_reason,
                     error=type(exc).__name__,
                 )
                 raise PreemptionRecoveryFailed(
@@ -629,6 +748,7 @@ def build_modal_block_dispatcher(
                 cohort=cohort,
                 max_tokens=max_tokens,
                 attempt=f"{attempt}/{preemption_budget}",
+                trigger=trigger_reason,
                 recovery_s=f"{asyncio.get_event_loop().time() - t0:.1f}",
             )
             results = await _gather_block(
@@ -732,6 +852,7 @@ def build_modal_anchor_dispatcher(
     anchor_max_tokens: int = 10,
     make_driver: Any = None,  # Callable[[], Awaitable[M6_2RPCDriver]] | None
     preemption_budget: int = M6_2_PREEMPTION_RECURRENCE_THRESHOLD,
+    consecutive_death_threshold: int = M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD,
 ) -> Any:
     """Build an :class:`AnchorRPCDriver` that fires the FR-031 anchor block
     against the real driver.
@@ -770,7 +891,7 @@ def build_modal_anchor_dispatcher(
     from vllm_grpc_bench.m6_2_sweep import _progress
 
     cell = anchor_cell or _M6_1Cell(path="chat_stream", hidden_size=4096, concurrency=1)
-    state = SimpleNamespace(driver=driver, preemption_events=0)
+    state = SimpleNamespace(driver=driver, preemption_events=0, consecutive_death_blocks=0)
 
     async def _gather_anchor(
         cohort: M6_1_2CohortKind, n: int, base_seed: int, seed_offset: int
@@ -810,10 +931,33 @@ def build_modal_anchor_dispatcher(
     ) -> list[float]:
         results = await _gather_anchor(cohort, n, base_seed, seed_offset)
 
-        # T074e recovery loop: when ALL n anchor RPCs failed with
-        # endpoint-death signatures, the Modal worker is gone. Mirrors the
-        # block dispatcher's recovery sequence.
-        while make_driver is not None and block_failed_with_endpoint_death(results, n):
+        # T074e recovery loop: primary trigger fires when every anchor
+        # RPC failed with an endpoint-death signature; secondary trigger
+        # fires after ``consecutive_death_threshold`` consecutive anchor
+        # blocks each had at least one endpoint-death failure (mirrors
+        # build_modal_block_dispatcher's logic).
+        while make_driver is not None:
+            primary = block_failed_with_endpoint_death(results, n)
+            secondary = False
+            trigger_reason: str
+            if primary:
+                state.consecutive_death_blocks = 0
+                trigger_reason = "whole_block_endpoint_death"
+            elif block_has_endpoint_death(results):
+                state.consecutive_death_blocks += 1
+                if state.consecutive_death_blocks >= consecutive_death_threshold:
+                    secondary = True
+                    trigger_reason = "consecutive_endpoint_death"
+                    state.consecutive_death_blocks = 0
+                else:
+                    break
+            else:
+                state.consecutive_death_blocks = 0
+                break
+
+            if not (primary or secondary):  # pragma: no cover — defensive
+                break
+
             if state.preemption_events >= preemption_budget:
                 _progress(
                     "PREEMPTION_BUDGET_EXHAUSTED",
@@ -821,6 +965,7 @@ def build_modal_anchor_dispatcher(
                     cohort=cohort,
                     preemption_events=state.preemption_events,
                     budget=preemption_budget,
+                    trigger=trigger_reason,
                 )
                 raise PreemptionBudgetExhausted(
                     f"Modal preemption recurrence threshold "
@@ -833,6 +978,7 @@ def build_modal_anchor_dispatcher(
                 phase="anchor",
                 cohort=cohort,
                 attempt=f"{attempt}/{preemption_budget}",
+                trigger=trigger_reason,
             )
             t0 = asyncio.get_event_loop().time()
             try:
@@ -843,6 +989,7 @@ def build_modal_anchor_dispatcher(
                     phase="anchor",
                     cohort=cohort,
                     attempt=f"{attempt}/{preemption_budget}",
+                    trigger=trigger_reason,
                     error=type(exc).__name__,
                 )
                 raise PreemptionRecoveryFailed(
@@ -855,6 +1002,7 @@ def build_modal_anchor_dispatcher(
                 phase="anchor",
                 cohort=cohort,
                 attempt=f"{attempt}/{preemption_budget}",
+                trigger=trigger_reason,
                 recovery_s=f"{asyncio.get_event_loop().time() - t0:.1f}",
             )
             results = await _gather_anchor(cohort, n, base_seed, seed_offset)
