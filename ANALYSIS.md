@@ -407,3 +407,18 @@ The M5.1 and M5.2 findings are not redundant and neither supersedes the other. T
 - **The same-fabric reader (M5.1 + M6.2):** gRPC wins embed broadly; REST wins chat_stream at c≥4 under MockEngine, BUT real engine cost (M6) reclaims chat_stream for gRPC, AND M6.2's `max_tokens`-axis sweep at n=40 confirms a consistent +10–55% gRPC wire-transmission advantage and a +15.6% gRPC wall-clock advantage at `c8×10` (tuned-gRPC vs plain REST). Pick gRPC for any `c≥4` workload; at `c=1` choose on operational simplicity since the protocols tie.
 - **The managed-edge reader (M5.2 + M6.2):** gRPC wins embed at c=1; HTTPS-edge REST wins everything at c=4 / c=8 under MockEngine; **M6 corrects this read under real engine cost** — for Qwen3-8B at h=4096 on A10G, gRPC reclaims all four c≥4 cells M5.2 awarded to REST. **M6.2 then re-confirms HTTPS-edge as the headline win at the anchor**: 488.5 ms vs 611.9 ms gRPC vs 614.6 ms plain REST (a 25–26% edge advantage at `c1×10`). Managed-edge tenants serving real models should reach for HTTPS-edge first; gRPC is the backup if the edge product isn't available.
 - **The engine-cost reader (M6 + M6.2 KV-pressure sub-probe):** M5.1 / M5.2 verdicts reflect protocol cost with engine cost held neutral. M6 establishes that real-engine cost reshapes the protocol verdict at c≥4 for Qwen3-8B at h=4096 on A10G. **M6.2's KV-pressure sub-probe characterises the engine's behaviour at the `max_model_len=2048` ceiling**: wall-clock ratio `wall_p50(c=8, 2048) / wall_p50(c=8, 1024) ≈ 1.8–2.0` across all cohorts × cell-types, well below the 2.2 threshold — Qwen3-8B at `c=8 × max_tokens=2048` is not KV-pressured at this configuration. Readers serving a different model family, hidden_size, or context window should treat M5.1 / M5.2 verdicts at c≥4 as a transport-only ranking and consult M6's per-cohort engine_cost numbers + M6.2's per-cap `wall_p50` / TPOT in `docs/benchmarks/m6-real-engine-mini-validation.md` and `docs/benchmarks/m6_2-token-budget.md` before generalising.
+
+---
+
+## Repo housekeeping
+
+The repository maintains two parallel tag tracks:
+
+- **`milestone/*` — research deliverables.** One tag per closed milestone (M2 through M6.2 as of 2026-05-26). Each tag fixes the working tree at the commit that publishes the milestone's report + sweep harness, so any pre-cleanup historical artifact (benchmark report, sweep script, era-specific integration test) is recoverable by checking out the matching tag.
+- **`v*` — codebase state.** Semver-style tags (`v0.0.0`, `v0.0.1`, `v0.1.0`, …) mark maintenance and release-readiness checkpoints. `v0.0.0` marks the post-M6.2 cleanup that removed pre-M6.2 milestone-specific `.md` writeups + obsolete tests + scripts from `main`; the 9 baseline-chain JSON data files (M3→M6.2) stay tracked because the sweep harness reads them at runtime via default-path constants in `tools/benchmark/src/`.
+
+To recover a deleted historical narrative:
+
+    git show milestone/m5.2-transport-tuning:docs/benchmarks/m5_2-transport-vs-tuning.md
+
+Replace `milestone/m5.2-transport-tuning` with the milestone tag whose era owns the file, and the path with the file you want. `git tag --list 'milestone/*'` lists every available tag.
