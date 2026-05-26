@@ -866,7 +866,6 @@ Each phase begins with a spec-kit `/specify` invocation that turns the phase goa
   - One Python script using `vllm_grpc_client` directly (native gRPC, no proxy)
   - One streaming Python script (SSE via proxy)
   - Each script annotated and runnable end-to-end
-- A short benchmark write-up at `docs/benchmarks/summary.md` covering the headline numbers for all three paths across non-streaming and streaming
 - Optional: a screen capture or asciinema of the demo
 
 **Exit criteria.**

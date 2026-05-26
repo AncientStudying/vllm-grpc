@@ -2,7 +2,7 @@
 
 This document is the canonical home for vllm-grpc benchmark findings, milestone by milestone, in chronological order. Each milestone section names its source report, summarises the headline finding(s), and links cross-milestone where one milestone's result resolved (or recontextualised) an earlier one.
 
-The per-milestone benchmark reports under [`docs/benchmarks/`](docs/benchmarks/) remain the source-data record; this document is the narrative cross-reference. `docs/benchmarks/summary.md` (the M1/M3-era summary) has been folded into § M1 and § M3 below and now lives as a one-line redirect.
+The per-milestone benchmark reports under [`docs/benchmarks/`](docs/benchmarks/) remain the source-data record; this document is the narrative cross-reference. The original M1/M3-era summary has been folded into § M1 and § M3 below; the pre-cleanup `docs/benchmarks/summary.md` redirect stub is recoverable from any milestone tag through `milestone/m6.1.3-attribution` (see § Repo housekeeping).
 
 > **Reading order tip.** M1–M4 measure single-protocol or pre-REST-vs-gRPC questions; their findings are largely topology-independent. M5 onward measures cross-host and REST-vs-gRPC dynamics where deployment topology starts to matter. The [Topology guide](#topology-guide--which-milestone-result-applies-to-your-deployment) at the bottom names which M5-era milestone applies to which deployment shape.
 
@@ -11,7 +11,7 @@ The per-milestone benchmark reports under [`docs/benchmarks/`](docs/benchmarks/)
 ## M1 — Foundation
 
 **Status**: delivered (Phase 4.2 / 5 / 6 benchmark reports under `docs/benchmarks/phase-*`)
-**Report**: [`docs/benchmarks/summary.md`](docs/benchmarks/summary.md) § 1–3 (folded in below) — `docs/benchmarks/phase-4.2-*.json`, `phase-5-*.json`, `phase-6-*.json` for source data
+**Report**: see § M1 fold-in below — historical phase-4.2 / phase-5 / phase-6 source-data JSON is recoverable via `milestone/m2-ground-truth` (see § Repo housekeeping).
 
 Three access paths (REST via proxy, gRPC via proxy, gRPC-direct) implemented and benchmarked end-to-end on Modal A10G with vLLM v0.20.0 and `Qwen/Qwen3-0.6B`. M1 establishes the wire-size and time baselines that every later milestone supersedes or preserves.
 
@@ -61,7 +61,7 @@ Four-axis P1 sweep (`max_message_size`, `keepalive`, `compression`, `http2_frami
 - **`max_message_size` default 4 MiB is never binding** at any canonical width up to h=8192. Embed payloads sit at ~131 KB / 262 KB / 524 KB for h=2048/4096/8192 — roughly 8× under the default ceiling at the largest canonical width.
 - **P1 frozen channel config (time-axis)**: `max_message_size = max-msg-16mib`; remaining axes default to M1_BASELINE.
 
-### § M3 fold-in (from `docs/benchmarks/summary.md` § 4, byte-for-byte equivalent per FR-018)
+### § M3 fold-in (originally folded in from the pre-cleanup `docs/benchmarks/summary.md` § 4 per § M3 FR-018; pre-fold-in text recoverable via `milestone/m3-grpc-tuning-r1`)
 
 **Methodology** (CPU-only, mock vLLM engine — distinct from § M1 GPU runs above)
 - Sweep: 4 channel axes × 3 canonical widths × 2 paths × 30 iters/cell
