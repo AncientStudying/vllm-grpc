@@ -160,7 +160,7 @@ Re-run M6's narrow 6-cell × 3-cohort slice with the embed cohort wired to vLLM'
 
 Out of scope: prompt-length variation in the embeddings (deferred to M7), additional models (deferred to M8), real-engine re-validation of M3/M4 channel-tuning under the embeddings path (defer until M6.1 produces a verdict — if M6.1 says `verdict_buried_by_engine` everywhere, channel-tuning re-validation is moot).
 
-### M6.1.1 — Engine-Cost Instrumentation Diagnosis & Symmetrisation (code landed 2026-05-16; awaiting Modal end-to-end run)
+### M6.1.1 — Engine-Cost Instrumentation Diagnosis & Symmetrisation (delivered 2026-05-17)
 
 Close a measurement gap M6.1's data surfaced before M6.2's token-budget axis builds on top. M6.1 fired `engine_cost_drift_warning` on **all 3 chat_stream cells** with a consistent ~14-17% per-cohort spread on `engine_ttft_ms` (rest_https_edge ~43.5 ms / default_grpc ~47.5 ms / tuned_grpc_multiplexed ~41.5 ms; see [§ M6.1 in ANALYSIS.md](../ANALYSIS.md#m61--real-prompt-embeds-engine-path)). The engine itself shouldn't see different first-token latencies based on which channel served the request, so the gap is most likely **measurement-window asymmetry**: REST's `engine_ttft_ms` is captured inside the FastAPI shim (`engine_start = perf_counter()` → first SSE chunk) while gRPC's is read from server-side trailing metadata. The two clocks may straddle slightly different windows. But there is a competing real-world hypothesis: **vLLM's continuous batching may see REST and gRPC arrival patterns differently** (HTTPS edge buffers requests with different jitter than raw TCP, so the engine batches them differently), making the gap a real channel-dependent batching effect rather than a measurement artifact. M6.1.1 distinguishes the two and acts accordingly.
 
@@ -231,7 +231,7 @@ Drive: `git pull` (after M6.0a code change lands) then re-run `python -m vllm_gr
 
 Out of scope: re-running M6 (its main verdict is dispatch-robust), re-running M6.1's full verdict-supersedes table (also dispatch-robust; the per-cohort drift sub-finding may be annotated with a methodology-supersedence note after M6.0a but the verdict table itself stands), real engine code changes (M6.0a is harness-only), corpus diversity (M7), multi-model (M8).
 
-### M6.1.2 — Methodology Discipline: Topology Proof + 3-Cohort Reintroduction + Harness QoL (planned, post-spike)
+### M6.1.2 — Methodology Discipline: Topology Proof + 3-Cohort Reintroduction + Harness QoL (delivered 2026-05-17)
 
 Three methodology-discipline additions that land **before** M6.2 so M6.2 / M7 / M8 all inherit them as the new sweep convention. Scoped by [`spike/m6-1-roadmap-additions`](../docs/spikes/m6-1-roadmap-additions/) items #1 + #2 + #3; the spike-produced findings notes are the spec input. The bundle exists because the three items share the same set of touched files (sweep orchestrator, artifact JSON schema, reporter, stderr emitter) and ship together more efficiently than as separate milestones.
 
@@ -256,7 +256,7 @@ Three methodology-discipline additions that land **before** M6.2 so M6.2 / M7 / 
 
 Out of scope: any per-sweep behaviour change beyond cohort restoration + traceroute capture (the M6.1.1-expansion classifier stays as-is; the M6.0a-corrected dispatch stays as-is); engine-cost decomposition changes (M6.1.3's territory); per-`max_tokens` axis (M6.2); model expansion (M8).
 
-### M6.1.3 — Phase 1 Attribution Closure: Proxy-Edge Probes + Drift Root-Cause + Variance Characterization (planned, post-spike)
+### M6.1.3 — Phase 1 Attribution Closure: Proxy-Edge Probes + Drift Root-Cause + Variance Characterization (delivered 2026-05-18)
 
 Bundle that closes M6.1.1's open Phase 2 verdicts. M6.1.1's published Phase 1 returned `engine_compute_variation` for chat_stream c=1 (reproducible) and `inconclusive` for chat_stream c=4 + c=8 (one or both of: unattributed proxy-edge budget; cohort signal not reproducible across runs). M6.1.3 ships three instrumentation/methodology additions that, in a single multi-run sweep, produce attributable verdicts on all three chat_stream cells — OR a defensible "this signal is noise-shaped at this concurrency" verdict if the data warrants it. Scoped by [`spike/m6-1-roadmap-additions`](../docs/spikes/m6-1-roadmap-additions/) items #4 + #5 + #6.
 
@@ -306,7 +306,7 @@ Optional follow-ups (only if A + B don't resolve): multi-deploy variance (~$1.70
 
 Out of scope: deeper attribution bisection if the proxy-edge probes show the remaining budget is, e.g., gRPC trailer-emit serialization (would become M6.1.4 territory); upstream vLLM contributions (the probes work entirely client-side); engine-config probes (prefix-caching disable, reversed cohort order) — only escalated to if items #4 / #5-A / #6-A multi-run doesn't resolve; corpus diversity (M7); multi-model (M8).
 
-### M6.2 — Token-Budget Characterization (planned)
+### M6.2 — Token-Budget Characterization (delivered 2026-05-26)
 
 Re-run M6.1's narrow 6-cell × 3-cohort slice with **`max_tokens` lifted from a fixed cap to a 6-point measurement axis** (`10 / 50 / 256 / 512 / 1024 / 2048`) so the published latency budget covers the realistic production response-length regime, not just M5.x / M6 / M6.1's protocol-isolation regime. Same hardware (Modal A10G eu-west-1), same model (Qwen3-8B fp16, real prompt-embeds engine path from M6.1), same `max_model_len=2048` ceiling — `max_tokens` is the *only* variable that moves vs M6.1.1.
 
@@ -327,6 +327,56 @@ Re-run M6.1's narrow 6-cell × 3-cohort slice with **`max_tokens` lifted from a 
 **Speckit cycle.** Run `/speckit-specify` → `/speckit-clarify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement` against this section after M6.1.1 publishes. M6.1.1's published JSON is M6.2's baseline reference (FR-008-equivalent hard precondition) — the `max_tokens=10` / `50` anchor points compare against M6.1.1's verdicts (which by then either have a clean per-cohort engine_ttft from the symmetrised instrumentation, or carry a documented channel-dependent-batching note) to validate sweep integrity.
 
 Out of scope: corpus diversity (deferred to M7), additional models (deferred to M8), prompt-length variation in the embeddings (deferred to M7 — the *prompt* side is M7's axis, the *generation* side is M6.2's axis), `max_model_len` increase above 2048 (deferred to M8 — requires KV-cache budget re-tuning and likely a smaller model or larger GPU).
+
+### v0.0.0 — Post-M6.2 housekeeping (planned)
+
+Trim ~3.5 MB of milestone-specific result data, draft notes, and obsolete integration tests from `main` ahead of M7. No source-code changes in `tools/benchmark/src/` or `packages/`; the goal is to reduce noise in the working tree and shrink the diff surface for M7/M8, not yet to refactor.
+
+**Why a versioned tag rather than a milestone tag.** Cleanup work isn't a research deliverable — it produces no data, no `ANALYSIS.md` comparison entry against a prior baseline. Carrying it as `milestone/m<N>-…` would dilute the M-series. The repo adopts a parallel **semver track** (`v0.0.0`, `v0.0.1`, `v0.1.0`, …) so PyPI release artifacts and codebase-maturity beats live alongside the M-series without conflict: `v*` tags mark *codebase state*, `milestone/*` tags mark *research deliverables*. The first cleanup beat is `v0.0.0` to signal pre-release / pre-PyPI: everything works on `main` but nothing is published, and the schema/API may still change without notice.
+
+**Scope.** (1) Create annotated tag `milestone/m6.2-token-budget` at `fea31c0` — the M6.2 research-deliverable tag, separate from `v0.0.0`. (2) Delete root `M6_2-ANALYSIS-FRAMING-DRAFT.md` (content already merged into `ANALYSIS.md`, verified by 31 grep hits for "m6.2" / "token budget"). (3) Delete pre-M6.2 files from `docs/benchmarks/` (`phase-*`, `m3-*`, `m4-*`, `m5*-`, `m6-*`, `m6_1-*`, `m6_1_1-*`, `m6_1_2-*`, `m6_1_3-*`) — each recoverable via the corresponding `milestone/m*` tag. (4) Add `logs/` to `.gitignore` and `git rm -r --cached logs/` (52 KB of M4 sweep logs from May 10). (5) Delete obsolete integration tests `tests/integration/test_m4_*.py`, `test_m5*_modal_smoke.py`; keep `test_grpc_client.py`, `test_chat_bridge.py`, `test_completions_bridge.py`, `conftest.py`, `fake_frontend.py`. (6) Delete obviously stale scripts `scripts/python/reprocess_m5_supersede.py`, `scripts/setup/phase2-env.sh`. (7) Append a short "Repo housekeeping" subsection to `ANALYSIS.md` pointing readers at milestone tags for historical harnesses.
+
+**Acceptance gates.** `make lint typecheck test` green; no functional change to the bench harness (Phase 2's job) or runtime packages (Phase 3's job); checkout of any `milestone/m*` tag still exposes the corresponding pre-M6.2 harness and result data intact.
+
+**Outputs.** Annotated tag `v0.0.0` on the merge commit; annotated tag `milestone/m6.2-token-budget` on `fea31c0`; branch name `chore/post-m6.2-cleanup-v0.0.0`; PR closing the cleanup.
+
+**Speckit cycle.** Run `/speckit-specify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement` against this section, producing `specs/028-post-m6.2-cleanup-v0.0.0/` (slot determined at branch-creation time). Spec is small — ~8 tasks, fully bisectable.
+
+Out of scope: bench-harness source refactor (deferred to `v0.0.1`), PyPI release prep (deferred to `v0.1.0`), `packages/*` changes (deferred to `v0.1.0`), `specs/*` history (kept in full as the canonical research record).
+
+### v0.0.1 — Bench-harness refactor (planned)
+
+Collapse `tools/benchmark/src/vllm_grpc_bench/` from ~93 modules down to ~25 by hoisting the still-used types and helpers from milestone-prefixed legacy modules into generic homes, then deleting the legacy modules and their tests. Net effect: the harness becomes a single forward-evolving codebase rather than a stratified archaeological dig, ready to grow into M7's corpus axis and M8's model axis without dragging the M3 / M5.2 / M6.1.x scaffolding alongside.
+
+**Why a refactor, not a deletion.** Today's M6.2 modules and the "shared" infra (`runner`, `metrics`, `reporter`, `rest_cohort`, `modal_endpoint`, `ttft`, `symmetric_prompts`, `rtt_probe`) transitively import ~6 type aliases and ~3 helper functions from M3, M5.2, M6.1, M6.1.1, M6.1.2 modules — meaning naive deletion of the legacy modules breaks the harness. The dependency tangle is exactly the kind of accumulated cruft that warrants a refactor rather than archaeology. After the hoist, anyone wanting the old M3 / M5.2 / M6.1.x harness checks out the matching `milestone/m*` tag (all tagged as of 2026-05-26).
+
+**Approach.** Three ordered steps. **Step A — hoist:** create `tools/benchmark/src/vllm_grpc_bench/types.py` (taking `EndpointTuple`, `RTTRecord`, `RunCohort` from `m3_types`; `CohortKind` collapsed from `M5_2CohortKind` and `M6_1_2CohortKind`; `M6_1_CELLS` from `m6_1_types`; `M6_1_2_COHORTS` from `m6_1_2_types`); `prompts.py` (taking `DEFAULT_CHAT_MAX_TOKENS`, `build_chat_prompt` from `m3_sweep` and `_build_chat_prompt` from `m6_rpc_driver`, collapsed where bodies have converged); `timing.py` (taking `extract_rest_timings` from `m6_1_1_timing`); `exceptions.py` (taking `M5_2SchemaValidationFailed` from `m5_2_regen`, renamed `SchemaValidationFailed`). **Step B — rewrite imports:** point all `m6_2_*.py` and the shared infra at the new homes, one module at a time with `mypy --strict` + `ruff` after each. **Step C — delete legacy:** `m3_*.py`, `m4_*.py`, `m5*_*.py`, the `m6.py` family (`m6_sweep`, `m6_types`, `m6_reporter`, `m6_smoke`, `m6_seed`, `m6_supersede`, `m6_engine_cost`, `m6_rpc_driver`), `m6_1*_*.py`, `m6_1_1_*.py`, `m6_1_2_*.py`, `m6_1_3_*.py`, and the matching ~125 test files under `tools/benchmark/tests/`.
+
+**Acceptance gates.** (1) Module count: ~25 in `tools/benchmark/src/vllm_grpc_bench/`, ~35 test files in `tools/benchmark/tests/`. (2) `make lint typecheck test` green. (3) `python -m vllm_grpc_bench.m6_2_validate` smoke against `fake_server` completes end-to-end. (4) Recoverability sanity check: `git checkout milestone/m5.2-transport-tuning && ls tools/benchmark/src/vllm_grpc_bench/m5_2_*` still shows the legacy M5.2 harness intact.
+
+**Outputs.** Annotated tag `v0.0.1` on the merge commit; branch name `chore/post-m6.2-cleanup-v0.0.1`; PR. `ANALYSIS.md` gets a short subsection documenting the refactor and the tag-based recovery path for legacy harnesses.
+
+**Speckit cycle.** Run `/speckit-specify` → `/speckit-clarify` (symbol-rename and helper-collapse questions surface here) → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement` against this section, producing `specs/029-post-m6.2-cleanup-v0.0.1/`. Tasks ≈ 17: 4 hoist creations, ~6 per-module import-rewrite checkpoints, ~4 deletion batches, 3 verification gates.
+
+Out of scope: PyPI publish (deferred to `v0.1.0`), runtime `packages/*` changes (deferred to `v0.1.0`), the M6.2 sweep runtime / data (frozen under `milestone/m6.2-token-budget`), `specs/*` history (kept).
+
+### v0.1.0 — First PyPI release (planned; can run in parallel with M7 / M8)
+
+Publish four lean PyPI artifacts — `vllm-grpc-gen`, `vllm-grpc-proxy`, `vllm-grpc-frontend`, `vllm-grpc-client` — corresponding to the existing `packages/` workspace members. `v0.1.0` is the first published cut; semver pre-1.0 signals that the API may still shift before the proto schema freezes at 1.0.
+
+**Why four packages, not one umbrella.** The workspace already enforces clean dependency boundaries (`proxy → gen`, `frontend → gen`, `client → gen`, no cycles, no shared mutable state). An SDK consumer wanting only `vllm-grpc-client` shouldn't pull fastapi / uvicorn (proxy's deps) into their environment; a Modal frontend operator shouldn't either. Four packages preserve the surgical install pattern. Collapsing to `vllm-grpc[proxy]` extras would force restructuring the workspace into one top-level package and rebuilding all internal imports for no consumer benefit.
+
+**Approach.** Per package: (1) Fill in `pyproject.toml` metadata — `description`, `keywords`, `classifiers` (Topic :: Scientific/Engineering :: AI, Programming Language :: Python :: 3.12), `authors`, `project.urls` (Homepage, Repository, Issues, Changelog), `license = "MIT"` (matches root `LICENSE`), per-package `readme` pointing back at root `README.md`. (2) Verify each package builds cleanly with `uv build` and exposes the expected console script (`vllm-grpc-proxy`, `vllm-grpc-frontend`). (3) Add `.github/workflows/release.yml` that fires on `v*` tags, runs `uv build && uv publish` for each workspace member, gated on manual approval review for the first publish. (4) Document the install matrix in `README.md` — SDK users: `pip install vllm-grpc-client`; operators: `vllm-grpc-proxy` or `vllm-grpc-frontend`; the `gen` package installs transitively. (5) Update `CONTRIBUTING.md` with the release procedure: version bump → tag → CI publish → release notes draft. (6) Seed `docs/RELEASES.md` with the `v0.0.0` / `v0.0.1` / `v0.1.0` history.
+
+**Acceptance gates.** (1) `uv build` produces wheel + sdist for all four packages. (2) `pip install` of each wheel into a clean venv succeeds and console scripts run against a local `fake_server`. (3) Dry-run publish to TestPyPI (`uv publish --index-url https://test.pypi.org/legacy/`) succeeds for all four. (4) Real PyPI publish completes for all four; the install matrix in `README.md` is live; `docs/RELEASES.md` exists with the v0.1.0 entry.
+
+**Outputs.** Annotated tag `v0.1.0` on the merge commit; four PyPI artifacts on the public index; `docs/RELEASES.md` seeded; branch name `chore/pypi-release-v0.1.0`; PR.
+
+**Speckit cycle.** Run `/speckit-specify` → `/speckit-clarify` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement` against this section, producing `specs/0NN-pypi-release-v0.1.0/` (slot determined at branch-creation time). Larger than `v0.0.x` — ~25 tasks across per-package metadata, build verification, CI workflow, install docs, dry-run publish, real publish, release-notes seeding.
+
+**Relationship to M7 / M8 and to semver.** `v0.1.0` is decoupled from research milestones; it can land before M7, between M7 and M8, after M8, or in parallel with either. The semver track and the milestone track are independent — a `v0.2.0` (API change) might land mid-M7, a `v0.1.1` (patch) might land after M8. Future versions are bumped by API-change semantics (PEP 440 / semver), not milestone count. 1.0 is reserved for the point at which the proto schema and the three published service APIs are stable.
+
+Out of scope: bench-harness publication (`tools/benchmark/` stays internal — heavy torch / numpy footprint, no SDK value), removing vLLM as a peer dependency (it stays peer, not transitive), 1.0 API stabilization (deferred until the proto schema is frozen).
 
 ### M7 — Corpus Expansion (upcoming)
 
