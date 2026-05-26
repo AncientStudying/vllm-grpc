@@ -13,6 +13,14 @@ This is the first beat on the project's parallel `v*` semver track. `v*` tags ma
 
 Every file slated for deletion is fully recoverable via the corresponding `milestone/m*` annotated tag (all 16 milestone tags from M2 through M6.2 are pushed to origin as of 2026-05-26). Readers needing historical benchmark numbers, sweep harnesses, or pre-cleanup integration scaffolding check out the matching tag.
 
+## Clarifications
+
+### Session 2026-05-26
+
+- Q: How should `*.checkpoint.jsonl` files (specifically the now-tracked `docs/benchmarks/m6_2-token-budget.json.checkpoint.jsonl`) be handled? → A: Gitignore `**/*.checkpoint.jsonl` globally and untrack the M6.2 file. Checkpoints are mid-sweep runtime state, not published artifacts; the canonical M6.2 outputs are the `.json` + `.md` pair.
+- Q: How should `docs/benchmarks/summary.md` (a 6-line redirect stub pointing readers at `ANALYSIS.md`, in place since M5.2) be handled? → A: Delete it; rely on README + `ANALYSIS.md` discoverability. The two internal references (`docs/PLAN.md`, `ANALYSIS.md`) that link to it MUST be updated to remove the dangling reference.
+- Q: What commit/PR shape should the cleanup take? → A: One PR containing N bisectable commits, one per FR group (working-tree deletions, `logs/` un-tracking, checkpoint un-tracking, ANALYSIS housekeeping subsection, `.gitignore` rules, `v0.0.0` tag creation). Single review surface; each piece independently revertable; matches the spec's existing "bisectable and reversible" assumption.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Operator finds a clean working tree on `main` (Priority: P1)
@@ -25,7 +33,7 @@ A maintainer (or returning contributor) clones the repo or pulls `main` and look
 
 **Acceptance Scenarios**:
 
-1. **Given** the merge commit is checked out on `main`, **When** the maintainer lists `docs/benchmarks/`, **Then** only `m6_2-*` files (M6.2 outputs, the current milestone) and any non-milestone-prefixed shared docs (e.g. `summary.md` if retained) remain — no `phase-*`, `m3-*`, `m4-*`, `m5-*`, `m5_1-*`, `m5_2-*`, `m6-*`, `m6_1-*`, `m6_1_1-*`, `m6_1_2-*`, `m6_1_3-*` files.
+1. **Given** the merge commit is checked out on `main`, **When** the maintainer lists `docs/benchmarks/`, **Then** only `m6_2-*` files (M6.2 outputs, the current milestone) remain — no `phase-*`, `m3-*`, `m4-*`, `m5-*`, `m5_1-*`, `m5_2-*`, `m6-*`, `m6_1-*`, `m6_1_1-*`, `m6_1_2-*`, `m6_1_3-*` files, and no `summary.md`.
 2. **Given** the merge commit, **When** `ls tests/integration/` is run, **Then** only `__init__.py`, `conftest.py`, `fake_frontend.py`, `test_grpc_client.py`, `test_chat_bridge.py`, and `test_completions_bridge.py` remain (no `test_m4_*` or `test_m5*_modal_smoke.py`).
 3. **Given** the merge commit, **When** `ls scripts/python/reprocess_m5_supersede.py` or `ls scripts/setup/phase2-env.sh` is run, **Then** both return "No such file or directory."
 4. **Given** the merge commit, **When** the maintainer runs `ls M6_2-ANALYSIS-FRAMING-DRAFT.md` at repo root, **Then** the file is absent.
@@ -69,7 +77,7 @@ A contributor (or LLM agent) reading `ANALYSIS.md` reaches a section discussing 
 ### Edge Cases
 
 - **A deletion-target pattern matches a file the operator wants to keep.** Mitigated by enumerating exact deletion paths in FR-002 through FR-006 (and the implementation manifest in the plan phase), not by glob-only deletion at merge time. The `m6_2-*` family is the **negation**: any file beginning with `m6_2-` must be retained.
-- **An M6.2 artifact untracked at cleanup time gets caught up in cleanup.** Today `docs/benchmarks/m6_2-token-budget.json.checkpoint.jsonl` is untracked. It is an M6.2 file (matches the M6.2 retention pattern) and is out of scope for this cleanup beat (the cleanup operates on tracked files unless explicitly noted otherwise; `logs/` is the single exception). The plan phase will decide whether to commit it, gitignore it, or leave it untracked.
+- **An M6.2 artifact untracked at cleanup time gets caught up in cleanup.** Today `docs/benchmarks/m6_2-token-budget.json.checkpoint.jsonl` is tracked (it was bundled into the spec commit by the `after_specify` auto-commit hook). Per the 2026-05-26 clarification, `**/*.checkpoint.jsonl` is gitignored globally and this file is untracked via `git rm --cached` (FR-007 / FR-008). The retention pattern in FR-003 still excludes `m6_2-*` from deletion — the checkpoint file's `.json` and `.md` siblings (the canonical M6.2 outputs) stay tracked.
 - **A reader on `main` looks for a deleted file via its old path.** The `ANALYSIS.md` housekeeping subsection (US3) is the structural mitigation; if US3 is descoped or deferred, US1 still ships but readers must run `git log --all --diff-filter=D -- <path>` to discover the deletion commit and the tag-recovery path.
 - **CI tries to run a deleted integration test.** Mitigated by acceptance gate FR-013 (`make lint typecheck test` green at merge); the deleted tests are not in any CI workflow today, but the gate catches regressions if a workflow still references one.
 - **A future operator wants to re-run an M5.2 smoke test against Modal.** They check out `milestone/m5.2-transport-tuning`, recover the smoke test, and run it from that worktree. The cleanup explicitly does not preserve a "best of historical smokes" merged into the new tree; that's `v0.0.1`'s job.
@@ -86,15 +94,16 @@ A contributor (or LLM agent) reading `ANALYSIS.md` reaches a section discussing 
 #### Working-tree deletions (US1)
 
 - **FR-002**: The repository root MUST NOT contain `M6_2-ANALYSIS-FRAMING-DRAFT.md` after merge. (Content is already merged into `ANALYSIS.md`, confirmed by 31+ grep hits for "m6.2" / "token budget" in the merged document.)
-- **FR-003**: `docs/benchmarks/` MUST NOT contain any file whose name matches the patterns `phase-*`, `m3-*`, `m4-*`, `m5-*`, `m5_1-*`, `m5_2-*`, `m6-*`, `m6_1-*`, `m6_1_1-*`, `m6_1_2-*`, `m6_1_3-*` after merge. Files beginning with `m6_2-` (the current milestone) MUST be retained. Files not matching any milestone prefix (e.g., `summary.md` if present) are out of scope for this cleanup; the plan phase decides per-file.
+- **FR-003**: `docs/benchmarks/` MUST NOT contain any file whose name matches the patterns `phase-*`, `m3-*`, `m4-*`, `m5-*`, `m5_1-*`, `m5_2-*`, `m6-*`, `m6_1-*`, `m6_1_1-*`, `m6_1_2-*`, `m6_1_3-*` after merge. Files beginning with `m6_2-` (the current milestone) MUST be retained. Additionally, `docs/benchmarks/summary.md` (a 6-line redirect stub pointing at `ANALYSIS.md`) MUST also be deleted — per the 2026-05-26 clarification, README and `ANALYSIS.md` are sufficient discoverability.
+- **FR-003a**: The two existing internal references to `docs/benchmarks/summary.md` (in `docs/PLAN.md` and `ANALYSIS.md`) MUST be updated to remove the dangling reference. A reference may be removed entirely or rewritten to point at `ANALYSIS.md` directly, whichever preserves the surrounding sentence's meaning.
 - **FR-004**: `tests/integration/` MUST NOT contain `test_m4_schema_e2e.py`, `test_m4_sweep_e2e.py`, `test_m5_modal_smoke.py`, `test_m5_1_modal_smoke.py`, or `test_m5_2_modal_smoke.py` after merge. The files `__init__.py`, `conftest.py`, `fake_frontend.py`, `test_grpc_client.py`, `test_chat_bridge.py`, and `test_completions_bridge.py` MUST be retained.
 - **FR-005**: `scripts/python/reprocess_m5_supersede.py` MUST NOT exist after merge. (Was a one-shot M5 supersedence reprocessor; output already published in M5.x reports.)
 - **FR-006**: `scripts/setup/phase2-env.sh` MUST NOT exist after merge. (Was a Phase 2 dev-env bootstrap; the project's environment is now driven by `uv` and the root `Makefile` / `pyproject.toml`.)
 
-#### `logs/` cleanup (US2)
+#### `logs/` and checkpoint cleanup (US2)
 
-- **FR-007**: `.gitignore` MUST include a rule that causes any path under `logs/` to be ignored by git (e.g., `logs/`).
-- **FR-008**: No file under `logs/` MUST be tracked in the repository's index after merge. (`git ls-files logs/` returns no results.)
+- **FR-007**: `.gitignore` MUST include rules that (a) cause any path under `logs/` to be ignored by git (e.g., `logs/`), and (b) cause any path matching `**/*.checkpoint.jsonl` to be ignored by git. The checkpoint pattern is global because sweep harnesses across milestones write checkpoint files alongside their final `.json` outputs.
+- **FR-008**: No file under `logs/` MUST be tracked in the repository's index after merge. (`git ls-files logs/` returns no results.) Additionally, no file matching `**/*.checkpoint.jsonl` MUST be tracked after merge — specifically `docs/benchmarks/m6_2-token-budget.json.checkpoint.jsonl` (currently tracked from the `after_specify` auto-commit bundling) MUST be untracked via `git rm --cached` while remaining on disk.
 
 #### Documentation pointer (US3)
 
@@ -139,13 +148,13 @@ A contributor (or LLM agent) reading `ANALYSIS.md` reaches a section discussing 
 
 - **The M6.2 research-deliverable tag is already in place.** `milestone/m6.2-token-budget` was created at `fea31c0` on 2026-05-26 and pushed to origin (see git tag list and recent session work). The spec carries the tag-creation item from `docs/PLAN.md` § v0.0.0 scope (1) as already-complete background, not as an open requirement; FR-016 only asserts the tag remains in place.
 - **All 15 prior milestone tags (`milestone/m2-…` through `milestone/m6.1.3-…`) are pushed to origin** and serve as the canonical recovery path for every file slated for deletion. Verified at spec-time via `git tag --list 'milestone/*'`.
-- **`docs/benchmarks/summary.md`** does not match any milestone deletion pattern; the spec treats it as out-of-scope and the plan phase decides whether to retain or delete per-file inspection.
-- **`docs/benchmarks/m6_2-token-budget.json.checkpoint.jsonl`** (currently untracked at spec-time) is an M6.2 artifact and is **not** subject to deletion under FR-003. The plan phase decides whether to commit it, gitignore it, or leave it untracked — the spec does not force the choice.
+- **`docs/benchmarks/summary.md`** is a 6-line redirect stub. Per the 2026-05-26 clarification (binding), it is deleted alongside the milestone-prefixed files, and the two internal references (`docs/PLAN.md`, `ANALYSIS.md`) are updated to remove the dangling link. README + `ANALYSIS.md` provide sufficient discoverability of milestone findings going forward.
+- **`docs/benchmarks/m6_2-token-budget.json.checkpoint.jsonl`** was untracked at initial spec authoring but became tracked when the `after_specify` auto-commit hook ran `git add .`. Per the 2026-05-26 clarification (binding), checkpoint files are not published artifacts: the global pattern `**/*.checkpoint.jsonl` is added to `.gitignore` (FR-007) and the existing tracked file is untracked via `git rm --cached` (FR-008). The file itself stays on disk for the operator who has the in-progress sweep state; future sweeps' checkpoints will be ignored automatically.
 - **No CI workflow currently runs the deleted M4 / M5 integration smoke tests.** The repository's primary CI was already trimmed of M1-era benchmark posting in a prior commit (`60d0867`, `4931c4c`). FR-013 (the standard `make lint typecheck test` gate) will catch any remaining workflow reference if one exists.
 - **The current milestone's tracked artifacts (`m6_2-*` family in `docs/benchmarks/`)** stay in place and continue to be the canonical M6.2 published outputs. Any future re-runs append; no re-publication is triggered by this cleanup.
 - **The `tools/benchmark/` Python source tree is out of scope for this beat.** `v0.0.1` is the dedicated bench-harness refactor beat where ~93 modules collapse to ~25; this spec must not anticipate any of that work.
 - **The `packages/` workspace and `proto/` schema are out of scope for this beat.** `v0.1.0` is the dedicated PyPI release prep beat where `pyproject.toml` metadata is filled in and a release workflow is added; this spec must not anticipate any of that work.
-- **The cleanup is bisectable and reversible.** Each FR group (deletions, `logs/` un-tracking, ANALYSIS edit, tag creation) can be staged as its own commit so `git revert` of any single piece is safe.
+- **The cleanup is bisectable and reversible.** Per the 2026-05-26 clarification (binding), the cleanup ships as one PR with N ordered commits — one per FR group (working-tree deletions, `logs/` un-tracking, checkpoint un-tracking, ANALYSIS housekeeping subsection, `.gitignore` rules, `v0.0.0` tag creation). Each commit is small enough that `git revert` of any single piece is safe and meaningful.
 - **No `specs/*` directory contents are touched.** The historical specs (`specs/001-*` through `specs/027-m6-2-token-budget`) are the canonical research record and stay in full as documentation.
 
 ## Dependencies
