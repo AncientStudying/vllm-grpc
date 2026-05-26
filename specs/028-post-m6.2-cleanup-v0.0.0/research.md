@@ -10,7 +10,7 @@ The spec was sufficiently concrete (the source PLAN.md section enumerates patter
 
 ## R1. Deletion manifest — `docs/benchmarks/`
 
-**Decision**: 45 files match the FR-003 patterns (`phase-*`, `m3-*`, `m4-*`, `m5-*`, `m5_1-*`, `m5_2-*`, `m6-*`, `m6_1-*`, `m6_1_1-*`, `m6_1_2-*`, `m6_1_3-*`) plus `summary.md` (added per the 2026-05-26 clarification). Total ~2.6 MB.
+**Decision**: 46 files match the post-remediation FR-003 patterns (`phase-*`, `m3-*`, `m4-*`, `m5-*`, `m5_1-*`, `m5_2-*`, `m6-*`, `m6_0a-*`, `m6_1-*`, `m6_1_1-*`, `m6_1_2-*`, `m6_1_3-*`) plus `summary.md` (added per the 2026-05-26 clarification). That is: 45 milestone-prefixed files + 1 `summary.md` = 46. Total ~2.6 MB. (Earlier drafts of this document quoted "45 (44 milestone-prefixed + summary.md)" — that count was based on the pre-remediation FR-003 pattern list which omitted `m6_0a-*` explicitly. The live count via the corrected regex is 46, matching `data-model.md` Entity 1 rows 2–47.)
 
 **Rationale**: Enumerated by `ls docs/benchmarks/ | grep -E "^(phase-|m3-|m4-|m5-|m5_1-|m5_2-|m6-|m6_1-|m6_1_1-|m6_1_2-|m6_1_3-|summary\.md)"`. Final enumerated list (45 entries):
 
@@ -238,7 +238,7 @@ Next: v0.0.1 (bench-harness refactor), then v0.1.0 (first PyPI release).
 
 | Topic | Decision | Source |
 |---|---|---|
-| Benchmark deletion count | 45 files (44 milestone-prefixed + `summary.md`) | R1 |
+| Benchmark deletion count | 46 files (45 milestone-prefixed + `summary.md`) | R1 |
 | Integration-test deletions | 5 files; 6 retained | R2 |
 | `summary.md` reference cleanup | 4 sites: 3 rewrite + 1 removal | R3 |
 | Tag coverage | All 16 milestone tags reachable; spot-checks pass | R4 |

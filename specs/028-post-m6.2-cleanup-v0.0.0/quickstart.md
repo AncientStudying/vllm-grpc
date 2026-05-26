@@ -157,7 +157,11 @@ EOF
 test ! -e M6_2-ANALYSIS-FRAMING-DRAFT.md && echo "FR-002 OK"
 
 # FR-003 verification (zero remaining matches of the deletion patterns)
-ls docs/benchmarks/ | grep -cE "^(phase-|m3-|m4-|m5-|m5_1-|m5_2-|m6-|m6_1-|m6_1_1-|m6_1_2-|m6_1_3-|summary\.md)$"
+# Note: prefix alternatives are anchored only at start-of-string. Trailing `$` would
+# make each prefix require an exact match, silently disarming the gate. `m6_0a-` is
+# included explicitly because `m6-` only matches a literal `m6-` hyphen, not the
+# `m6_0a-` underscore form.
+ls docs/benchmarks/ | grep -cE '^(phase-|m3-|m4-|m5-|m5_1-|m5_2-|m6-|m6_0a-|m6_1-|m6_1_1-|m6_1_2-|m6_1_3-)|^summary\.md$'
 # Expected: 0
 
 # FR-004 verification (the 6 retained files are present)

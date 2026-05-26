@@ -9,7 +9,7 @@
 
 Trim ~3.5 MB of milestone-specific result data, one-shot draft notes, obsolete integration tests, and stale operator scripts from the `main` working tree. Ship as one PR with five ordered, bisectable commits (one per FR group) plus a sixth post-merge `v0.0.0` annotated tag; leave all `tools/benchmark/src/`, `packages/`, `proto/`, `frontend/` source untouched (those are `v0.0.1` / `v0.1.0` territory). Every deleted path stays reachable through the pre-existing `milestone/m2-…` through `milestone/m6.2-…` annotated tags, so the operation is fully reversible without history rewriting.
 
-**Approach**: a deletion manifest (concrete file list, 45 files in `docs/benchmarks/` + 5 in `tests/integration/` + 2 stale scripts + 1 root draft + 13 `logs/` index entries + 1 checkpoint) drives the `git rm`s. `.gitignore` gains two rules (`logs/`, `**/*.checkpoint.jsonl`). `ANALYSIS.md` gains a short "Repo housekeeping" subsection near the end of the document; the three dangling `docs/benchmarks/summary.md` references in `ANALYSIS.md` and the one in `docs/PLAN.md` are rewritten or removed. After merge, `v0.0.0` is created as an annotated tag and pushed to origin alongside the already-present `milestone/m6.2-token-budget`.
+**Approach**: a deletion manifest (concrete file list, 46 files in `docs/benchmarks/` + 5 in `tests/integration/` + 2 stale scripts + 1 root draft + 13 `logs/` index entries + 1 checkpoint) drives the `git rm`s. `.gitignore` gains two rules (`logs/`, `**/*.checkpoint.jsonl`). `ANALYSIS.md` gains a short "Repo housekeeping" subsection near the end of the document; the three dangling `docs/benchmarks/summary.md` references in `ANALYSIS.md` and the one in `docs/PLAN.md` are rewritten or removed. After merge, `v0.0.0` is created as an annotated tag and pushed to origin alongside the already-present `milestone/m6.2-token-budget`.
 
 ## Technical Context
 
@@ -26,7 +26,7 @@ Trim ~3.5 MB of milestone-specific result data, one-shot draft notes, obsolete i
   - `make lint typecheck test` MUST stay green (FR-013).
   - M6.2 fake-backed smoke MUST stay green (FR-014).
   - History is NOT rewritten; recovery is via tags, not via deep `git log` archaeology.
-**Scale/Scope**: 67 file deletions/un-trackings total (45 in `docs/benchmarks/`, 5 in `tests/integration/`, 1 in `scripts/python/`, 1 in `scripts/setup/`, 1 at repo root, 13 in `logs/`, 1 checkpoint), 2 `.gitignore` rules added, 1 `ANALYSIS.md` subsection added, 4 reference rewrites for `summary.md` (3 in `ANALYSIS.md`, 1 in `docs/PLAN.md`), 1 new annotated tag (`v0.0.0`). Working-tree reduction floor: ≥3 MB (SC-002).
+**Scale/Scope**: 68 file deletions/un-trackings total (46 in `docs/benchmarks/`, 5 in `tests/integration/`, 1 in `scripts/python/`, 1 in `scripts/setup/`, 1 at repo root, 13 in `logs/`, 1 checkpoint), 2 `.gitignore` rules added, 1 `ANALYSIS.md` subsection added, 4 reference rewrites for `summary.md` (3 in `ANALYSIS.md`, 1 in `docs/PLAN.md`), 1 new annotated tag (`v0.0.0`). Working-tree reduction floor: ≥2.5 MB (SC-002).
 
 No `NEEDS CLARIFICATION` items — all candidate ambiguities were resolved in the spec's `## Clarifications` § 2026-05-26 session.
 
@@ -73,7 +73,7 @@ This beat touches **no source code**. The changes are confined to:
 ├── M6_2-ANALYSIS-FRAMING-DRAFT.md              # DELETE
 ├── docs/
 │   ├── PLAN.md                                 # rewrite/remove 1 summary.md ref (Phase History section)
-│   └── benchmarks/                             # DELETE 45 files (44 milestone-prefixed + summary.md); keep m6_2-* (8 files) and m6_2-*.checkpoint.jsonl untracked
+│   └── benchmarks/                             # DELETE 46 files (45 milestone-prefixed + summary.md); keep m6_2-* (7 tracked files) and m6_2-*.checkpoint.jsonl untracked
 ├── tests/
 │   └── integration/                            # DELETE 5 files (M4 + M5 smokes); keep 6 (grpc / chat / completions bridges + fixtures)
 ├── scripts/
@@ -88,7 +88,7 @@ This beat touches **no source code**. The changes are confined to:
 
 See [`research.md`](./research.md) for the full output. Summary of resolved unknowns:
 
-- **Concrete deletion manifest in `docs/benchmarks/`**: 45 files (44 milestone-prefixed + `summary.md`), totalling ~2.6 MB. Enumerated by glob match against the FR-003 patterns plus the FR-003a / clarification addition.
+- **Concrete deletion manifest in `docs/benchmarks/`**: 46 files (45 milestone-prefixed + `summary.md`), totalling ~2.6 MB. Enumerated by glob match against the FR-003 patterns (which now include `m6_0a-*` explicitly per the analyze remediation) plus the FR-003a / clarification addition.
 - **Concrete deletion manifest in `tests/integration/`**: 5 files (`test_m4_schema_e2e.py`, `test_m4_sweep_e2e.py`, `test_m5_modal_smoke.py`, `test_m5_1_modal_smoke.py`, `test_m5_2_modal_smoke.py`). The 6 retained files (`__init__.py`, `conftest.py`, `fake_frontend.py`, `test_grpc_client.py`, `test_chat_bridge.py`, `test_completions_bridge.py`) account for ~144 KB.
 - **Reference audit for `summary.md`**: 3 references in `ANALYSIS.md` (lines 5, 14, 64) + 1 reference in `docs/PLAN.md` (line 869). Per the clarification, all four are rewritten to point at `ANALYSIS.md § M1` (or removed where the reference is structural-only — `docs/PLAN.md` line 869 is Phase-History prose and can be removed without loss).
 - **Tag→path recovery map**: 16 milestone tags cover every deletion-target path. Spot-check verified at spec-time (`milestone/m5.2-transport-tuning` resolves `docs/benchmarks/m5_2-transport-vs-tuning.md`; analogous for M3 / M4 / M5 / M5.1 / M6 / M6.1 / M6.1.1 / M6.1.2 / M6.1.3).
