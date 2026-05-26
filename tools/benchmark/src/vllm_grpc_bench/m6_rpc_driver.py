@@ -109,24 +109,42 @@ def _build_chat_prompt(seed: int) -> str:
     return f"M6 chat probe seed={seed} digest={digest}. Please respond."
 
 
-def _build_chat_grpc_request(seed: int) -> chat_pb2.ChatCompleteRequest:
+def _build_chat_grpc_request(
+    seed: int,
+    *,
+    max_tokens: int = M6_CHAT_MAX_TOKENS,
+    ignore_eos: bool = False,
+    prompt: str | None = None,
+) -> chat_pb2.ChatCompleteRequest:
+    content = prompt if prompt is not None else _build_chat_prompt(seed)
     return chat_pb2.ChatCompleteRequest(
-        messages=[chat_pb2.ChatMessage(role="user", content=_build_chat_prompt(seed))],
+        messages=[chat_pb2.ChatMessage(role="user", content=content)],
         model="mock-engine",
-        max_tokens=M6_CHAT_MAX_TOKENS,  # FR-005
+        max_tokens=max_tokens,  # FR-005 default; M6.2 parameterizes
         seed=seed,
+        ignore_eos=ignore_eos,
     )
 
 
-def _build_chat_rest_payload(seed: int) -> dict[str, Any]:
-    return {
+def _build_chat_rest_payload(
+    seed: int,
+    *,
+    max_tokens: int = M6_CHAT_MAX_TOKENS,
+    ignore_eos: bool = False,
+    prompt: str | None = None,
+) -> dict[str, Any]:
+    content = prompt if prompt is not None else _build_chat_prompt(seed)
+    payload: dict[str, Any] = {
         "model": "mock",
-        "messages": [{"role": "user", "content": _build_chat_prompt(seed)}],
+        "messages": [{"role": "user", "content": content}],
         "stream": True,
-        "max_tokens": M6_CHAT_MAX_TOKENS,  # FR-005
+        "max_tokens": max_tokens,  # FR-005 default; M6.2 parameterizes
         "temperature": 1.0,
         "seed": seed,
     }
+    if ignore_eos:
+        payload["ignore_eos"] = True
+    return payload
 
 
 # --- gRPC driver primitives --------------------------------------------------

@@ -34,6 +34,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The M6.2 stub-CLI integration tests load the ShareGPT-derived
+          # embed corpus (tools/benchmark/corpus/completions_embeds_qwen3_8b/,
+          # ~422 MB across 1000 .pt files tracked via Git LFS). Without
+          # `lfs: true` the checkout retrieves only the 132-byte LFS pointer
+          # files, gate_corpus_shas fires SC-018 "corpus drift detected",
+          # and run_m6_2 returns RC 6 for every test in
+          # test_m6_2_publish_cli.py + test_m6_2_validate_cli.py. The lint
+          # and typecheck jobs do NOT need the corpus content (source-only).
+          lfs: true
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true

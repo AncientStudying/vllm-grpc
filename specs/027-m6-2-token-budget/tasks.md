@@ -1,0 +1,376 @@
+---
+description: "Implementation tasks for M6.2 Token-Budget Characterization"
+---
+
+# Tasks: M6.2 — Token-Budget Characterization (Production Latency Budgets Across `max_tokens` Axis)
+
+**Input**: Design documents from `/specs/027-m6-2-token-budget/`
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/cli.md, contracts/artifact-schema.md, contracts/iteration-order.md, contracts/wire-vocabulary.md, contracts/prompt-source.md, quickstart.md
+
+**Tests**: Required per Constitution Principle IV + plan.md Testing section. Test tasks are interleaved with implementation per phase.
+
+**Organization**: Tasks are grouped by user story (US1: latency budget table, US2: protocol-crossover threshold, US3: KV-pressure observation) per spec.md's three user stories. Foundational phase carries the bulk of M6.2's shared infrastructure (the spec round-4 / round-5 controls + helpers used by all stories).
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel (different files, no dependencies on incomplete tasks)
+- **[Story]**: Which user story this task belongs to (US1 / US2 / US3); omitted for Setup / Foundational / Polish
+- Exact file paths included
+
+## Path conventions
+
+- Harness modules: `tools/benchmark/src/vllm_grpc_bench/`
+- Harness tests: `tools/benchmark/tests/`
+- Offline scripts: `scripts/python/`
+- Corpora: `tools/benchmark/corpus/`
+- Benchmark artifacts: `docs/benchmarks/`
+- Spec / plan docs: `specs/027-m6-2-token-budget/`
+- Project-wide instrumentation contract: `contracts/instrumentation.md`
+
+---
+
+## Phase 1: Setup (Shared Infrastructure)
+
+**Purpose**: Verify the operator environment is ready and resolve the one pre-implementation question (`ignore_eos` proto schema).
+
+- [X] T001 Verify branch + prerequisites: confirm working tree clean on `027-m6-2-token-budget`, `docs/benchmarks/m6_1_3-attribution-closure.json` exists, `MODAL_BENCH_TOKEN` is set, and `uv sync --frozen --all-groups` completes cleanly. Reference: `specs/027-m6-2-token-budget/quickstart.md` Stage 0b.
+- [X] T002 [P] Investigate `ignore_eos` field in `proto/vllm_grpc/v1/chat.proto` (message `ChatCompleteRequest`) and `proto/vllm_grpc/v1/completions.proto` (message `CompletionRequest`). Determine whether the field already exists. Document findings in `specs/027-m6-2-token-budget/research.md` as a R-12 addendum or in the appropriate proto-investigation issue.
+- [X] T003 If `ignore_eos` does NOT exist in the proto schemas (per T002): add `bool ignore_eos = N;` field to `ChatCompleteRequest` in `proto/vllm_grpc/v1/chat.proto` and to `CompletionRequest` in `proto/vllm_grpc/v1/completions.proto` (with field numbers chosen to avoid collision with existing fields). Run `make proto` (or equivalent stub-regen task) and verify the stub-compile CI gate passes. If the field DOES already exist (per T002), skip this task and document the existing field number in `contracts/prompt-source.md`. **Note (post-analysis 2026-05-20)**: inspection of the proto files confirmed `ignore_eos` is NOT present; this task WILL fire. The plan's Constitution I narrative + `contracts/wire-vocabulary.md` were updated to reflect the additive wire field.
+- [X] T003a Wire `ignore_eos` translation through the frontend after T003's proto edit. Modify `packages/frontend/src/vllm_grpc_frontend/chat.py` to read `request.ignore_eos` from the gRPC `ChatCompleteRequest` and pass it into `SamplingParams(ignore_eos=...)`. Same for `packages/frontend/src/vllm_grpc_frontend/completions.py` reading `CompletionRequest.ignore_eos`. Add unit tests in `packages/frontend/tests/test_ignore_eos_translation.py` (directory confirmed to exist) for round-trip translation (request with `ignore_eos=True` → SamplingParams carries through; default `False` round-trips). ~10-20 LOC across both files + ~30-50 LOC tests. Depends on T003. SKIP if T002 found `ignore_eos` already present.
+- [X] T004 [P] Verify local lint chain works against the current tree: `ruff check .` + `ruff format --check .` + `mypy --strict .` + `pytest tools/benchmark/tests/` all pass on the current commit. Reference: `feedback_local_lint_chain` memory.
+
+**Checkpoint**: Setup complete. Foundational phase can begin.
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites for ALL User Stories)
+
+**Purpose**: Embed corpus generation, RPC builder parameterization, corpus loader extensions, M6.2 type definitions, prompt-source resolution, sweep orchestrator skeleton (with FR-030/031/032/033 round-4 controls), validate entry, CLI wiring, and the foundational test suite. All stories depend on these.
+
+**⚠️ CRITICAL**: No user-story work can begin until this phase is complete.
+
+### 2a — Embed corpus generation (FR-035 Phase 1 prerequisite)
+
+- [X] T005 Write `scripts/python/gen_embed_corpus_qwen3_8b.py` (adapt from existing `scripts/python/gen_embed_corpus.py`): load `tools/benchmark/corpus/chat_sharegpt_1000.json`, feed each prompt through Qwen3-8B's embedding layer, save 1000 `.pt` files at variable `seq_len × 4096` (fp16), build `manifest.json` with per-entry SHA + `source_prompt_id` + `seq_len` + `bucket` + top-level `corpus_sha256` + `source_chat_corpus_sha256` + `model` + `hidden_size` + `generated_at_utc`. ~150-200 LOC. Reference: `specs/027-m6-2-token-budget/research.md` R-11. **Refactored 2026-05-20**: exposes `generate_corpus(...)` as a pure callable; companion `scripts/python/modal_gen_embed_corpus_qwen3_8b.py` is the operator's primary path (Modal A10G with HF-cache + output volumes; local entrypoint mirrors the volume to `tools/benchmark/corpus/completions_embeds_qwen3_8b/` via the Modal SDK).
+- [X] T006 Operator runs the corpus generation against Modal A10G: `uv run --with modal modal run scripts/python/modal_gen_embed_corpus_qwen3_8b.py`. The wrapper downloads Qwen3-8B once (cached in `vllm-grpc-hf-cache` Modal Volume), generates 1000 `.pt` files into `vllm-grpc-m6-2-embed-corpus`, then the local entrypoint mirrors files back to `tools/benchmark/corpus/completions_embeds_qwen3_8b/`. Alternative: `python scripts/python/gen_embed_corpus_qwen3_8b.py` on a local GPU with ~16 GB VRAM. Verify 1000 `.pt` files + `manifest.json` are produced; commit to repo. **(DEFERRED to operator: requires Modal token + ~10-30 min A10G compute.)**
+
+### 2b — RPC builder parameterization (round-5 plumbing)
+
+- [X] T007 [P] Modify `tools/benchmark/src/vllm_grpc_bench/m6_rpc_driver.py`: parameterize `_build_chat_grpc_request(seed, *, max_tokens, ignore_eos=False, prompt=None)` and `_build_chat_rest_payload(seed, *, max_tokens, ignore_eos=False, prompt=None)`. Default `prompt=None` falls back to existing `_build_chat_prompt(seed)`. Existing M6.x call sites pass `max_tokens=M6_CHAT_MAX_TOKENS` and `ignore_eos=False` for backward compatibility. ~25-40 LOC. Reference: `specs/027-m6-2-token-budget/contracts/prompt-source.md` "ignore_eos plumbing".
+- [X] T008 [P] Modify `tools/benchmark/src/vllm_grpc_bench/m6_1_rpc_driver.py`: parameterize `_build_embed_grpc_request(seq_len, hidden_size, rpc_index, base_seed, *, max_tokens, ignore_eos=False, prompt_embeds_override=None, seed=None)` and `_build_embed_rest_payload_m6_1(seq_len, hidden_size, rpc_index, base_seed, *, max_tokens, ignore_eos=False, prompt_embeds_override=None, seed=None)`. Existing M6.x call sites pass `max_tokens=10` and `ignore_eos=False` for backward compatibility. ~25-40 LOC. Reference: `specs/027-m6-2-token-budget/contracts/prompt-source.md`.
+
+### 2c — Corpus loader extensions
+
+- [X] T009 Modify `tools/benchmark/src/vllm_grpc_bench/corpus.py`: add `load_completions_embeds_qwen3_8b(corpus_dir: Path | None = None) -> list[CompletionEmbedSample]` (loads the new `completions_embeds_qwen3_8b/` 1000-entry corpus at `hidden_size=4096`); add `verify_corpus_sha(corpus_path: Path, expected_sha: str) -> None` helper (raises `CorpusDriftError` on mismatch); define `CorpusDriftError` exception. Add `DEFAULT_EMBED_CORPUS_QWEN3_8B_DIR` module constant. ~30-40 LOC. Reference: `specs/027-m6-2-token-budget/contracts/prompt-source.md` "corpus paths".
+
+### 2d — M6.2 type definitions
+
+- [X] T010 Create `tools/benchmark/src/vllm_grpc_bench/m6_2_types.py` by copying `m6_1_3_types.py` and refactoring per `specs/027-m6-2-token-budget/data-model.md`. Add `M6_2_MAX_TOKENS_AXIS`, `M6_2_VALIDATE_MAX_TOKENS_AXIS`, `M6_2_NULL_ANCHOR_MAX_TOKENS`, `M6_2_INTERIOR_CAP_MAX_TOKENS`, `M6_2_SUB_PROBE_MAX_TOKENS`, `M6_2_SUB_PROBE_N=20`, `M6_2_KV_PRESSURE_THRESHOLD=2.2`, `M6_2_NULL_ANCHOR_DRIFT_COUNT_THRESHOLD=2`, `M6_2_LATENCY_DRIFT_COHORT_COUNT_THRESHOLD=2`, `M6_2_FAILURE_SUMMARY_CELL_COUNT_THRESHOLD=3`. Define `M6_2SweepMode`, `M6_2PromptSource`, `M6_2MeasurementRegime`, `M6_2WallClockInferenceLabel`, `M6_2DriftVerdict` Literals. Define dataclasses: `M6_2MeasurementPoint` (extends `M6_1_3MeasurementPoint` with `max_tokens`, `block_start_utc`, `block_end_utc`, `retry_attempted`, `prompt_source`, `measurement_regime`, `prompt_corpus_idx`), `M6_2NullAnchor`, `M6_2CrossoverThreshold`, `M6_2KVPressureObservation` (with `sub_probe_n_rpcs`, `sub_probe_prompt_source`, `sub_probe_measurement_regime`), `M6_2AnchorLatencySnapshot`, `M6_2AnchorLatencyTrajectory`, `M6_2RunMeta` (with `iteration_order`, `iteration_discipline_verified`, `n_per_point`, `validate_axis_subset`, `wall_clock_start_utc`, `wall_clock_end_utc`, `total_sweep_hours`, `modal_spend_usd_estimate`, `chat_corpus_sha256`, `chat_corpus_path`, `embed_corpus_sha256`, `embed_corpus_path`, `sub_probe_ran`), `M6_2SweepArtifact`.
+
+### 2e — Prompt-source resolution module (round-5)
+
+- [X] T011 Create `tools/benchmark/src/vllm_grpc_bench/m6_2_prompt_source.py`. Implement `load_chat_corpus() -> list[RequestSample]` (loads `chat_sharegpt_1000.json` + verifies SHA against `chat_sharegpt_1000.provenance.json`), `load_embed_corpus() -> list[CompletionEmbedSample]` (loads `completions_embeds_qwen3_8b/` + verifies SHA against `manifest.json`; raises `FileNotFoundError` if directory missing — FR-035 Phase 1 prerequisite enforcement), `resolve_block_inputs(cell, max_tokens, iter_idx, cohort, base_seed, chat_corpus, embed_corpus, *, ignore_eos_override=None)` per the regime table in `contracts/prompt-source.md`. Calls `symmetric_prompts.assign_symmetric_prompt(iter_idx, cohort, corpus)` for corpus regimes. Returns dict with keys `prompt_text` OR `embed_tensor_bytes`, `prompt_source`, `prompt_corpus_idx`, `ignore_eos`, `max_tokens`. ~200-250 LOC.
+
+### 2f — Anchor trajectory (FR-031)
+
+- [X] T012 Create `tools/benchmark/src/vllm_grpc_bench/m6_2_anchor_trajectory.py`. Implement `compute_anchor_block(cohorts, rpc_driver, base_seed, sweep_hour_mark, *, cell_id="chat_stream_c1", max_tokens=10, n=20) -> dict[str, M6_2AnchorLatencySnapshot]` (uses SYNTHETIC prompt regime via direct call to `m6_rpc_driver._build_chat_prompt(seed)` — NOT the corpus regime — to preserve M6.1.3 baseline byte-comparability per R-3 of research.md), `compute_anchor_latency_trajectory(snapshots_by_cohort, m6_1_3_baseline_ci_half_width) -> dict[str, M6_2AnchorLatencyTrajectory]`, `compute_intra_sweep_drift_header_fired(trajectories) -> bool` (≥ 2 of 4 cohorts drifted per SC-016). ~150-200 LOC.
+
+### 2g — Sweep orchestrator skeleton
+
+- [X] T013 Create `tools/benchmark/src/vllm_grpc_bench/m6_2_sweep.py` by copying `m6_1_3_sweep.py` and refactoring per `specs/027-m6-2-token-budget/contracts/iteration-order.md`. Implement the cohort-innermost outer loop `for cell in M6_1_CELLS: for max_tokens in axis: for cohort in cohorts_at_concurrency(cell): for rpc in range(n): ...` (FR-030); per-block UTC timestamp capture (FR-032); in-window retry-once dispatch wrapper (FR-033); FR-031 4h-mark re-anchor invocation via `m6_2_anchor_trajectory.compute_anchor_block(...)`; FR-009 `network_paths` topology probe co-firing at 4h marks; iteration_discipline_verified post-hoc machine check at sweep end; FR-004 round-3 deferral gate (refuse `--m6_2` if `args.m6_2_n is None`); SC-018 corpus-SHA validation gate (call `load_chat_corpus()` + `load_embed_corpus()` at sweep start; `CorpusDriftError` aborts). Calls `m6_2_prompt_source.resolve_block_inputs(...)` per block to get regime-correct kwargs. Inherits M6.0a concurrent dispatch + M6.1.x classifier instrumentation + M6.1.2 4-cohort iteration + M6.1.3 5-segment decomposition verbatim from imported modules. Removes M6.1.3's multi-run / variance / Phase B logic. ~400-600 LOC.
+
+### 2h — Validate / publish CLI entry function
+
+- [X] T014 Create `tools/benchmark/src/vllm_grpc_bench/m6_2_validate.py` by copying `m6_1_3_validate.py` and refactoring. Implement `run_m6_2(args, *, sweep_mode: Literal["publish", "validate"])`. Output-path inference per FR-015 (canonical vs validate sibling). Record `sweep_mode`, `iteration_order="cohort_innermost_block"`, `chat_corpus_sha256`, `chat_corpus_path`, `embed_corpus_sha256`, `embed_corpus_path` in `run_meta` at sweep start. FR-004 round-3 deferral gate enforcement. SC-018 corpus-SHA validation before sweep start (chains to `m6_2_prompt_source.load_chat_corpus()` + `load_embed_corpus()`). ~100-150 LOC.
+
+### 2i — CLI wiring
+
+- [X] T015 Modify `tools/benchmark/src/vllm_grpc_bench/__main__.py`: add `--m6_2` and `--m6_2-validate` top-level mode flags + the namespaced sub-flags from `contracts/cli.md` (`--m6_2-modal-region`, `--m6_2-modal-token-env`, `--m6_2-modal-endpoint`, `--m6_2-skip-deploy`, `--m6_2-base-seed`, `--m6_2-model`, `--m6_2-m6-1-3-baseline`, `--m6_2-report-out`, `--m6_2-report-json-out`, `--m6_2-events-sidecar-out`, `--m6_2-allow-engine-mismatch`, `--m6_2-n`). Mutual exclusion against 17 prior mode flags (M3 through M6.1.3). Default-inheritance: `--m6_2-modal-region="eu-west-1"`, `--m6_2-base-seed=42`, `--m6_2-model="Qwen/Qwen3-8B"` verbatim from M6.1.3. `--m6_2-asymmetric-prompts` MUST NOT be added per FR-008. Both `--m6_2` and `--m6_2-validate` dispatch to `m6_2_validate.run_m6_2(args, sweep_mode=...)`. ~80-120 LOC.
+
+### 2j — Foundational tests
+
+- [X] T016 [P] Create `tools/benchmark/tests/test_m6_2_prompt_source.py`: unit tests for `resolve_block_inputs` three-regime dispatch (chat null-anchor → synthetic; chat interior-cap → corpus; chat sub-probe → corpus + ignore_eos=True; embed null-anchor → random tensor; embed interior-cap → corpus; embed sub-probe → corpus + ignore_eos=True); `assign_symmetric_prompt` cohort-invariance at fixed `iter_idx`; `load_chat_corpus()` raises `CorpusDriftError` on SHA mismatch; `load_embed_corpus()` raises `FileNotFoundError` on missing directory; `run_meta.chat_corpus_sha256` matches provenance.
+- [X] T017 [P] Create `tools/benchmark/tests/test_m6_2_iteration_order.py`: unit tests for FR-030 cohort-innermost discipline (canonical iteration produces `iteration_discipline_verified=true`); discipline-broken detection (interleaved tuples → `false`); per-block UTC timestamp recording on every MeasurementPoint row; wall-clock-timeline subsection rendering (publish mode unconditional; validate mode conditional on ≥ 8h).
+- [X] T018 [P] Create `tools/benchmark/tests/test_m6_2_anchor_trajectory.py`: unit tests for FR-031 4h cadence (40h sweep → 10 snapshots; 2.5h validate → 2 snapshots); per-cohort `latency_drift_warning` firing when spread > M6.1.3 CI half-width; SC-016 sweep-level integrity header at ≥ 2-of-4 drifted; cell-of-headroom rule at 1-of-4 does NOT fire header.
+- [X] T019 [P] Create `tools/benchmark/tests/test_m6_2_retry_policy.py`: unit tests for FR-033 in-window retry once (first attempt transient error → retry succeeds; row marked `retry_attempted=true`); both attempts fail → row marked `failed_<reason>`, `retry_attempted=true`; end-of-sweep retry FORBIDDEN (failed block stays `failed_<reason>` after orchestrator advances past tuple); retry stays in time-window (assert `block_start_utc`/`block_end_utc` within the same tuple's window).
+- [X] T020 [P] Create `tools/benchmark/tests/test_m6_2_null_anchor.py`: unit tests for FR-012 / FR-013 cross-milestone comparison on the **22 cross-checkable cells** (M6.2 anchor inside M6.1.3 CI → `PASS`; outside CI but within 2× → `WARN`; outside 2× → `FAIL`); FR-012 **new-baseline behavior on the 26 non-cross-checkable cells** (each carries `new_baseline_marker = true` and `drift_verdict = null`); FR-014 sweep-level integrity header at ≥ 2 of 22 cross-checkable cells drifted (assert: new-baseline cells do NOT count toward the threshold); per-cohort sub-warnings NOT separately wired (spec round-1 Q4).
+- [X] T021 [P] Create `tools/benchmark/tests/test_m6_2_cli.py`: unit tests for argparse — all `--m6_2-*` flags present with documented defaults; mutual exclusion against 17 prior mode flags; default-inheritance regression (`--m6_2-modal-region`/`--m6_2-base-seed`/`--m6_2-model` match M6.1.3); round-3 deferral gate (`--m6_2` without `--m6_2-n` → SystemExit); `--m6_2-validate --m6_2-n=X` with X != 20 → SystemExit; `--m6_2-asymmetric-prompts` flag NOT in parser (argparse error if passed).
+
+**Checkpoint**: Foundation ready — user story implementation can now begin in parallel.
+
+---
+
+## Phase 3: User Story 1 — Per-cohort latency budget table across the `max_tokens` axis (Priority: P1) 🎯 MVP
+
+**Goal**: Publish a per-cohort × per-cell × per-`max_tokens` `wall_p50_ms` / `wall_p95_ms` / `wall_p99_ms` table for the M6.2 measurement matrix (144 rows in publish; 72 measured + 72 `not_validated` placeholders in validate). Null-anchor validation against M6.1.3's published CIs fires per-cell `control_drift_warning` lines on the 22 cross-checkable cells + per-cell `new_baseline_marker` lines on the 26 non-cross-checkable cells + the FR-014 sweep-level integrity header when ≥ 2 of 22 cross-checkable anchor cells drift.
+
+**Independent Test**: Run `python -m vllm_grpc_bench --m6_2-validate --m6_2-skip-deploy` against the stub RPC driver; assert the validate-sibling artifact JSON contains exactly 72 `M6_2MeasurementPoint` rows under `per_cell` (3-point axis × 4 cohorts × 6 cells), the markdown contains a "Production latency budget" section with one table per cell-cohort combination, the `run_meta` block carries the correct `iteration_order`, `chat_corpus_sha256`, `embed_corpus_sha256`, `sub_probe_ran=true`, and `schema_version="m6_1_1.v1"`.
+
+### Implementation for User Story 1
+
+- [X] T022 [US1] Create `tools/benchmark/src/vllm_grpc_bench/m6_2_reporter.py` by copying `m6_1_3_reporter.py` and refactoring. Implement entry `write_m6_2_report(artifact, *, sweep_mode)`, JSON serialization (`render_json(artifact)`), Markdown skeleton (`render_markdown(artifact, *, sweep_mode)`), two-path output routing per FR-015. The skeleton produces the empty four-primary-section + six-auxiliary-subsection structure; per-section content is populated in subsequent US1/US2/US3 tasks. ~200-300 LOC base + ~600-800 LOC across the section-rendering tasks below.
+- [X] T023 [US1] Implement the "Production latency budget" primary section rendering in `m6_2_reporter.py`. Per-cell × per-cohort × per-`max_tokens` `wall_p50_ms` / `wall_p95_ms` / `wall_p99_ms` table with `prompt_source` + `measurement_regime` + `prompt_corpus_idx` columns per row. Validate-mode marks interior-cap rows (`max_tokens ∈ {256, 512, 1024}`) as `not_validated`. Reference: `specs/027-m6-2-token-budget/contracts/artifact-schema.md` section 1.
+- [X] T024 [US1] Implement the "TPOT curves" primary section rendering in `m6_2_reporter.py`. Chat_stream-only TPOT vs `max_tokens` per (chat_stream_c1 / c4 / c8, cohort) pair. Validate-mode marks interior-cap rows `not_validated`. Reference: `contracts/artifact-schema.md` section 2.
+- [X] T025 [US1] Implement the "Engine-cost decomposition curves" primary section rendering in `m6_2_reporter.py`. Per (cell, cohort) pair, segment-share evolution (`seg_ab_ms`, `seg_queue_ms`, `seg_prefill_ms`, `seg_ingress_ms`, `seg_egress_ms`) as a function of `max_tokens`. Inherited from M6.1.3 5-segment decomposition. Validate-mode marks interior-cap rows `not_validated`. Reference: `contracts/artifact-schema.md` section 3.
+- [X] T026 [US1] Implement the "Null anchor validation" auxiliary subsection rendering in `m6_2_reporter.py`. Per-cross-checkable-(cell, cohort) `drift_verdict ∈ {PASS, WARN, FAIL}` against M6.1.3's published CIs; per-cell `control_drift_warning` lines for drifting cross-checkable cells; per-new-baseline-(cell, cohort) `new_baseline_marker` line. FR-014 sweep-level null-anchor integrity warning header firing when ≥ 2 of the 22 cross-checkable anchor cells carry `drift_verdict ∈ {WARN, FAIL}` (new-baseline cells excluded from the count). Reference: `contracts/artifact-schema.md` section 6.
+- [X] T027 [US1] Implement the "Failure summary" auxiliary subsection rendering in `m6_2_reporter.py`. Per-reason tally of `failed_<reason>` markers; always present even when zero failures (reads "no measurement-cell failures"). FR-029 sweep-level failure-summary integrity warning header firing per the two-condition rule (≥ 3 cells failed OR any (cell, max_tokens) with all 4 cohorts failed → `systemic_failure_<reason>` tag). Reference: `contracts/artifact-schema.md` section 8.
+- [X] T028 [US1] Implement the "Sweep wall-clock timeline" auxiliary subsection rendering in `m6_2_reporter.py`. One row per `(cell, max_tokens)` tuple with each cohort's `block_start_utc` + duration in minutes. Renders in publish mode unconditionally; in validate mode only if total sweep wall-clock ≥ 8h. Soft `iteration_discipline_broken` diagnostic header fires when `iteration_discipline_verified=false`. Reference: `contracts/artifact-schema.md` section 9.
+- [X] T029 [US1] Implement the FR-009 / SC-010 cohort-CSP-mismatch warning rendering in `m6_2_reporter.py`. Inspect `network_paths` per-cohort trajectories; for any consecutive snapshot pair revealing a CSP / region change, emit the sweep-level integrity warning header.
+- [X] T030 [US1] Implement the SC-016 intra-sweep latency-drift integrity warning header rendering in `m6_2_reporter.py` (consumes `M6_2AnchorLatencyTrajectory.latency_drift_warning` per cohort; fires at ≥ 2-of-4 cohorts). Also render the per-cohort "Anchor latency trajectory" auxiliary subsection (with the trajectory snapshots, derived spread, and per-cohort `latency_drift_warning` line).
+
+### Tests for User Story 1
+
+- [X] T031 [P] [US1] Create `tools/benchmark/tests/test_m6_2_artifact_schema.py`: 144-row latency budget table completeness in both modes (publish: 144 measurements/failures; validate: 72 measurements + 72 `not_validated` placeholders) per SC-003; strict-superset compat with M6.1.3-vintage readers (FR-011 / SC-007); validate-mode `not_validated` rendering for interior caps; per-row `prompt_source` + `measurement_regime` + `prompt_corpus_idx` field discipline; `run_meta` schema (all M6.2 round-4 + round-5 additive fields present); `failure_summary` always present (SC-014); `integrity_warnings` ⊆ canonical channel labels; **SC-011 clock-anomaly gate**: assert the reporter computes the fraction of negative-segment / impossible-ordering wire-format assertions across the full sweep and emits a `clock_anomaly_warning` artifact-header line iff the fraction ≥ 0.5%; unit-test with stub data exercising both sides of the 0.5% threshold.
+- [X] T032 [P] [US1] Create `tools/benchmark/tests/test_m6_2_validate_cli.py`: integration test exercising `--m6_2-validate --m6_2-skip-deploy` against a stub RPC driver; assert validate-sibling artifact JSON contains 72 measured rows + 72 `not_validated` placeholder rows; assert all four sweep-level integrity warning headers + the soft diagnostic render conditionally based on the stub's injected drift / failure conditions; assert `run_meta.sub_probe_ran=true` (US3's sub-probe co-fires; foundational concern but exercised here).
+
+### M6.1.3 forward-pointing annotation (FR-019)
+
+- [X] T033 [US1] Add the single leading `> **Note**:` line at the top of `docs/benchmarks/m6_1_3-attribution-closure.md` per FR-019. Line content per `contracts/artifact-schema.md` "Forward-pointing annotation". M6.1.3's JSON is untouched. M6.2's reporter emits the reciprocal "Method / Background" pointer per the existing reporter implementation (no separate task — done in T022).
+
+**Checkpoint**: User Story 1 should be fully functional and testable independently — running `--m6_2-validate --m6_2-skip-deploy` against the stub driver produces a complete validate artifact with the budget table, null-anchor verdicts, failure summary, wall-clock timeline, and the FR-019 forward-pointing annotation in M6.1.3's markdown.
+
+---
+
+## Phase 4: User Story 2 — Per-cell `max_tokens` crossover threshold (Priority: P2)
+
+**Goal**: Publish a per-cell `crossover_max_tokens` derived from the symmetric mean-in-CI rule (spec round-1 Q3). Operators read this table to answer "at what `max_tokens` does the M6.1.3-published protocol verdict collapse to no winner?". US2 derives from US1's budget table data; no independent measurement loop.
+
+**Independent Test**: Synthesize per-cell × per-cohort × per-`max_tokens` `wall_p50_ms` + CI rows; pass to `m6_2_crossover.compute_per_cell_crossover(...)` with canned M6.1.3 base verdicts; assert the function identifies the correct crossover point per the symmetric mean-in-CI rule for cells with meaningful base verdicts AND `crossover_max_tokens=None` for cells with inconclusive base verdicts (US2 #2). Run `--m6_2-validate --m6_2-skip-deploy`; assert the validate artifact's "Protocol crossover threshold" markdown section carries the axis-restricted disclaimer callout and uses the coarse 4-value vocabulary `{10, 50, 2048, survives_to_2048, null}`.
+
+### Implementation for User Story 2
+
+- [X] T034 [US2] Create `tools/benchmark/src/vllm_grpc_bench/m6_2_crossover.py`. Implement `compute_per_cell_crossover(per_cell_axis_rows, m6_1_3_base_verdicts, *, sweep_mode) -> list[M6_2CrossoverThreshold]` per spec round-1 Q3 (symmetric mean-in-CI rule). Iterate axis ascending; check `(winner_p50 ∈ [second_p50 ± second_ci_half]) OR (second_p50 ∈ [winner_p50 ± winner_ci_half])` at each axis point. Handle US2 #2 (inconclusive base verdict → `crossover_max_tokens=None`) and US2 #3 (CIs overlap at `max_tokens=10` → evidence `"M6.1.3 verdict not robust to M6.2 resampling"`). Validate mode uses the coarse 4-value vocabulary. Reference: `specs/027-m6-2-token-budget/contracts/artifact-schema.md` "Symmetric mean-in-CI crossover rule". ~150-200 LOC. (Same file also gets `compute_kv_pressure_inference` in US3 phase.)
+- [X] T035 [US2] Implement the "Protocol crossover threshold" primary section rendering in `m6_2_reporter.py`. Consumes `M6_2CrossoverThreshold` records; renders per-cell row with `(cell_id, m6_1_3_base_verdict, crossover_max_tokens, crossover_evidence)`. Validate-mode prepends the axis-restricted disclaimer callout per FR-016. Reference: `contracts/artifact-schema.md` section 4.
+
+### Tests for User Story 2
+
+- [X] T036 [P] [US2] Create `tools/benchmark/tests/test_m6_2_crossover.py`: unit tests for the symmetric mean-in-CI rule (winner mean ∈ second CI but not vice versa → predicate fires; either-direction satisfies; never fires across axis → `crossover_max_tokens=None` with "verdict survives across the axis" evidence); US2 #2 (inconclusive base verdict → `None` + "base verdict was already inconclusive at the M6.1.3 baseline" evidence); US2 #3 (rule fires at `max_tokens=10` → "M6.1.3 verdict not robust to M6.2 resampling" evidence); validate-mode coarse 4-value vocabulary.
+
+**Checkpoint**: User Stories 1 AND 2 should both work independently. Validate artifact now contains the "Protocol crossover threshold" section in addition to US1's sections.
+
+---
+
+## Phase 5: User Story 3 — KV-cache pressure characterization at `c=8 × max_tokens=2048` (Priority: P3)
+
+**Goal**: Characterize the `c=8 × max_tokens=2048` regime per cohort × cell-type via the FR-017a wall-clock-ratio inference. Per round-5 FR-036, the measurement comes from a dedicated KV-pressure **sub-probe** (`c=8 × {1024, 2048} × 4 cohorts × 2 cell-types × n=20`, `ignore_eos=True`) that runs after the main 144-point sweep completes (publish) or alongside the validate sweep (validate). The sub-probe is **additive** to the budget table — its results populate the `KVPressureObservation` entity only, NOT the budget-table c=8 rows.
+
+**Independent Test**: Run `--m6_2-validate --m6_2-skip-deploy`; assert the validate artifact's `kv_pressure_observation` block contains 8 records (4 cohorts × 2 cell-types) each with `sub_probe_n_rpcs=20`, `sub_probe_measurement_regime="forced_cap_ignore_eos_true"`, `sub_probe_prompt_source` matching cell-type, and a computed `wall_clock_ratio_c8_2048_over_1024` (or `None` if either sub-probe block failed). Assert the markdown's "KV-cache pressure" subsection cites the wall-clock-ratio + threshold-2.2 comparison + best-effort engine field + OOM-observed flag, labeled as "forced-cap regime" to distinguish from budget-table c=8 rows. Assert `run_meta.sub_probe_ran=true`.
+
+### Implementation for User Story 3
+
+- [X] T037 [US3] Create `tools/benchmark/src/vllm_grpc_bench/m6_2_sub_probe.py`. Implement `run_kv_pressure_sub_probe(rpc_driver, cohorts, chat_corpus, embed_corpus, base_seed, n=20, sweep_orchestrator_clock) -> list[SubProbeBlockResult]`. Iterate `for cell_type in ("chat_stream", "embed"): for max_tokens in (1024, 2048): for cohort in M6_1_2_COHORTS:` — cohort-innermost per FR-030 within each `(cell_type, max_tokens)` tuple (4 cohorts contiguous). Each block calls `m6_2_prompt_source.resolve_block_inputs(cell=f"{cell_type}_c8", max_tokens, iter_idx, cohort, base_seed, chat_corpus, embed_corpus, ignore_eos_override=True)` to get corpus-regime input + `ignore_eos=True`. RPC builder called with the new `max_tokens` + `ignore_eos` + `prompt`-or-`prompt_embeds_override` kwargs per T007 / T008. Per-block UTC timestamps per FR-032; in-window retry-once per FR-033. ~250-300 LOC. Reference: `specs/027-m6-2-token-budget/research.md` R-10.
+- [X] T038 [US3] Add `compute_kv_pressure_inference(per_cohort_sub_probe_rows) -> list[M6_2KVPressureObservation]` to `tools/benchmark/src/vllm_grpc_bench/m6_2_crossover.py` (extends the file T034 created). Consumes sub-probe block results (NOT main-sweep budget-table c=8 rows) per round-5 FR-017a amendment. Computes `R = wall_p50_ms(2048) / wall_p50_ms(1024)` per cohort × cell-type; `R > 2.2` → `kv_pressure_inferred_<cell_type>`; else `kv_pressure_not_observable`. Best-effort `kv_cache_used_fraction_peak` extraction from per-RPC trailing metadata; `oom_observed` from `failed_reason == "oom"`. Populates `sub_probe_n_rpcs=20`, `sub_probe_prompt_source` (cell-type-dependent), `sub_probe_measurement_regime="forced_cap_ignore_eos_true"`. ~100-150 LOC. Reference: `contracts/artifact-schema.md` "Wall-clock-ratio KV-pressure inference".
+- [X] T039 [US3] Wire the sub-probe into `m6_2_sweep.py` (T013): after the main 144-point sweep iteration completes (publish mode) OR alongside (validate mode), invoke `m6_2_sub_probe.run_kv_pressure_sub_probe(...)` then pipe results into `m6_2_crossover.compute_kv_pressure_inference(...)`. Populate the artifact's `kv_pressure_observation` field with the resulting 8 records. Set `run_meta.sub_probe_ran=true`. The sub-probe runs in BOTH publish and validate modes per SC-019.
+- [X] T040 [US3] Implement the "KV-cache pressure" auxiliary subsection rendering in `m6_2_reporter.py`. Per cohort × cell-type narrative paragraph citing: peak KV-budget consumption (`kv_cache_used_fraction_peak` if available else `null` with a documented reason), wall-clock-ratio inference label + ratio value + threshold-2.2 comparison, OOM-observed flag, and a comparison to the c=8 × 1024 point. Explicit "forced-cap regime (ignore_eos=True)" labeling distinguishes from budget-table c=8 rows which are "natural EOS under cap=N". Reference: `contracts/artifact-schema.md` section 5.
+
+### Tests for User Story 3
+
+- [X] T041 [P] [US3] Create `tools/benchmark/tests/test_m6_2_kv_pressure.py`: unit tests for `compute_kv_pressure_inference` consuming sub-probe rows (NOT budget-table c=8 rows — synthesize divergent budget-table vs sub-probe values, assert ratio uses sub-probe); R > 2.2 → label `kv_pressure_inferred_<cell_type>`; R ≤ 2.2 → `kv_pressure_not_observable`; OOM at (cohort, c=8, 2048) → `oom_observed=true` AND label `kv_pressure_not_observable` with footnote; engine field present → propagates; engine field absent → inference still fires.
+- [X] T042 [P] [US3] Create `tools/benchmark/tests/test_m6_2_sub_probe.py`: unit tests for `run_kv_pressure_sub_probe` — 16 sub-probe blocks total (4 cohorts × 2 cell-types × 2 caps); each block at `n=20`; each block has `ignore_eos=True` in its sampling params; sub-probe results emit to `KVPressureObservation` only (NOT to the latency budget table — assert budget-table c=8 rows remain populated by the interior-cap regime); FR-030 cohort-innermost discipline within each `(cell_type, max_tokens)` tuple; FR-033 in-window retry-once applies; sub-probe runs in both publish and validate modes per SC-019.
+- [X] T043 [P] [US3] Extend `tools/benchmark/tests/test_m6_2_validate_cli.py` (created in T032) with US3-specific assertions: `kv_pressure_observation` contains 8 records; each carries `sub_probe_n_rpcs=20`, `sub_probe_measurement_regime="forced_cap_ignore_eos_true"`, `sub_probe_prompt_source` matching cell-type; "KV-cache pressure" markdown subsection cites the wall-clock-ratio inference + threshold-2.2 comparison + best-effort engine field; `run_meta.sub_probe_ran=true`.
+
+**Checkpoint**: All three user stories now independently functional. The validate artifact carries: budget table (US1) + crossover table (US2) + KV-pressure subsection (US3) + all four sweep-level integrity warning channels + the soft iteration-discipline diagnostic + the FR-019 forward-pointing annotation in M6.1.3's markdown.
+
+---
+
+## Phase 6: Polish & Cross-Cutting Concerns
+
+**Purpose**: Final integration test, contracts documentation update, README hygiene, manual validate sweep execution against Modal.
+
+- [X] T044 [P] Create `tools/benchmark/tests/test_m6_2_publish_cli.py`: integration test exercising `--m6_2 --m6_2-n=40 --m6_2-skip-deploy` against the stub RPC driver (n=40 matches the round-3-pinned production value `m6_2_types.M6_2_PUBLISH_N` per FR-004 closure 2026-05-24). Asserts: full 6-point axis × 4-cohort × 6-cell table = 144 rows + 0 `not_validated` placeholders; full 6-point crossover vocabulary; `iteration_discipline_verified=true`; "Sweep wall-clock timeline" subsection renders; all 4 publish-blocking-eligible integrity warning channels render conditionally; sub-probe contract (16 blocks × n=20 × ignore_eos=True per T042); `run_meta.sub_probe_ran=true`.
+- [X] T045 Update `contracts/instrumentation.md` (the project-wide instrumentation contract) with M6.2's schema additions: the four additive top-level keys (`null_anchor_validation`, `max_tokens_axis`, `protocol_crossover`, `kv_pressure_observation`, `anchor_latency_trajectory`, `failure_summary`, `integrity_warnings`); the seven additive per-row fields (`max_tokens`, `block_start_utc`, `block_end_utc`, `retry_attempted`, `prompt_source`, `measurement_regime`, `prompt_corpus_idx`); the ten additive `run_meta` fields; the four publish-blocking-eligible sweep-level integrity-header rules + the soft `iteration_discipline_verified` diagnostic; the symmetric mean-in-CI crossover rule; the wall-clock-ratio inference rule; the three-regime prompt source contract (FR-034 / FR-035); the KV-pressure sub-probe contract (FR-036); the corpus SHA validation rule (SC-018); validate-mode rendering rules; FR-027 project-wide convention propagation.
+- [X] T046 [P] Run the full local lint chain on the M6.2 implementation: `ruff check .` + `ruff format --check .` + `mypy --strict .` + `pytest tools/benchmark/tests/test_m6_2_*.py` — all four must pass before pushing. Reference: `feedback_local_lint_chain` memory.
+- [ ] T047 Manual validate sweep execution: `python -m vllm_grpc_bench --m6_2-validate --m6_2-modal-region=eu-west-1` against Modal A10G. Expected ~2.3-2.5 h wall-clock, ~$4 Modal spend (FR-022 / SC-002). Inspect the resulting `docs/benchmarks/m6_2-token-budget-validate.{md,json}` per quickstart.md Stage 4 checklist; confirm zero entries in `integrity_warnings`.
+- [X] T048 Round-3 closure (2026-05-24, gated on T047 + T066 post-fix validate sweep variance data per FR-004): publish-mode `n=40` pinned in `m6_2_types.M6_2_PUBLISH_N`; FR-021 cost cap pinned at ≤ $25; FR-023 wall-clock cap pinned at ≤ 16 h. Spec amendments landed in FR-004 / FR-021 / FR-023 / SC-001 / US1 acceptance scenario / MeasurementPoint description. Rationale: the 2026-05-24 validate sweep at n=20 produced median CI half-widths of 1.95% @ max_tokens=50 and 3.94% @ max_tokens=2048; n=40 tightens both by 1/sqrt(2) ≈ 29% (to ~1.4% and ~2.8% median), well under the FR-014 / SC-004 pooled-CI WARN bar, while keeping the publish sweep at the bottom of the spec's provisional $20–$40 envelope.
+- [ ] T049 Manual publish sweep execution at the round-3-pinned **`n=40`** (FR-004 closure 2026-05-24; constant: `m6_2_types.M6_2_PUBLISH_N`). Pre-flight: verify the post-T066 fixes are landed on the working branch — (a) the `asyncio.Semaphore(cell.concurrency)` bound on the block-dispatcher in `m6_2_validate.py:285` (commit f3e0989), (b) the T066-recalibrated FR-022/FR-023 budgets (commit 231db71), (c) the prompt-driven early-EOS audit in `m6_2_reporter._render_early_eos_audit` (commit 07d1cee). Then run: `python -m vllm_grpc_bench --m6_2 --m6_2-n=40 --m6_2-modal-region=eu-west-1` against Modal A10G. Expected ≤ 16 h wall-clock (FR-023; validate-derived projection ~13.2 h) and ≤ $25 Modal spend (FR-021; validate-derived projection ~$20). Inspect the resulting `docs/benchmarks/m6_2-token-budget.{md,json}` per quickstart.md Stage 4 checklist; the `## Prompt-driven early-EOS audit` section (auto-emitted when any chat_stream cell undershoots its max_tokens cap by > 50%) will surface remaining prompt-content confounds in the new-baseline-accepted regime.
+- [ ] T050 Commit + push + open PR per quickstart.md Stage 7. PR title: "M6.2 — token-budget characterization across max_tokens axis". PR body summarizes the three user stories' deliverables, links the published artifact pair, references the round-1-through-round-5 clarify history, and includes the CI gate status.
+
+---
+
+## Phase 7: Modal-Backed Integration (post-T046 — closes the stub-only gap surfaced 2026-05-23)
+
+**Purpose**: T013/T014/T026/T030 marked complete in the [X] sense (the per-module work landed + their unit tests passed against stubs), but the integration glue in `m6_2_validate.py:run_m6_2()` and `build_artifact()` was missing. `--m6_2-validate` against Modal exited with `ERROR: Modal-backed dispatcher wiring is deferred to T044 / T047`, and the artifact assembler shipped `null_anchor_validation=[]` + `network_paths={cohort: []}` + a hardcoded `5.0` ms anchor-drift threshold. The integration test that would have caught this (T056) didn't exist either. This phase closes all six gaps in one commit cycle.
+
+- [X] T051 Wire the real Modal-backed `BlockDispatcher` adapter at `m6_2_validate.py`: `build_modal_block_dispatcher(driver, base_seed)` returns a `BlockDispatcher`-Protocol-shaped async callable that resolves `cell_id` → `M6_1Cell`, allocates per-RPC seeds, flows `block_inputs.prompt_text` / `embed_tensor_bytes` / `ignore_eos` / `max_tokens` into the driver, fires `n` concurrent RPCs via `asyncio.gather`, aggregates into `BlockDispatchResult`. Replaces the hardcoded `return 2` refusal at `m6_2_validate.py:553-562`. ~80 LOC + adapter glue. Depends on T058.
+- [X] T052 Wire the real anchor adapter + retry classifier at `m6_2_validate.py`: `build_modal_anchor_dispatcher(driver)` returns an `AnchorRPCDriver`-Protocol-shaped async callable that issues the FR-031 synthetic chat_stream c=1 × max_tokens=10 × n=20 block. `is_transient_modal_error(exc)` classifies gRPC + httpx errors per FR-033. Also refactors `AnchorRPCDriver` Protocol + `compute_anchor_block` to be `async` so the real adapter can share the `provide_m6_2_rpc_driver` callable instead of juggling a parallel sync client. ~60 LOC + 1-line test-suite refactor (sync→async stubs).
+- [X] T053 Populate `null_anchor_validation` in `build_artifact`: `make_null_anchor_validation(measurements, baseline_per_cell)` iterates the 48 (cell × cohort × max_tokens∈{10, 50}) anchor cells, calls `m6_2_null_anchor.make_null_anchor` for cells whose M6.1.x-canonical max_tokens matches a published M6.1.3 baseline (22 cross-checkable cells), `make_new_baseline_anchor` for the rest (26 new-baseline cells). Replaces the hardcoded `null_anchor_validation=[]` at `m6_2_validate.py:413`. ~80 LOC. Depends on the `m6_2_null_anchor` primitives that T020 / T026 already shipped.
+- [X] T054 Derive the real anchor CI half-width from baseline: `derive_anchor_drift_threshold(baseline_path)` reads `between_run_variance.chat_stream_c1` from M6.1.3's published JSON and returns the MAX CI half-width across the cohorts M6.1.3 published. Replaces the hardcoded `m6_1_3_baseline_ci_half_width=5.0` at `m6_2_validate.py:341`. Sentinel `5.0` ms falls through only when the baseline file is unreadable or absent. ~25 LOC.
+- [X] T055 Thread `network_paths` from topology probe to artifact: `m6_2_sweep.run_m6_2_sweep` now invokes `inputs.topology_probe()` at sweep start + end (per-cohort entries accumulate into a `network_paths_trajectory: dict[cohort, list]`), returns it on `M6_2SweepOutputs`. `build_artifact` accepts a `network_paths` kwarg and uses it for the artifact's `network_paths` field. `_run_modal_backed` wires `m6_1_2_network_probe.run_topology_probe` as the probe callable. Replaces the hardcoded `topology_probe=None` (`m6_2_validate.py:577`) + empty `network_paths={cohort: [] for cohort in M6_1_2_COHORTS}` (`m6_2_validate.py:410`). ~50 LOC. Probe failures NEVER abort per FR-001a.
+- [X] T056 Create `tools/benchmark/tests/test_m6_2_modal_integration.py`: 17 test methods exercising `build_modal_block_dispatcher`, `build_modal_anchor_dispatcher`, `is_transient_modal_error`, `derive_anchor_drift_threshold`, `make_null_anchor_validation` against a fake `(cohort, cell, seed, *, max_tokens, ignore_eos, prompt, prompt_embeds_override) -> RPCResult` driver. Asserts block_inputs flow through correctly, embed corpus bytes route to `prompt_embeds_override`, the 48-row null-anchor list emerges with the correct cross-checkable / new-baseline split. Closes the regression-test gap — this is the test class that would have caught the stub-only Modal gap. ~300 LOC.
+- [X] T057 Audit + tasks.md update + lint chain: scan the m6_2_* family for `TODO` / `deferred` / `stub` markers; add T051–T058 entries to `specs/027-m6-2-token-budget/tasks.md` documenting the post-T046 integration gap closure; run `ruff check .` + `ruff format --check .` + `mypy --strict .` + `pytest tools/benchmark/tests/test_m6_2_*.py` per `feedback_local_lint_chain`.
+- [X] T058 Net-new `tools/benchmark/src/vllm_grpc_bench/m6_2_rpc_driver.py` per FR-028 copy-then-refactor: mirrors `m6_1_rpc_driver.provide_m6_1_2_rpc_driver`'s 4-cohort driver shape but threads `max_tokens` / `ignore_eos` / `prompt` / `prompt_embeds_override` through new `_drive_grpc_chat_stream_m6_2` / `_drive_grpc_embed_m6_2` / `_drive_rest_chat_stream_m6_2` / `_drive_rest_embed_m6_2` dispatchers + a re-shaped per-RPC `driver(cohort, cell, seed, *, max_tokens, ignore_eos, prompt, prompt_embeds_override)` callable. M6.1.x driver stays byte-frozen. ~350 LOC. Foundational for T051 / T052.
+
+**Checkpoint**: Phase 7 complete. `--m6_2-validate` against Modal can now actually execute end-to-end. The artifact produced will carry: real `null_anchor_validation` (48 entries split 22/26), real `network_paths` trajectory (start + end probe results), derived anchor-drift threshold (~1 ms vs the previous 5 ms sentinel), all five FR-009/FR-014/FR-029/SC-010/SC-016 integrity warning channels operating against real data. The next runtime gate is T047 (Modal compute, ~2.3 h, ~$4) — the wiring blockers are gone.
+
+---
+
+## Phase 8: Threshold Recalibration (post-T047 first attempt — closes the validate-data-driven calibration gap)
+
+**Purpose**: The 2026-05-23T21:08Z validate sweep (the first end-to-end T047 run — see `docs/benchmarks/m6_2-token-budget-validate.{md,json}`) fired both SC-004 `null_anchor_drift` (11/11 cross-checkable cells) and SC-016 `intra_sweep_latency_drift` (4/4 cohorts). Diagnostic analysis showed the firing pattern conflates three regimes: (a) genuine ~2× REST regression on `chat_stream max_tokens=50` cells (correctly flagged), (b) operationally-insignificant 0.5–2.8% absolute drift on low-CI gRPC cells amplified by the 10 ms absolute floor (false positives), and (c) warmup-driven trajectory spread inflated by every cohort's t≈0 snapshot (false positives). Round-8 amendment (spec.md clarifications + FR-014/FR-031 inline + contracts/artifact-schema.md) recalibrates both gates via B4 (relative-magnitude floor extending B2) and C1 (warmup suppression + insufficient-snapshot fallback). This phase implements both.
+
+- [X] T060 [P] Implemented B4 in `m6_2_null_anchor.py` (2026-05-24): added `DRIFT_THRESHOLD_FLOOR_FRACTION: float = 0.025`; extended `pooled_ci_half_width(..., baseline_p50_ms: float = 0.0, floor_fraction: float = DRIFT_THRESHOLD_FLOOR_FRACTION)` to include the relative co-floor in the `max(...)`; extended `compute_drift_verdict` + `make_null_anchor` to thread `baseline_p50_ms` (`m6_1_3_wall_p50_ms`). Backward-compatible default (`baseline_p50_ms=0` reduces to B2 behavior).
+- [X] T061 [P] Implemented C1 warmup suppression in `m6_2_anchor_trajectory.py` (2026-05-24): added `WARMUP_SUPPRESSION_HOURS: float = 0.05`; in `compute_anchor_latency_trajectory`, partition snapshots into pre-/post-warmup lists, compute spread + threshold over post-warmup only, return `latency_drift_warning=False` + `insufficient_post_warmup_snapshots=True` when fewer than 2 post-warmup snapshots remain. Threads B4's `baseline_p50_ms` + `floor_fraction` into the pooled call. Added `insufficient_post_warmup_snapshots: bool = False` field to `M6_2AnchorLatencyTrajectory` in `m6_2_types.py`.
+- [X] T062 Added `trajectory_insufficient_snapshots` canonical channel to `m6_2_reporter.py` (2026-05-24): added to `INTEGRITY_CHANNELS` frozenset, added `compute_insufficient_snapshots_header_fired` import, wired into `build_integrity_warnings`, added soft-diagnostic header description. Fires when any cohort carries `insufficient_post_warmup_snapshots=True`.
+- [X] T063 [P] Extended `tools/benchmark/tests/test_m6_2_null_anchor.py` with B4 coverage (2026-05-24): `TestB4RelativeCoFloor` class covers constant-pinning regression guard, relative-floor-dominates-on-slow-baseline, absolute-floor-dominates-on-fast-baseline, baseline-CI-dominates, m6_2-CI-dominates, backward-compat default, verdict-band shifts, floor_fraction override, negative-baseline-p50 defensive coercion.
+- [X] T064 [P] Extended `tools/benchmark/tests/test_m6_2_anchor_trajectory.py` with C1 coverage (2026-05-24): `TestC1WarmupSuppression` + `TestInsufficientSnapshotsHeader` classes cover warmup constant pinning, warmup snapshot dropped from spread, insufficient-fallback, zero-snapshots fallback, B4 relative co-floor honored, B4 doesn't mask real drift, validate-mode start+end fallback, header-fires-on-one-cohort, header-independent-of-drift. Also migrated 3 pre-existing tests off the `t=0` warmup boundary.
+- [X] T065 Lint chain ran and Phase 8 committed.
+- [X] T066 FR-022 / FR-023 / SC-002 re-calibrated against post-fix serial-dispatch runtime (committed in `231db71`).
+
+**Checkpoint**: Phase 8 complete. T067/T068 follow-up: Phase 9 (sweep-progress instrumentation + monitor script — see below) closes the operator-visibility gap surfaced by the 2026-05-23 / 2026-05-24 validate sweeps.
+
+---
+
+## Phase 9: Sweep-Progress Instrumentation + Monitor Script (post-Phase-8 — closes the operator-visibility gap)
+
+**Purpose**: The 2026-05-23 / 2026-05-24 validate sweeps ran for ~3-5 hours with **zero console progress** between sweep-start and sweep-end. The operator had no in-flight signal that the sweep was making progress, which forced two distinct one-off analyses to be hand-written at 10-minute intervals: (a) elapsed-time + ETA inferred from process state, (b) network-byte-counter delta-rate inferred from `psutil` / `/proc/net/dev` / `netstat -ibn`. Both analyses were rewritten from scratch each session. This phase eliminates both with structured progress events emitted by the sweep orchestrator + a reusable monitor script that combines all three signals.
+
+- [X] T067 Add `_progress(tag, **fields)` helper + `_count_expected_blocks(axis)` + `_count_expected_tuples(axis)` to `m6_2_sweep.py` (2026-05-24). Emits one-line stderr events with `[YYYY-MM-DDTHH:MM:SSZ] [m6_2 TAG] k1=v1 ...` format. Wire into `run_m6_2_sweep` at: `SWEEP_START` (banner with mode/n/axis/expected_blocks), `TOPOLOGY_PROBE_START/END` (sweep start + end), `ANCHOR_START/END` (sweep start, every 4h cadence, sweep end), `TUPLE_START/END` (per `(cell, max_tokens)` tuple), `BLOCK_DONE` (per cohort block with `i=N/total`, `duration_s`, `wall_p50_ms`, `failed`, `retry`), `SWEEP_END` (totals). Also wire `SUBPROBE_START/END` in `m6_2_validate._drive_main_sweep_and_sub_probe`. Format is machine-parseable by T068's monitor script.
+- [X] T068 Create `scripts/python/monitor_m6_2_sweep.py` (2026-05-24): re-runnable monitor that combines (a) progress-log parsing from T067's emitted events, (b) optional PID liveness checking via `os.kill(pid, 0)`, (c) network-rate sampling via `psutil` → `/proc/net/dev` → `netstat -ibn` fallback chain. Supports `--once` (single snapshot for cron / launchd) and `--interval` (continuous loop). Auto-exits when the artifact JSON appears OR the orchestrator PID dies. One-line output format per tick: `[ts] elapsed=Xh Ym blocks=A/B (P%) tuple=C/D cell=<id>×<mt> recent_wall_p50=Zms eta=Xh Ym net_rate=N.MB/s subprobe=<state> alive=yes|no|unknown artifact=yes|no`. Supersedes the ad-hoc analyses logged in memory observations 271/272 (10-minute-interval polling rewritten from scratch).
+- [X] T069 [P] Documented the progress-event format + monitor script in `specs/027-m6-2-token-budget/quickstart.md` (2026-05-24): Stage 1 updated to use `uv run --project tools/benchmark python -m vllm_grpc_bench ... 2>&1 | tee docs/benchmarks/m6_2-validate.sweep.log` (combined stdout+stderr stream so progress events show live AND persist for the monitor + post-hoc forensics). New Stage 1b "Monitoring an in-flight sweep" subsection covers one-shot (cron / launchd) + continuous (second-terminal) + backgrounded-with-nohup invocation patterns, the per-tick output format with field semantics, and the `--iface` / `--once` / `--interval` flag table. Stage 3 mirrored for publish-mode at n=40. Progress-event-tag table (SWEEP_START / TUPLE_START / BLOCK_DONE / ANCHOR / SUBPROBE / SWEEP_END) added near the validate command for operator reference.
+- [ ] T070 [P] Add `tools/benchmark/tests/test_m6_2_progress.py`: unit tests for `_count_expected_blocks` + `_count_expected_tuples` against the publish axis (132 blocks / 24 tuples under M6.1.2 live-cohort discipline) and validate axis (66 blocks / 18 tuples). Smoke-test that `run_m6_2_sweep` emits at least one `SWEEP_START` + one `SWEEP_END` line via `capsys.readouterr().err`. ~80 LOC.
+- [ ] T071 [P] Add `scripts/python/tests/test_monitor_m6_2_sweep.py` (or `tools/benchmark/tests/test_monitor_script.py`): unit tests for `parse_progress_events` (matches `[m6_2 *]` lines, skips noise), `derive_sweep_state` (folds events into snapshot — handles duplicates, out-of-order, missing fields), `compute_eta_seconds` (linear extrapolation; returns None when blocks_done=0), `format_status_line` (golden-string assertions for live / dead / unknown PID states + with/without network rate). ~150 LOC.
+
+**Checkpoint**: Phase 9 complete. Future validate / publish sweeps emit real-time progress to stderr; operators tee the stream to a log file and the monitor script reads it on demand or via cron. T072 (re-run validate to confirm progress events fire end-to-end against Modal) can follow once the orchestrator is launched against real infrastructure.
+
+- [ ] T072 Manual re-validate sweep WITH progress instrumentation enabled (proves T067 emits the full event stream end-to-end against real Modal infrastructure): `python -m vllm_grpc_bench --m6_2-validate --m6_2-modal-region=eu-west-1 2> docs/benchmarks/m6_2-validate.stderr.log`. Concurrently launch `python scripts/python/monitor_m6_2_sweep.py --log docs/benchmarks/m6_2-validate.stderr.log --pid <orchestrator_pid> --json-out docs/benchmarks/m6_2-token-budget-validate.json --interval 60`. Confirm: monitor prints a status line every minute; ETA refines as blocks complete; `subprobe=running` transitions to `done`; monitor exits on `SWEEP_END` + artifact-JSON-present. Expected ~3.5-4 h wall-clock at the FR-022 recalibrated cap.
+- [X] T075 Fixed the monitor's stale-artifact false-positive (2026-05-24). Added `compute_artifact_present(json_path, sweep_start_utc)` helper to `scripts/python/monitor_m6_2_sweep.py`: returns True iff the artifact file exists AND its mtime is strictly greater than the parsed SWEEP_START UTC. The main loop's `artifact_present` check now uses this helper, gated on `state.sweep_end_utc is not None`. Verified live against PID 11077 (in-flight validate sweep, stale 10:01 artifact, SWEEP_START at 16:17): pre-fix reported `artifact=yes`, post-fix correctly reports `artifact=no`. New `tools/benchmark/tests/test_monitor_m6_2_sweep_artifact_present.py` (10 tests in 2 classes + an export-surface test): None-path, missing-file, None-sweep-start, stale-predate, fresh-postdate, unparseable-sweep-start, off-by-one boundary, plus regression-anchor cases reproducing the exact 2026-05-24 16:17 production signature.
+- [X] T073 Fixed the anchor-block over-firing bug in `m6_2_sweep.should_run_anchor_at` (2026-05-24). Added `START_GUARD_HOURS: float = 0.001` constant (separate from the 4-h-cadence `epsilon_hours = 0.05` tolerance) and used it for the "is this the sweep-start tick" check. **Follow-on discovery during testing**: the publish-mode 4-h-cadence branch ALSO matched small marks (e.g. 0.02 / 4.0 rounds to cadence multiple 0, falling within the `epsilon_hours / cadence_hours = 0.0125` tolerance), which would re-fire the start anchor through the cadence path. Added a `if nearest == 0: return False` guard in the cadence branch so it only fires for the literal 4 h / 8 h / 12 h marks (the sweep-start anchor is captured before the main loop, so cadence multiple 0 never needs the cadence branch's coverage). **Tests**: 7 cases in `TestT073StartGuardRegression` covering the constant pin, exact-zero firing, the 0.02 h regression, the old-epsilon-boundary (0.04 / 0.05) cases, the first-3-minutes interior sweep, the 4-h cadence preservation, and the end-anchor epsilon path. 250 M6.2 tests pass, ruff clean.
+- [ ] T074 Implement Modal-preemption mid-sweep recovery (closes the implementation gap behind FR-026's "auto-resume handler" promise; surfaced by the 2026-05-24 13:44 UTC validate run where Modal preempted the worker at 14:58:44 UTC after Tuple 6 of 18, killing 48 of 66 remaining blocks because the orchestrator had no way to refresh the dead endpoint handles before the new worker came back online at 15:01:35 UTC). **Symptom signature**: every dispatcher call returns `StatusCode.UNAVAILABLE failed to connect to all addresses; last error: UNKNOWN: ipv4:<old_modal_ip>:<port>: F` (gRPC) or `ConnectError: All connection attempts failed` / `ReadError` / `nodename nor servname provided, or not known` (REST). The dispatcher's cached `M6EndpointHandles` point at the OLD container's IP/port pair; Modal's preemption-restart contract gives the new worker a fresh IP. **Implementation plan**:
+  - **T074a — failure classifier** ✅ **LANDED 2026-05-24** (commit `c0f4967`): `is_modal_endpoint_death(exc)` + `block_failed_with_endpoint_death(results, n)` in `m6_2_validate.py`. Recognises gRPC UNAVAILABLE/CANCELLED with 8-fragment message match, httpx ConnectError (unconditional), httpx ReadError (fragment-matched). Excludes alive-but-slow (DEADLINE_EXCEEDED, ReadTimeout, RemoteProtocolError) and non-network exceptions. 34 unit tests.
+  - **T074b — block-level recovery wrapper** ✅ **LANDED 2026-05-24** (commit `47a94d2`): `build_modal_block_dispatcher` now accepts `make_driver` callable + `preemption_budget`. When `block_failed_with_endpoint_death(results, n)` fires, dispatcher emits `PREEMPTION_DETECTED`, awaits `make_driver()`, emits `PREEMPTION_RECOVERED`, retries the block. Dispatcher exposes `preemption_events()` callable + `preemption_budget` attribute for orchestrator readback. Backward-compatible default (`make_driver=None` disables recovery). 9 unit tests covering happy path / mixed-failure rejection / budget exhaustion / recovery-failed / counter monotonicity.
+  - **T074c — preemption-counter integration** ✅ **LANDED 2026-05-24** (commit `47a94d2`): added `M6_2_PREEMPTION_RECURRENCE_THRESHOLD: int = 2` constant + `PreemptionBudgetExhausted` / `PreemptionRecoveryFailed` exceptions. `_run_modal_backed` catches both with distinct non-zero RCs (6 for budget, 7 for recovery-failed) so the operator + monitor script can disambiguate from generic sweep failures. The artifact-schema `run_meta.preemption_events` field is recorded as a follow-up (T074f).
+  - **T074d — Modal endpoint provider** ✅ **LANDED 2026-05-24** (commit pending): added `build_modal_make_driver_callable` factory that returns `(initial_driver, make_driver, get_current_endpoints)` wired against the pre-existing `modal_endpoint.refresh_rest_grpc_urls` helper (polls the named Modal Dict for fresh URLs after a preemption-restart). `_run_modal_backed` refactored to use `AsyncExitStack` so each driver context (initial + every post-recovery one) is tracked for sweep-end cleanup. The topology probe closure re-reads `get_current_endpoints()` per call so post-preemption probes hit the refreshed URLs. 4 unit tests covering initial-driver lifecycle / refresh+swap / refresh timeout / two-consecutive-recovery survival.
+  - **T074e — anchor dispatcher recovery + tests** ✅ **LANDED 2026-05-24** (commit pending): `build_modal_anchor_dispatcher` now accepts `make_driver` + `preemption_budget` (mirrors the block dispatcher API). Anchor RPCs that previously caught `(grpc.RpcError, httpx.HTTPError)` → None now surface the exception so `block_failed_with_endpoint_death` can fire on the all-endpoint-death pattern. Recovery loop emits `PREEMPTION_DETECTED phase=anchor` / `PREEMPTION_RECOVERED phase=anchor` events so the monitor + log reader can disambiguate anchor vs block recoveries. `_run_modal_backed` wires `make_driver` into the anchor dispatcher constructor. Anchor counter is per-dispatcher rather than sweep-wide-shared with the block dispatcher — small deviation from FR-026's strict budget but practical (anchors fire ≤ 10× per publish sweep vs ~132 block dispatches; shared-budget is a future enhancement). 6 unit tests covering happy path / backward-compat (no make_driver = legacy [] return) / partial-failure rejection / budget exhaustion / make_driver-throws / counter API.
+  - **T074f — artifact-schema preemption_events field + reporter render** ✅ **LANDED 2026-05-24** (commit pending): added `preemption_events: int = 0` to `M6_2RunMeta` (backward-compatible default preserves strict-superset semantics per FR-011). `_run_modal_backed` reads `block_dispatcher.preemption_events() + anchor_dispatcher.preemption_events()` before the async-with block exits and threads the sum into `build_artifact(preemption_events=total)`. `_render_run_meta` renders `- preemption_events: 0` in the markdown run_meta block so operators see at a glance whether the sweep encountered any Modal preemption. 4 unit tests: additive-field presence in JSON, default-to-zero on happy-path, markdown render assertion, end-to-end dispatcher → orchestrator sum check. The progress-event additions (`PREEMPTION_DETECTED` / `PREEMPTION_RECOVERED` / `PREEMPTION_RECOVERY_FAILED` / `PREEMPTION_BUDGET_EXHAUSTED`) were already shipped as part of T074b/c/e via `_progress` calls; the monitor script's regex tolerates new tags by construction (T074-monitor follow-up if a dedicated "preemption count" status field becomes useful).
+  - **T074g — quickstart documentation** ✅ **LANDED 2026-05-24** (commit pending): added Stage 1c "Preemption recovery (T074 / FR-026)" subsection to `specs/027-m6-2-token-budget/quickstart.md`. Covers the expected event sequence (BLOCK_DONE → preemption → PREEMPTION_DETECTED → ~2-3 min pause → PREEMPTION_RECOVERED → BLOCK_DONE resumes), the same flow with `phase=anchor` for anchor-block preemption, the FR-026 budget enforcement (RC 6 = `PreemptionBudgetExhausted`, RC 7 = `PreemptionRecoveryFailed`, both distinct from RC 5 generic-failure and RC 2 Modal-deploy-failure), the post-sweep `run_meta.preemption_events` JSON + markdown surfacing, and an operator playbook for each RC outcome.
+  - **Total scope** (final tally): ~1300 LOC across 4 source files (`m6_2_validate.py` +600, `m6_2_types.py` +15, `m6_2_reporter.py` +1, `modal_endpoint.py` +0 — reused pre-existing `refresh_rest_grpc_urls`) + 1 test file (`test_m6_2_preemption_recovery.py` 53 cases / +650 LOC) + 1 schema test extension (`test_m6_2_artifact_schema.py` +20 LOC) + 1 quickstart subsection. Mid-sweep preemption now reduces from "lose the whole sweep" to "lose ~3 min wall-clock + retry the current block, up to 2 times per dispatcher before aborting cleanly." All 307 M6.2 tests pass; ruff clean.
+
+---
+
+## Dependencies & Execution Order
+
+### Phase dependencies
+
+- **Phase 1 (Setup)**: T001-T004 run first. T002 → T003 is the only intra-phase sequential dependency.
+- **Phase 2 (Foundational)**: Depends on Phase 1 completion. Within Phase 2: T005 → T006 (embed corpus generation script must exist before running it); T007/T008/T009 are [P] across files; T010 → T011/T012/T013 (types module first); T011 + T012 + T013 + T014 + T015 build the orchestrator stack roughly in this order; T016-T021 [P] foundational tests can be written against the implemented foundational modules.
+- **Phase 3 (US1)**: Depends on Phase 2 completion. T022 reporter skeleton first, then T023-T030 [Story-internal sequential — same `m6_2_reporter.py` file] section-rendering tasks. T031/T032 [P] tests parallel with implementation. T033 [P] forward-pointing annotation can run any time after Phase 1.
+- **Phase 4 (US2)**: Depends on Phase 2 completion. Independent of US1 implementation (different reporter sections + different module). T034 creates `m6_2_crossover.py`; T035 adds the markdown section to the reporter (depends on T022 reporter skeleton). T036 [P] tests parallel.
+- **Phase 5 (US3)**: Depends on Phase 2 completion. T037 creates `m6_2_sub_probe.py`; T038 extends `m6_2_crossover.py` (depends on T034's file existing); T039 wires sub-probe into `m6_2_sweep.py` (depends on T013); T040 adds the markdown section (depends on T022 reporter skeleton). T041/T042 [P] tests parallel.
+- **Phase 6 (Polish)**: Depends on Phases 3+4+5 being complete. T044/T046 [P] CI hygiene; T045 documentation; T047/T048/T049 sequential (validate → clarify round 6 → publish).
+
+### User story dependencies
+
+- **US1 (P1)**: Pure dependency on Phase 2 (foundational). MVP — the latency budget table is the headline deliverable.
+- **US2 (P2)**: Derives from US1's per-cell × per-cohort × per-`max_tokens` rows but is implementation-independent (different module file, different reporter section). Can be developed in parallel with US1 once Phase 2 is done.
+- **US3 (P3)**: Independent measurement regime (sub-probe) + independent module (`m6_2_sub_probe.py`) + independent reporter section. Can be developed in parallel with US1 and US2 once Phase 2 is done; only intersects with US1 at the shared `m6_2_sweep.py` wiring (T039).
+
+### Within each user story
+
+- Reporter skeleton (T022) before section-rendering tasks for US1.
+- `m6_2_crossover.py` creation (T034) before extending it (T038, in US3 phase).
+- Tests can be written in parallel with implementation per the project's standard practice (no strict TDD requirement per the spec; tests are required to pass before push).
+
+### Parallel opportunities
+
+**Phase 1 (Setup)**:
+```bash
+# T002 + T004 can run in parallel:
+Task T002: Investigate proto schemas for ignore_eos
+Task T004: Verify local lint chain
+```
+
+**Phase 2 (Foundational)** — once T005/T006 (corpus) + T010 (types) land:
+```bash
+# T007 + T008 + T009 can run in parallel (different files):
+Task T007: Parameterize chat RPC builders in m6_rpc_driver.py
+Task T008: Parameterize embed RPC builders in m6_1_rpc_driver.py
+Task T009: Extend corpus.py with embed loader
+
+# T011 + T012 can run in parallel (different files):
+Task T011: Create m6_2_prompt_source.py
+Task T012: Create m6_2_anchor_trajectory.py
+
+# T016-T021 foundational tests can all run in parallel (different files):
+Task T016: test_m6_2_prompt_source.py
+Task T017: test_m6_2_iteration_order.py
+Task T018: test_m6_2_anchor_trajectory.py
+Task T019: test_m6_2_retry_policy.py
+Task T020: test_m6_2_null_anchor.py
+Task T021: test_m6_2_cli.py
+```
+
+**Phase 3 / Phase 4 / Phase 5** — once Phase 2 lands, the three stories can be developed by separate developers in parallel:
+```bash
+# Developer A: US1
+Tasks T022 → T023-T030 (reporter section rendering, same file, sequential) + T031/T032/T033 [P]
+
+# Developer B: US2
+Tasks T034 + T035 + T036 [P]
+
+# Developer C: US3
+Tasks T037 + T038 + T039 + T040 + T041/T042/T043 [P]
+```
+
+**Phase 6 (Polish)**:
+```bash
+# T044 + T046 can run in parallel:
+Task T044: Publish CLI integration test
+Task T046: Local lint chain re-run
+```
+
+---
+
+## Implementation strategy
+
+### MVP first (User Story 1 only)
+
+1. Complete Phase 1: Setup.
+2. Complete Phase 2: Foundational (~21 tasks; this is the heaviest phase by far).
+3. Complete Phase 3: User Story 1 (~12 tasks).
+4. **STOP and VALIDATE**: Run `--m6_2-validate --m6_2-skip-deploy`; inspect the validate artifact. The MVP delivers the per-cohort latency budget table + null-anchor validation + failure summary + wall-clock timeline + M6.1.3 forward annotation — answering "what does production latency look like at the 3-point axis subset?" for the validate run.
+
+### Incremental delivery
+
+1. Setup + Foundational → foundation ready.
+2. US1 → validate-against-stub-driver passes → MVP demoable.
+3. US2 → crossover threshold renders → both stories independent.
+4. US3 → KV-pressure observation populates → all three stories complete.
+5. Polish → manual validate sweep against Modal → `/speckit-clarify` round 6 → manual publish sweep → PR.
+
+### Parallel team strategy
+
+With three developers and Phase 2 complete:
+- Developer A: US1 (~12 tasks; reporter section work)
+- Developer B: US2 (~3 tasks; pure-function crossover + reporter section)
+- Developer C: US3 (~7 tasks; sub-probe module + crossover extension + reporter section + sweep wiring)
+
+The three stories complete and integrate independently. Polish phase brings them together.
+
+---
+
+## Validation criteria
+
+For each generated task, this tasks.md ensures:
+
+- **Checkbox + Task ID + (optional [P] + optional [Story]) + Description with file path** format compliance: T001-T050 all conform.
+- **Test coverage**: each user story has both unit tests (per-module pure-function tests) and integration coverage (via T032 / T043 / T044) per Constitution IV.
+- **File paths**: every implementation task names the exact file it touches (`tools/benchmark/src/vllm_grpc_bench/m6_2_*.py`, `tools/benchmark/tests/test_m6_2_*.py`, etc.); no ambiguity.
+- **Story labels**: US1 / US2 / US3 labels applied to user-story-phase tasks only; Setup / Foundational / Polish tasks omit story labels per the protocol.
+- **Parallel markers**: [P] applied only to tasks operating on different files with no dependencies on incomplete tasks.
+- **Independent testability**: each user story's Independent Test description is concrete and runnable (e.g., "Run `--m6_2-validate --m6_2-skip-deploy`; assert X, Y, Z").
+- **Round-5 amendments covered**: T005-T011 + T037-T043 carry the three-regime prompt source + KV-pressure sub-probe + corpus generation + corpus SHA validation deltas introduced in clarify round 5.
+- **Round-3 deferral preserved**: T015 wires the `--m6_2-n` gate; T048 explicitly tasks the future clarify round 6 that fires after validate-sweep variance data lands.
+
+---
+
+## Notes
+
+- [P] tasks = different files, no dependencies on incomplete tasks.
+- [Story] label maps task to specific user story for traceability.
+- Each user story is independently completable and testable post-Phase 2.
+- Tests must pass before push per Constitution IV + `feedback_local_lint_chain` memory.
+- Commit after each task or logical group (typically after each phase checkpoint).
+- Phase 6 T047 / T048 / T049 are sequential and gated on Modal compute + a future `/speckit-clarify` cycle — DO NOT attempt to run them before validate completes and round 6 closes.
+- The `--m6_2` publish sweep is BLOCKED until T048 pins `--m6_2-n` (FR-004 round-3 deferral).
+- Sub-probe runs unconditionally in both `--m6_2` and `--m6_2-validate` per SC-019; no operator-facing flag controls it.
+- Embed corpus generation (T005/T006) is a one-time Phase 1 prerequisite per FR-035; subsequent sweeps reuse the committed corpus.

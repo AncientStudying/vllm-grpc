@@ -19,6 +19,7 @@ message ChatCompleteRequest {
   optional float       temperature = 4;
   optional float       top_p       = 5;
   optional int64       seed        = 6;
+  bool                 ignore_eos  = 7;
 }
 
 message ChatCompleteResponse {

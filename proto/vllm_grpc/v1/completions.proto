@@ -17,6 +17,7 @@ message CompletionRequest {
     string prompt        = 6;
     bytes  prompt_embeds = 7;
   }
+  bool   ignore_eos  = 8;
 }
 
 message CompletionResponse {

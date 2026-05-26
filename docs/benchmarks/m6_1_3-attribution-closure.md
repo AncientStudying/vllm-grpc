@@ -1,5 +1,7 @@
 # M6.1.3 — Phase 1 Attribution Closure
 
+> **Note**: M6.2's published artifact ([m6_2-token-budget.md](m6_2-token-budget.md)) extends this milestone's attribution verdicts to a realistic-response-length axis (`max_tokens ∈ {10, 50, 256, 512, 1024, 2048}`). See that artifact for per-cohort latency budgets at production response lengths and the protocol-crossover threshold per cell.
+
 - run_id: `2026-05-19T00:20:22Z-f15efa12`
 - sweep_mode: `full`
 - modal_region: `eu-west-1`

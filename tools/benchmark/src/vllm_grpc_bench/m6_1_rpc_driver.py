@@ -136,6 +136,10 @@ def _build_embed_grpc_request(
     hidden_size: int,
     rpc_index: int,
     base_seed: int,
+    *,
+    max_tokens: int = 10,
+    ignore_eos: bool = False,
+    prompt_embeds_override: bytes | None = None,
     seed: int | None = None,
 ) -> completions_pb2.CompletionRequest:
     """Build a gRPC embed request for M6.1.
@@ -144,13 +148,24 @@ def _build_embed_grpc_request(
     defaults to ``base_seed + rpc_index`` so callers that don't care about
     differentiation between sampling-seed and tensor-seed don't have to
     compute it twice.
+
+    M6.2 round-5: ``max_tokens``, ``ignore_eos``, and
+    ``prompt_embeds_override`` are keyword-only so the M6.x default call sites
+    (``max_tokens=10``, ``ignore_eos=False``, ``prompt_embeds_override=None``)
+    remain byte-identical, while M6.2's three-regime prompt-source resolver
+    can pass corpus-derived tensors and forced-cap flags.
     """
-    payload = build_torch_save_bytes(seq_len, hidden_size, rpc_index, base_seed)
+    payload = (
+        prompt_embeds_override
+        if prompt_embeds_override is not None
+        else build_torch_save_bytes(seq_len, hidden_size, rpc_index, base_seed)
+    )
     sampling_seed = seed if seed is not None else base_seed + rpc_index
     return completions_pb2.CompletionRequest(
         prompt_embeds=payload,
-        max_tokens=10,
+        max_tokens=max_tokens,
         seed=sampling_seed,
+        ignore_eos=ignore_eos,
     )
 
 
@@ -159,6 +174,10 @@ def _build_embed_rest_payload_m6_1(
     hidden_size: int,
     rpc_index: int,
     base_seed: int,
+    *,
+    max_tokens: int = 10,
+    ignore_eos: bool = False,
+    prompt_embeds_override: bytes | None = None,
     seed: int | None = None,
 ) -> dict[str, Any]:
     """Build the REST embed payload for M6.1 (FR-003).
@@ -166,18 +185,29 @@ def _build_embed_rest_payload_m6_1(
     Emits ``input_kind="prompt_embedding_torch_b64"`` and the base64-encoded
     ``torch.save`` bytes. The REST shim deserialises via ``decode_embeds`` and
     routes through ``enable_prompt_embeds=True``.
+
+    M6.2 round-5: parameterized identically to the gRPC builder so the M6.2
+    three-regime prompt-source resolver can route corpus tensors + forced caps
+    through both transport paths.
     """
-    raw = build_torch_save_bytes(seq_len, hidden_size, rpc_index, base_seed)
+    raw = (
+        prompt_embeds_override
+        if prompt_embeds_override is not None
+        else build_torch_save_bytes(seq_len, hidden_size, rpc_index, base_seed)
+    )
     encoded = base64.b64encode(raw).decode("ascii")
     sampling_seed = seed if seed is not None else base_seed + rpc_index
-    return {
+    body: dict[str, Any] = {
         "model": "mock",
         "input_kind": "prompt_embedding_torch_b64",
         "input": encoded,
         "hidden_size": hidden_size,
-        "max_tokens": 10,
+        "max_tokens": max_tokens,
         "seed": sampling_seed,
     }
+    if ignore_eos:
+        body["ignore_eos"] = True
+    return body
 
 
 # --- gRPC + REST driver primitives ------------------------------------------

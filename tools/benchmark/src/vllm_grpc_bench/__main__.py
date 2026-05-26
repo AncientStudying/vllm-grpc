@@ -782,6 +782,114 @@ def _build_parser() -> argparse.ArgumentParser:
         help="M6.1.3: acknowledge an engine_version divergence (FR-004 escape hatch).",
     )
 
+    # ---- M6.2 mode (Token-Budget Characterization) ----
+    parser.add_argument(
+        "--m6_2",
+        action="store_true",
+        help="M6.2 publish sweep: 6-point max_tokens axis × 4-cohort × 6-cell matrix at the "
+        "round-3-pinned n=40 (m6_2_types.M6_2_PUBLISH_N). Produces "
+        "docs/benchmarks/m6_2-token-budget.{md,json}. REFUSES to start if --m6_2-n is unset "
+        "(FR-004 explicit-n gate). Mutually exclusive with all prior mode flags. "
+        "See specs/027-m6-2-token-budget/contracts/cli.md.",
+    )
+    parser.add_argument(
+        "--m6_2-validate",
+        action="store_true",
+        help="M6.2 validate sweep: 3-point axis subset {10, 50, 2048} × 4-cohort × 6-cell "
+        "matrix at n=20 (hard-pinned). Produces "
+        "docs/benchmarks/m6_2-token-budget-validate.{md,json}. Variance-gate input for "
+        "the round-3 clarify cycle. Mutually exclusive with --m6_2 and all prior mode flags.",
+    )
+    parser.add_argument(
+        "--m6_2-n",
+        type=int,
+        default=None,
+        help="M6.2: per-block sample size (FR-004). No silent default — the operator MUST "
+        "pass --m6_2-n=<N> on the command line. The round-3-pinned production value is "
+        "n=40 (m6_2_types.M6_2_PUBLISH_N). Under --m6_2-validate, hard-pinned to 20; "
+        "passing --m6_2-n=<X != 20> with --m6_2-validate raises an error.",
+    )
+    parser.add_argument(
+        "--m6_2-modal-region",
+        default="eu-west-1",
+        help="M6.2: Modal region for the deploy (default eu-west-1, verbatim from M6.1.3).",
+    )
+    parser.add_argument(
+        "--m6_2-modal-token-env",
+        default="MODAL_BENCH_TOKEN",
+        help="M6.2: env-var name carrying the bearer token (verbatim from M6.1.3).",
+    )
+    parser.add_argument(
+        "--m6_2-modal-endpoint",
+        default=None,
+        help="M6.2: pre-existing endpoint (advanced; implies --m6_2-skip-deploy).",
+    )
+    parser.add_argument(
+        "--m6_2-skip-deploy",
+        action="store_true",
+        help="M6.2: skip Modal deploy and reuse --m6_2-modal-endpoint (dev cycles + tests).",
+    )
+    parser.add_argument(
+        "--m6_2-base-seed",
+        type=int,
+        default=42,
+        help="M6.2: base RNG seed (default 42, verbatim from M6.1.3).",
+    )
+    parser.add_argument(
+        "--m6_2-model",
+        default="Qwen/Qwen3-8B",
+        help="M6.2: HuggingFace model identifier (default Qwen/Qwen3-8B, verbatim from M6.1.3).",
+    )
+    parser.add_argument(
+        "--m6_2-m6-1-3-baseline",
+        type=Path,
+        default=Path("docs/benchmarks/m6_1_3-attribution-closure.json"),
+        help="M6.2: M6.1.3 baseline JSON path; null-anchor reference (FR-013) + "
+        "FR-031 trajectory threshold source + FR-016 crossover base-verdict source.",
+    )
+    parser.add_argument(
+        "--m6_2-report-out",
+        type=Path,
+        default=None,
+        help="M6.2: markdown output path (operator override; default inferred per FR-015).",
+    )
+    parser.add_argument(
+        "--m6_2-report-json-out",
+        type=Path,
+        default=None,
+        help="M6.2: JSON companion output path (operator override; default inferred per FR-015).",
+    )
+    parser.add_argument(
+        "--m6_2-events-sidecar-out",
+        type=Path,
+        default=Path("docs/benchmarks/m6_2-events.jsonl"),
+        help="M6.2: per-RPC events sidecar (JSONL) with per-block UTC timestamps + "
+        "retry markers + prompt_source.",
+    )
+    parser.add_argument(
+        "--m6_2-allow-engine-mismatch",
+        action="store_true",
+        help="M6.2: acknowledge an engine_version divergence (dev escape hatch).",
+    )
+    parser.add_argument(
+        "--m6_2-checkpoint-out",
+        type=Path,
+        default=None,
+        help="M6.2: JSONL checkpoint sidecar path (per-block + per-anchor; crash-safe "
+        "fsync after every write). Default: <artifact-json>.checkpoint.jsonl. "
+        "Pass the empty string to disable checkpointing entirely.",
+    )
+    parser.add_argument(
+        "--m6_2-resume",
+        type=Path,
+        default=None,
+        help="M6.2: resume from a checkpoint JSONL. The current invocation's "
+        "sweep_mode, n_per_point, axis, base_seed, model, modal_region, git_sha, "
+        "and corpus SHAs MUST match the checkpoint header; mismatch aborts the "
+        "sweep with a precise diagnostic. The sweep skips every (cell, cohort, "
+        "max_tokens) block already in the checkpoint and continues appending.",
+    )
+
     # ---- M5.1 mode (REST vs gRPC head-to-head on real wire) ----
     parser.add_argument(
         "--m5_1",
@@ -2585,6 +2693,79 @@ def _run_m6_1_3(args: argparse.Namespace) -> int:
     return 0
 
 
+def _validate_m6_2_args(args: argparse.Namespace) -> int:
+    """Pre-flight validation for M6.2 mode. Returns exit code; 0 means OK.
+
+    Per ``specs/027-m6-2-token-budget/contracts/cli.md`` FR-020: both
+    ``--m6_2`` and ``--m6_2-validate`` are mutually exclusive with each
+    other AND with every prior mode flag the project supports.
+    """
+    if getattr(args, "m6_2", False) and getattr(args, "m6_2_validate", False):
+        print(
+            "Error: --m6_2 and --m6_2-validate are mutually exclusive (pick one).",
+            file=sys.stderr,
+        )
+        return 1
+    if (
+        getattr(args, "m3", False)
+        or getattr(args, "m4", False)
+        or getattr(args, "m5", False)
+        or getattr(args, "m5_1", False)
+        or getattr(args, "m5_1_smoke", False)
+        or getattr(args, "m5_2", False)
+        or getattr(args, "m5_2_smoke", False)
+        or getattr(args, "m6", False)
+        or getattr(args, "m6_smoke", False)
+        or getattr(args, "m6_1", False)
+        or getattr(args, "m6_1_smoke", False)
+        or getattr(args, "m6_1_1", False)
+        or getattr(args, "m6_1_1_diagnose", False)
+        or getattr(args, "m6_1_2", False)
+        or getattr(args, "m6_1_2_validate", False)
+        or getattr(args, "m6_1_3", False)
+        or getattr(args, "m6_1_3_validate", False)
+    ):
+        print(
+            "Error: --m6_2 / --m6_2-validate are mutually exclusive with all "
+            "prior mode flags (FR-020).",
+            file=sys.stderr,
+        )
+        return 1
+    # Validate mode: hard-pin --m6_2-n at 20.
+    if getattr(args, "m6_2_validate", False):
+        n = getattr(args, "m6_2_n", None)
+        if n is not None and n != 20:
+            print(
+                f"Error: --m6_2-validate is pinned at n=20 (FR-001 round-1 Q2); "
+                f"got --m6_2-n={n}. Drop the flag or pass n=20 explicitly.",
+                file=sys.stderr,
+            )
+            return 1
+    return 0
+
+
+def _run_m6_2(args: argparse.Namespace) -> int:
+    """Dispatch the M6.2 sweep.
+
+    Per ``contracts/cli.md`` FR-020 + R-7: both ``--m6_2`` and
+    ``--m6_2-validate`` route to the single entry function
+    :func:`vllm_grpc_bench.m6_2_validate.run_m6_2`; the operator-intent
+    distinction lives in the ``sweep_mode`` metadata argument and is
+    recorded in ``run_meta.sweep_mode`` on the published artifact.
+    """
+    rc = _validate_m6_2_args(args)
+    if rc != 0:
+        return rc
+
+    from vllm_grpc_bench.m6_2_validate import run_m6_2
+
+    if getattr(args, "m6_2", False):
+        return run_m6_2(args, sweep_mode="publish")
+    if getattr(args, "m6_2_validate", False):
+        return run_m6_2(args, sweep_mode="validate")
+    return 0
+
+
 def _run_m6_1_2(args: argparse.Namespace) -> int:
     """Dispatch the M6.1.2 sweep.
 
@@ -2609,6 +2790,9 @@ def _run_m6_1_2(args: argparse.Namespace) -> int:
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+
+    if getattr(args, "m6_2", False) or getattr(args, "m6_2_validate", False):
+        sys.exit(_run_m6_2(args))
 
     if getattr(args, "m6_1_2", False) or getattr(args, "m6_1_2_validate", False):
         sys.exit(_run_m6_1_2(args))

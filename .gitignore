@@ -241,3 +241,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Claude Code transient state (lock files for scheduled tasks)
+.claude/scheduled_tasks.lock
