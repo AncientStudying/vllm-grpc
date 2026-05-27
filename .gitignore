@@ -244,3 +244,7 @@ __marimo__/
 
 # Claude Code transient state (lock files for scheduled tasks)
 .claude/scheduled_tasks.lock
+
+# v0.0.0 housekeeping (per spec FR-007)
+logs/
+**/*.checkpoint.jsonl
