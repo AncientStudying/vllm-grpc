@@ -26,7 +26,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
 from vllm_grpc_bench.sweep_types import (
     M6_2_KV_PRESSURE_THRESHOLD,
     M6_2_MAX_TOKENS_AXIS,
@@ -37,6 +36,7 @@ from vllm_grpc_bench.sweep_types import (
     M6_2MeasurementPoint,
     M6_2SweepMode,
 )
+from vllm_grpc_bench.types import COHORTS, CohortKind
 
 __all__ = [
     "INCONCLUSIVE_VERDICT_LABELS",
@@ -90,8 +90,8 @@ def _is_inconclusive_verdict(verdict: str) -> bool:
 
 def identify_winner_and_second(
     cell_id: str,
-    baseline: dict[M6_1_2CohortKind, M6_1_3CohortBaseline],
-) -> tuple[M6_1_2CohortKind, M6_1_2CohortKind] | None:
+    baseline: dict[CohortKind, M6_1_3CohortBaseline],
+) -> tuple[CohortKind, CohortKind] | None:
     """Find the M6.1.3 winner + second cohort by ascending ``wall_p50_ms``.
 
     Returns ``None`` when the baseline has fewer than 2 cohorts (insufficient
@@ -127,8 +127,8 @@ def symmetric_mean_in_ci(
 
 
 def compute_per_cell_crossover(
-    per_cell_axis_rows: dict[str, dict[M6_1_2CohortKind, dict[int, M6_2MeasurementPoint]]],
-    m6_1_3_baseline: dict[str, dict[M6_1_2CohortKind, M6_1_3CohortBaseline]],
+    per_cell_axis_rows: dict[str, dict[CohortKind, dict[int, M6_2MeasurementPoint]]],
+    m6_1_3_baseline: dict[str, dict[CohortKind, M6_1_3CohortBaseline]],
     m6_1_3_base_verdicts: dict[str, str],
     *,
     sweep_mode: M6_2SweepMode,
@@ -258,7 +258,7 @@ class SubProbeBlockResult:
     on the model + scheduling policy).
     """
 
-    cohort: M6_1_2CohortKind
+    cohort: CohortKind
     cell_type: str  # "chat_stream" | "embed"
     max_tokens: int
     n_rpcs: int  # always M6_2_SUB_PROBE_N (20) per FR-036
@@ -286,7 +286,7 @@ def compute_kv_pressure_inference(
     """Per spec round-5 FR-017a + round-3 Q3 (threshold 2.2).
 
     Consumes the sub-probe per-(cohort, cell_type, max_tokens) rows produced
-    by :func:`m6_2_sub_probe.run_kv_pressure_sub_probe`. Emits one
+    by :func:`sub_probe.run_kv_pressure_sub_probe`. Emits one
     :class:`M6_2KVPressureObservation` per (cohort, cell_type) pair — 8 in
     total (4 cohorts × 2 cell-types).
 
@@ -306,13 +306,13 @@ def compute_kv_pressure_inference(
     inference fires regardless.
     """
     # Bucket the rows by (cell_type, cohort, max_tokens) for lookup.
-    bucket: dict[tuple[str, M6_1_2CohortKind, int], SubProbeBlockResult] = {
+    bucket: dict[tuple[str, CohortKind, int], SubProbeBlockResult] = {
         (row.cell_type, row.cohort, row.max_tokens): row for row in sub_probe_rows
     }
 
     out: list[M6_2KVPressureObservation] = []
     for cell_type in ("chat_stream", "embed"):
-        for cohort in M6_1_2_COHORTS:
+        for cohort in COHORTS:
             row_1024 = bucket.get((cell_type, cohort, 1024))
             row_2048 = bucket.get((cell_type, cohort, 2048))
 

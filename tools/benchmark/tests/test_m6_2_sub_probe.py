@@ -1,6 +1,6 @@
 """T042 — M6.2 KV-pressure sub-probe orchestrator unit tests (FR-036).
 
-Exercises :func:`m6_2_sub_probe.run_kv_pressure_sub_probe` directly with a
+Exercises :func:`sub_probe.run_kv_pressure_sub_probe` directly with a
 stub dispatcher. Covers the 16-block contract, ``n=20`` discipline,
 ``ignore_eos=True`` propagation through the prompt-source resolver, FR-030
 cohort-innermost ordering within each ``(cell_type, max_tokens)`` tuple, and
@@ -17,7 +17,7 @@ from vllm_grpc_bench.corpus import (
     RequestSample,
 )
 from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS
-from vllm_grpc_bench.m6_2_sub_probe import (
+from vllm_grpc_bench.sub_probe import (
     SUB_PROBE_CELL_IDS,
     SUB_PROBE_CELL_TYPES,
     iter_sub_probe_tuples,

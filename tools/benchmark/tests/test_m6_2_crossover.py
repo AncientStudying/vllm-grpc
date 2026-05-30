@@ -1,13 +1,13 @@
 """T036 — M6.2 protocol crossover unit tests.
 
-Exercises :func:`m6_2_crossover.compute_per_cell_crossover` directly with
+Exercises :func:`crossover.compute_per_cell_crossover` directly with
 synthetic per-cell axis rows + M6.1.3 baseline data. Covers spec round-1 Q3
 + US2 #2 + US2 #3 + validate-mode coarse vocabulary.
 """
 
 from __future__ import annotations
 
-from vllm_grpc_bench.m6_2_crossover import (
+from vllm_grpc_bench.crossover import (
     INCONCLUSIVE_VERDICT_LABELS,
     M6_1_3CohortBaseline,
     compute_per_cell_crossover,

@@ -46,7 +46,7 @@ from vllm_grpc_bench.corpus import (
     CompletionEmbedSample,
     RequestSample,
 )
-from vllm_grpc_bench.m6_2_crossover import M6_1_3CohortBaseline
+from vllm_grpc_bench.crossover import M6_1_3CohortBaseline
 from vllm_grpc_bench.sweep_types import (
     M6_2_NULL_ANCHOR_MAX_TOKENS,
     M6_2_VALIDATE_MAX_TOKENS_AXIS,
@@ -1038,7 +1038,7 @@ def load_m6_1_3_baseline(
     """Read the M6.1.3 artifact and return ``(per_cell_baseline, base_verdicts)``.
 
     ``per_cell_baseline[cell_id][cohort]`` is a
-    :class:`m6_2_crossover.M6_1_3CohortBaseline` (wall_p50_ms + CI half-width).
+    :class:`crossover.M6_1_3CohortBaseline` (wall_p50_ms + CI half-width).
     ``base_verdicts[cell_id]`` is the M6.1.3 classifier label.
 
     Source mapping:
@@ -1111,7 +1111,7 @@ def derive_anchor_drift_threshold(baseline_path: str | Path) -> float:
     cell the anchor block exercises) and return the MAX CI half-width across
     the cohorts that M6.1.3 published.
 
-    The drift-warning rule in :func:`m6_2_anchor_trajectory.compute_anchor_latency_trajectory`
+    The drift-warning rule in :func:`anchor_trajectory.compute_anchor_latency_trajectory`
     fires when the per-cohort ``max - min`` spread across anchor snapshots
     exceeds this threshold. Using the per-cohort MAX (rather than the per-cohort
     mean / min) is the most conservative choice: a tight cohort's threshold
@@ -1149,7 +1149,7 @@ def derive_anchor_baseline_p50_ms(baseline_path: str | Path) -> float:
     ``wall_p50_ms`` and return the MAX across the cohorts M6.1.3 published.
 
     Feeds B4's ``floor_fraction × baseline_p50_ms`` co-floor in
-    :func:`m6_2_anchor_trajectory.compute_anchor_latency_trajectory`. Using
+    :func:`anchor_trajectory.compute_anchor_latency_trajectory`. Using
     the per-cohort MAX matches :func:`derive_anchor_drift_threshold`'s
     conservative choice: B4's co-floor scales with the slowest cohort's
     baseline so a tight gRPC cohort's threshold doesn't fire on operationally-
@@ -1213,12 +1213,12 @@ def make_null_anchor_validation(
     published a baseline at the ``max_tokens`` value matched to the cell
     type (``chat_stream`` → ``max_tokens=50``; ``embed`` → ``max_tokens=10``).
 
-    Cross-checkable cells call :func:`m6_2_null_anchor.make_null_anchor` with
+    Cross-checkable cells call :func:`null_anchor.make_null_anchor` with
     the M6.1.3 wall_p50 + CI half-width. New-baseline cells call
-    :func:`m6_2_null_anchor.make_new_baseline_anchor` carrying only the M6.2
+    :func:`null_anchor.make_new_baseline_anchor` carrying only the M6.2
     wall_p50 (or ``None`` if the anchor block failed).
     """
-    from vllm_grpc_bench.m6_2_null_anchor import (
+    from vllm_grpc_bench.null_anchor import (
         make_new_baseline_anchor,
         make_null_anchor,
     )
@@ -1337,10 +1337,10 @@ def build_artifact(
     * ``integrity_warnings``: composed via
       :func:`m6_2_reporter.build_integrity_warnings`.
     """
-    from vllm_grpc_bench.m6_2_anchor_trajectory import (
+    from vllm_grpc_bench.anchor_trajectory import (
         compute_anchor_latency_trajectory,
     )
-    from vllm_grpc_bench.m6_2_crossover import (
+    from vllm_grpc_bench.crossover import (
         SubProbeBlockResult,
         compute_kv_pressure_inference,
         compute_per_cell_crossover,
@@ -1528,7 +1528,7 @@ async def _drive_main_sweep_and_sub_probe(
     Defaults to :func:`_stub_is_transient` (never retries) when omitted, so
     test paths preserve their existing behavior.
     """
-    from vllm_grpc_bench.m6_2_sub_probe import run_kv_pressure_sub_probe
+    from vllm_grpc_bench.sub_probe import run_kv_pressure_sub_probe
     from vllm_grpc_bench.sweep import (
         M6_2SweepInputs,
     )
@@ -1784,7 +1784,7 @@ async def _run_modal_backed(
 
 class _CheckpointMismatchAdapter(RuntimeError):
     """Local alias used by :func:`_resolve_resume_state` so the validate
-    layer doesn't leak ``m6_2_resume.CheckpointMismatchError`` into its
+    layer doesn't leak ``resume.CheckpointMismatchError`` into its
     public surface. The orchestrator catches the local class and renders
     its ``str(exc)`` to stderr; the exit code is rc=8 (distinct from the
     rc=5 / rc=6 / rc=7 used by gates / deploy / preemption budget)."""
@@ -1829,7 +1829,7 @@ def _resolve_resume_state(
 
     Raises :class:`_CheckpointMismatchAdapter` on integrity-gate failure;
     the orchestrator surfaces it and exits rc=8."""
-    from vllm_grpc_bench.m6_2_resume import (
+    from vllm_grpc_bench.resume import (
         RESUME_SCHEMA_VERSION,
         CheckpointHeader,
         CheckpointMismatchError,

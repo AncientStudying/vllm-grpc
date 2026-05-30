@@ -8,7 +8,7 @@ round-5 amendments:
 * FR-030 cohort-innermost block iteration over ``(cell × max_tokens ×
   cohort)``.
 * FR-031 4-hour anchor re-measurement via
-  :mod:`m6_2_anchor_trajectory.compute_anchor_block`.
+  :mod:`anchor_trajectory.compute_anchor_block`.
 * FR-032 per-block UTC timestamps + post-hoc
   ``iteration_discipline_verified`` machine check.
 * FR-033 in-window retry-once dispatch wrapper.
@@ -47,13 +47,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from vllm_grpc_bench.anchor_trajectory import (
+    AnchorRPCDriver,
+    compute_anchor_block,
+)
 from vllm_grpc_bench.corpus import (
     CompletionEmbedSample,
     RequestSample,
-)
-from vllm_grpc_bench.m6_2_anchor_trajectory import (
-    AnchorRPCDriver,
-    compute_anchor_block,
 )
 from vllm_grpc_bench.prompts import (
     ResolvedBlockInputs,
@@ -772,7 +772,7 @@ async def run_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
             # immediately after the in-memory append, so a crash between
             # blocks loses at most one in-flight block's worth of work.
             if inputs.checkpoint_path is not None:
-                from vllm_grpc_bench.m6_2_resume import append_measurement
+                from vllm_grpc_bench.resume import append_measurement
 
                 append_measurement(inputs.checkpoint_path, measurement)
             block_duration_s = asyncio.get_event_loop().time() - block_perf_start
@@ -1182,7 +1182,7 @@ async def _capture_anchor_block(
     for cohort, snapshot in new_snapshots.items():
         snapshots_by_cohort.setdefault(cohort, []).append(snapshot)
         if checkpoint_path is not None:
-            from vllm_grpc_bench.m6_2_resume import append_anchor
+            from vllm_grpc_bench.resume import append_anchor
 
             append_anchor(checkpoint_path, cohort, snapshot)
 

@@ -10,7 +10,7 @@ alongside or after the main 144-point sweep. Per FR-036:
 - Each block uses the **corpus regime** (ShareGPT for chat, Qwen3-8B
   prompt-embeddings for embed) via :func:`prompts.resolve_block_inputs`
   with ``ignore_eos_override=True``.
-- Sub-probe rows are emitted to :class:`m6_2_crossover.SubProbeBlockResult`
+- Sub-probe rows are emitted to :class:`crossover.SubProbeBlockResult`
   (NOT :class:`sweep_types.M6_2MeasurementPoint`) — they DO NOT pollute the
   latency budget table. Only the c=8 cell type matters for FR-017a's
   wall-clock-ratio inference; the sub-probe runs at the conventional ``c=8``
@@ -30,14 +30,14 @@ from vllm_grpc_bench.corpus import (
     CompletionEmbedSample,
     RequestSample,
 )
-from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
-from vllm_grpc_bench.m6_2_crossover import SubProbeBlockResult
+from vllm_grpc_bench.crossover import SubProbeBlockResult
 from vllm_grpc_bench.prompts import resolve_block_inputs
 from vllm_grpc_bench.sweep import BlockDispatcher, RetryClassifier
 from vllm_grpc_bench.sweep_types import (
     M6_2_SUB_PROBE_MAX_TOKENS,
     M6_2_SUB_PROBE_N,
 )
+from vllm_grpc_bench.types import COHORTS, CohortKind
 
 __all__ = [
     "SUB_PROBE_CELL_IDS",
@@ -65,17 +65,17 @@ def _now_iso_utc() -> str:
     return _dt.datetime.now(_dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def iter_sub_probe_tuples() -> list[tuple[str, int, M6_1_2CohortKind]]:
+def iter_sub_probe_tuples() -> list[tuple[str, int, CohortKind]]:
     """Full per-block dispatch sequence as ``(cell_type, max_tokens, cohort)``.
 
     FR-030 discipline within each ``(cell_type, max_tokens)`` tuple: all 4
     cohorts back-to-back before advancing. Returns the canonical 16-tuple
     sequence (2 cell-types × 2 caps × 4 cohorts).
     """
-    out: list[tuple[str, int, M6_1_2CohortKind]] = []
+    out: list[tuple[str, int, CohortKind]] = []
     for cell_type in SUB_PROBE_CELL_TYPES:
         for max_tokens in M6_2_SUB_PROBE_MAX_TOKENS:
-            for cohort in M6_1_2_COHORTS:
+            for cohort in COHORTS:
                 out.append((cell_type, max_tokens, cohort))
     return out
 
@@ -165,7 +165,7 @@ async def run_kv_pressure_sub_probe(
 
 def _build_sub_probe_row(
     *,
-    cohort: M6_1_2CohortKind,
+    cohort: CohortKind,
     cell_type: str,
     max_tokens: int,
     n: int,

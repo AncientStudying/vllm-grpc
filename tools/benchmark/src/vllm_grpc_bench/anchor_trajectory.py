@@ -20,7 +20,7 @@ Threshold rule (B2, 2026-05-23): the prior rule fired when ``max-min``
 exceeded M6.1.3's baseline CI half-width alone. M6.1.3's CIs are sub-ms for
 several cohorts so any natural intra-sweep variance tripped the gate. The
 new rule applies the same pooled-CI-with-floor formula as SC-004
-(see :mod:`m6_2_null_anchor`): ``threshold = max(m6_1_3_ci_hw,
+(see :mod:`null_anchor`): ``threshold = max(m6_1_3_ci_hw,
 snapshot_ci_hw, 10ms)`` where ``snapshot_ci_hw`` is the 95% normal-
 approximation CI half-width over the trajectory's p50 samples.
 """
@@ -32,8 +32,7 @@ import statistics
 from collections.abc import Callable
 from typing import Protocol
 
-from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
-from vllm_grpc_bench.m6_2_null_anchor import (
+from vllm_grpc_bench.null_anchor import (
     DRIFT_THRESHOLD_FLOOR_FRACTION,
     DRIFT_THRESHOLD_FLOOR_MS,
     pooled_ci_half_width,
@@ -43,6 +42,7 @@ from vllm_grpc_bench.sweep_types import (
     M6_2AnchorLatencySnapshot,
     M6_2AnchorLatencyTrajectory,
 )
+from vllm_grpc_bench.types import COHORTS, CohortKind
 
 __all__ = [
     "AnchorRPCDriver",
@@ -90,7 +90,7 @@ class AnchorRPCDriver(Protocol):
     async def __call__(
         self,
         *,
-        cohort: M6_1_2CohortKind,
+        cohort: CohortKind,
         n: int,
         base_seed: int,
         seed_offset: int,
@@ -116,7 +116,7 @@ def _percentile(samples: list[float], p: float) -> float:
 
 
 async def compute_anchor_block(
-    cohorts: list[M6_1_2CohortKind],
+    cohorts: list[CohortKind],
     rpc_driver: AnchorRPCDriver,
     base_seed: int,
     sweep_hour_mark: float,
@@ -126,7 +126,7 @@ async def compute_anchor_block(
     n: int = 20,
     seed_offset: int = 0,
     now_iso_utc: Callable[[], str] = _now_iso_utc,
-) -> dict[M6_1_2CohortKind, M6_2AnchorLatencySnapshot]:
+) -> dict[CohortKind, M6_2AnchorLatencySnapshot]:
     """Run one anchor block across all 4 cohorts at the given sweep-hour mark.
 
     ``cell_id`` and ``max_tokens`` are conventionally fixed at chat_stream_c1
@@ -141,7 +141,7 @@ async def compute_anchor_block(
     """
     del cell_id  # currently fixed; reserved for future-milestone overrides
     del max_tokens  # currently fixed at the M6.1.x synthetic default
-    snapshots: dict[M6_1_2CohortKind, M6_2AnchorLatencySnapshot] = {}
+    snapshots: dict[CohortKind, M6_2AnchorLatencySnapshot] = {}
     for cohort in cohorts:
         samples = await rpc_driver(
             cohort=cohort,
@@ -162,14 +162,14 @@ async def compute_anchor_block(
 
 
 def compute_anchor_latency_trajectory(
-    snapshots_by_cohort: dict[M6_1_2CohortKind, list[M6_2AnchorLatencySnapshot]],
+    snapshots_by_cohort: dict[CohortKind, list[M6_2AnchorLatencySnapshot]],
     m6_1_3_baseline_ci_half_width: float,
     *,
     baseline_p50_ms: float = 0.0,
     floor_ms: float = DRIFT_THRESHOLD_FLOOR_MS,
     floor_fraction: float = DRIFT_THRESHOLD_FLOOR_FRACTION,
     warmup_suppression_hours: float = WARMUP_SUPPRESSION_HOURS,
-) -> dict[M6_1_2CohortKind, M6_2AnchorLatencyTrajectory]:
+) -> dict[CohortKind, M6_2AnchorLatencyTrajectory]:
     """Reduce the per-cohort sequence of snapshots into trajectory entities,
     applying the round-8 B4 + C1 amendments.
 
@@ -192,7 +192,7 @@ def compute_anchor_latency_trajectory(
     list (the artifact-narrative reader can still see the cold-start
     p50/p95/p99 row) — only the drift computation excludes them.
     """
-    out: dict[M6_1_2CohortKind, M6_2AnchorLatencyTrajectory] = {}
+    out: dict[CohortKind, M6_2AnchorLatencyTrajectory] = {}
     for cohort, snapshots in snapshots_by_cohort.items():
         post_warmup = [s for s in snapshots if s.sweep_hour_mark >= warmup_suppression_hours]
         if len(post_warmup) < 2:
@@ -224,7 +224,7 @@ def compute_anchor_latency_trajectory(
 
 
 def compute_insufficient_snapshots_header_fired(
-    trajectories: dict[M6_1_2CohortKind, M6_2AnchorLatencyTrajectory],
+    trajectories: dict[CohortKind, M6_2AnchorLatencyTrajectory],
 ) -> bool:
     """C1 soft-diagnostic header rule: fires when any cohort carries
     ``insufficient_post_warmup_snapshots=True``.
@@ -238,7 +238,7 @@ def compute_insufficient_snapshots_header_fired(
 
 
 def compute_intra_sweep_drift_header_fired(
-    trajectories: dict[M6_1_2CohortKind, M6_2AnchorLatencyTrajectory],
+    trajectories: dict[CohortKind, M6_2AnchorLatencyTrajectory],
 ) -> bool:
     """SC-016: fire the sweep-level ``intra_sweep_latency_drift`` integrity
     header when ≥ 2 of 4 cohorts carry per-cohort ``latency_drift_warning``.
@@ -251,6 +251,6 @@ def compute_intra_sweep_drift_header_fired(
     return drifted >= M6_2_LATENCY_DRIFT_COHORT_COUNT_THRESHOLD
 
 
-def default_cohorts() -> list[M6_1_2CohortKind]:
+def default_cohorts() -> list[CohortKind]:
     """Return a fresh list of the 4 canonical M6.1.2 cohorts."""
-    return list(M6_1_2_COHORTS)
+    return list(COHORTS)

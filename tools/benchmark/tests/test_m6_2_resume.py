@@ -25,7 +25,7 @@ from typing import Any, cast
 
 import pytest
 from vllm_grpc_bench.m6_1_2_types import M6_1_2CohortKind
-from vllm_grpc_bench.m6_2_resume import (
+from vllm_grpc_bench.resume import (
     RESUME_SCHEMA_VERSION,
     CheckpointHeader,
     CheckpointMismatchError,

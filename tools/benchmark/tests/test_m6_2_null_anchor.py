@@ -1,14 +1,14 @@
 """T020 — FR-012 / FR-013 null-anchor verdict + FR-014 sweep-level header.
 
 Threshold model: pooled-CI-with-floor (B2, 2026-05-23). See
-:mod:`vllm_grpc_bench.m6_2_null_anchor` for the formula. Tests use small
+:mod:`vllm_grpc_bench.null_anchor` for the formula. Tests use small
 ``floor_ms`` overrides where they need to exercise pure band semantics
 without the 10 ms operational floor masking the boundary.
 """
 
 from __future__ import annotations
 
-from vllm_grpc_bench.m6_2_null_anchor import (
+from vllm_grpc_bench.null_anchor import (
     DRIFT_THRESHOLD_FLOOR_FRACTION,
     DRIFT_THRESHOLD_FLOOR_MS,
     DRIFT_THRESHOLD_WARN_MULTIPLIER,

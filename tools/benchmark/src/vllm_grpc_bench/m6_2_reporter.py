@@ -36,17 +36,17 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from vllm_grpc_bench.anchor_trajectory import (
+    compute_insufficient_snapshots_header_fired,
+    compute_intra_sweep_drift_header_fired,
+)
 from vllm_grpc_bench.m6_1_2_types import (
     M6_1_2CohortKind,
     M6_1_2NetworkPath,
     M6_1_2NetworkPathError,
 )
 from vllm_grpc_bench.m6_1_types import M6_1_CELLS
-from vllm_grpc_bench.m6_2_anchor_trajectory import (
-    compute_insufficient_snapshots_header_fired,
-    compute_intra_sweep_drift_header_fired,
-)
-from vllm_grpc_bench.m6_2_null_anchor import (
+from vllm_grpc_bench.null_anchor import (
     compute_null_anchor_drift_header_fired,
 )
 from vllm_grpc_bench.sweep import (
@@ -723,7 +723,7 @@ def _render_protocol_crossover(
 ) -> list[str]:
     """Section 4 — per-cell crossover threshold from the symmetric mean-in-CI
     rule (User Story 2). Renders the records produced by
-    :func:`m6_2_crossover.compute_per_cell_crossover` (US2 task T034 fills the
+    :func:`crossover.compute_per_cell_crossover` (US2 task T034 fills the
     artifact field; this reporter section consumes whatever's there).
     """
     lines: list[str] = ["## Protocol crossover threshold", ""]

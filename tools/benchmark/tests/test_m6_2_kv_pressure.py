@@ -1,6 +1,6 @@
 """T041 — M6.2 KV-pressure inference unit tests (FR-017a + round-5 amendment).
 
-Exercises :func:`m6_2_crossover.compute_kv_pressure_inference` directly with
+Exercises :func:`crossover.compute_kv_pressure_inference` directly with
 synthetic sub-probe rows. Covers:
 
 - ``R > 2.2`` → ``kv_pressure_inferred_<cell_type>``.
@@ -16,11 +16,11 @@ synthetic sub-probe rows. Covers:
 
 from __future__ import annotations
 
-from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS
-from vllm_grpc_bench.m6_2_crossover import (
+from vllm_grpc_bench.crossover import (
     SubProbeBlockResult,
     compute_kv_pressure_inference,
 )
+from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS
 from vllm_grpc_bench.sweep_types import M6_2_SUB_PROBE_N
 
 

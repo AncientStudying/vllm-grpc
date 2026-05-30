@@ -27,12 +27,12 @@ side) from firing on noise.
 
 from __future__ import annotations
 
-from vllm_grpc_bench.m6_1_2_types import M6_1_2CohortKind
 from vllm_grpc_bench.sweep_types import (
     M6_2_NULL_ANCHOR_DRIFT_COUNT_THRESHOLD,
     M6_2DriftVerdict,
     M6_2NullAnchor,
 )
+from vllm_grpc_bench.types import CohortKind
 
 __all__ = [
     "DRIFT_THRESHOLD_FLOOR_FRACTION",
@@ -135,7 +135,7 @@ def compute_drift_verdict(
 def make_null_anchor(
     *,
     cell_id: str,
-    cohort: M6_1_2CohortKind,
+    cohort: CohortKind,
     max_tokens: int,
     m6_2_wall_p50_ms: float | None,
     m6_1_3_wall_p50_ms: float,
@@ -191,7 +191,7 @@ def make_null_anchor(
 def make_new_baseline_anchor(
     *,
     cell_id: str,
-    cohort: M6_1_2CohortKind,
+    cohort: CohortKind,
     max_tokens: int,
     m6_2_wall_p50_ms: float | None,
 ) -> M6_2NullAnchor:

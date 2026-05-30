@@ -49,7 +49,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
 from vllm_grpc_bench.sweep_types import (
     M6_2AnchorLatencySnapshot,
     M6_2MeasurementPoint,
@@ -57,6 +56,7 @@ from vllm_grpc_bench.sweep_types import (
     M6_2PromptSource,
     M6_2SweepMode,
 )
+from vllm_grpc_bench.types import COHORTS, CohortKind
 
 __all__ = [
     "RESUME_SCHEMA_VERSION",
@@ -170,7 +170,7 @@ def append_measurement(path: Path, measurement: M6_2MeasurementPoint) -> None:
 
 def append_anchor(
     path: Path,
-    cohort: M6_1_2CohortKind,
+    cohort: CohortKind,
     snapshot: M6_2AnchorLatencySnapshot,
 ) -> None:
     """Append one anchor snapshot JSON line + fsync.
@@ -192,7 +192,7 @@ class _LoadedCheckpoint:
 
     header: CheckpointHeader
     measurements: list[M6_2MeasurementPoint]
-    anchor_snapshots: dict[M6_1_2CohortKind, list[M6_2AnchorLatencySnapshot]]
+    anchor_snapshots: dict[CohortKind, list[M6_2AnchorLatencySnapshot]]
 
 
 def load_checkpoint(
@@ -200,7 +200,7 @@ def load_checkpoint(
 ) -> tuple[
     CheckpointHeader,
     list[M6_2MeasurementPoint],
-    dict[M6_1_2CohortKind, list[M6_2AnchorLatencySnapshot]],
+    dict[CohortKind, list[M6_2AnchorLatencySnapshot]],
 ]:
     """Read every line of ``path`` and rebuild ``(header, measurements,
     anchor_snapshots)``.
@@ -223,7 +223,7 @@ def load_checkpoint(
 
     header: CheckpointHeader | None = None
     measurements: list[M6_2MeasurementPoint] = []
-    anchor_snapshots: dict[M6_1_2CohortKind, list[M6_2AnchorLatencySnapshot]] = {}
+    anchor_snapshots: dict[CohortKind, list[M6_2AnchorLatencySnapshot]] = {}
 
     with open(path, encoding="utf-8") as f:
         for line_no, raw in enumerate(f, start=1):
@@ -299,7 +299,7 @@ def _parse_measurement(
     try:
         return M6_2MeasurementPoint(
             cell_id=str(fields["cell_id"]),
-            cohort=cast(M6_1_2CohortKind, str(fields["cohort"])),
+            cohort=cast(CohortKind, str(fields["cohort"])),
             max_tokens=int(fields["max_tokens"]),
             n_rpcs=int(fields["n_rpcs"]),
             wall_p50_ms=_opt_float(fields.get("wall_p50_ms")),
@@ -330,10 +330,10 @@ def _parse_measurement(
 
 def _parse_anchor(
     payload: dict[str, Any], *, path: Path, line_no: int
-) -> tuple[M6_1_2CohortKind, M6_2AnchorLatencySnapshot]:
+) -> tuple[CohortKind, M6_2AnchorLatencySnapshot]:
     """Reconstruct ``(cohort, M6_2AnchorLatencySnapshot)`` from a JSON payload."""
     try:
-        cohort = cast(M6_1_2CohortKind, str(payload["cohort"]))
+        cohort = cast(CohortKind, str(payload["cohort"]))
         snapshot = M6_2AnchorLatencySnapshot(
             wall_p50_ms=float(payload["wall_p50_ms"]),
             wall_p95_ms=float(payload["wall_p95_ms"]),
@@ -420,7 +420,7 @@ def validate_checkpoint_against_current_run(
 
 def completed_block_keys(
     measurements: list[M6_2MeasurementPoint],
-) -> frozenset[tuple[str, M6_1_2CohortKind, int]]:
+) -> frozenset[tuple[str, CohortKind, int]]:
     """Build the lookup set used by the sweep loop's skip predicate.
 
     Phase 1: every measurement in the checkpoint (success OR failed) is
@@ -430,12 +430,12 @@ def completed_block_keys(
 
 
 def normalised_anchor_snapshots(
-    snapshots: dict[M6_1_2CohortKind, list[M6_2AnchorLatencySnapshot]],
-) -> dict[M6_1_2CohortKind, list[M6_2AnchorLatencySnapshot]]:
+    snapshots: dict[CohortKind, list[M6_2AnchorLatencySnapshot]],
+) -> dict[CohortKind, list[M6_2AnchorLatencySnapshot]]:
     """Return a copy of ``snapshots`` with every M6.1.2 cohort key
     present (empty list when no snapshot was captured for that cohort).
 
     The orchestrator's anchor-trajectory compute expects every cohort key
     to exist even when empty; pre-population from a partial checkpoint
     must preserve that shape."""
-    return {cohort: list(snapshots.get(cohort, [])) for cohort in M6_1_2_COHORTS}
+    return {cohort: list(snapshots.get(cohort, [])) for cohort in COHORTS}
