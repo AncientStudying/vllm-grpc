@@ -6,7 +6,7 @@ import asyncio
 from typing import Any
 
 import pytest
-from vllm_grpc_bench.m6_2_prompt_source import ResolvedBlockInputs
+from vllm_grpc_bench.prompts import ResolvedBlockInputs
 from vllm_grpc_bench.sweep import (
     BlockDispatchResult,
     run_block_with_retry,

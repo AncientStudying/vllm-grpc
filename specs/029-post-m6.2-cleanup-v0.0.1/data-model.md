@@ -26,6 +26,8 @@ The "entities" of a refactor are **modules**, **symbols**, **tests**, **CLI flag
 | `m6_2_null_anchor.py` | `null_anchor.py` | — |
 | `m6_2_anchor_trajectory.py` | `anchor_trajectory.py` | — |
 | `m6_2_sub_probe.py` | `sub_probe.py` | — |
+| `m6_2_types.py` | `sweep_types.py` | — (own sweep-domain types home — T015pre; cohort/cloud symbols alias from `types`, network-probe dataclasses → `network_probe` in T014) |
+| `m6_2_prompt_source.py` | `prompts.py` (**merged**) | resolver + corpus loaders folded into the prompt home — T015pre; module deleted, count 88→87 |
 | `m6_1_1_timing.py` | `timing.py` | (= Entity 1 timing home) |
 | `m6_1_2_network_probe.py` | `network_probe.py` | — |
 | `m6_engine_cost.py` | `engine_cost.py` | single de-prefixed home for cost parsers (imported by `rpc_driver`; not a merge candidate) |

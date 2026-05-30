@@ -8,7 +8,7 @@ alongside or after the main 144-point sweep. Per FR-036:
 - Each block dispatches ``n=M6_2_SUB_PROBE_N`` (20) RPCs at
   ``ignore_eos=True`` so the engine runs to the forced cap on every RPC.
 - Each block uses the **corpus regime** (ShareGPT for chat, Qwen3-8B
-  prompt-embeddings for embed) via :func:`m6_2_prompt_source.resolve_block_inputs`
+  prompt-embeddings for embed) via :func:`prompts.resolve_block_inputs`
   with ``ignore_eos_override=True``.
 - Sub-probe rows are emitted to :class:`m6_2_crossover.SubProbeBlockResult`
   (NOT :class:`sweep_types.M6_2MeasurementPoint`) — they DO NOT pollute the
@@ -32,7 +32,7 @@ from vllm_grpc_bench.corpus import (
 )
 from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
 from vllm_grpc_bench.m6_2_crossover import SubProbeBlockResult
-from vllm_grpc_bench.m6_2_prompt_source import resolve_block_inputs
+from vllm_grpc_bench.prompts import resolve_block_inputs
 from vllm_grpc_bench.sweep import BlockDispatcher, RetryClassifier
 from vllm_grpc_bench.sweep_types import (
     M6_2_SUB_PROBE_MAX_TOKENS,
@@ -112,7 +112,7 @@ async def run_kv_pressure_sub_probe(
     transient errors retry once in-window; non-transient errors fail the
     block immediately (``failed_reason`` is populated).
 
-    Each block calls :func:`m6_2_prompt_source.resolve_block_inputs` with
+    Each block calls :func:`prompts.resolve_block_inputs` with
     ``ignore_eos_override=True`` so the prompt-source resolver returns the
     corpus regime + ``ignore_eos=True`` flag the wire builder will translate.
     """

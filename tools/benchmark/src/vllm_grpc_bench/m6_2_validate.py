@@ -560,7 +560,7 @@ def build_modal_block_dispatcher(
       stripe per-RPC seeds within the block).
     * Reads ``prompt`` (chat) / ``prompt_embeds_override`` (embed) +
       ``ignore_eos`` from the :class:`ResolvedBlockInputs` produced by
-      :mod:`m6_2_prompt_source`.
+      :mod:`prompts`.
     * Awaits all ``n`` RPCs in parallel via :func:`asyncio.gather`.
     * Aggregates results into :class:`BlockDispatchResult`: per-RPC wall
       times for successful RPCs, the first non-None ``failure_reason`` for
@@ -599,7 +599,7 @@ def build_modal_block_dispatcher(
         dispatcher.preemption_events  # int — total successful recoveries
         dispatcher.preemption_budget  # int — configured cap
     """
-    from vllm_grpc_bench.m6_2_prompt_source import ResolvedBlockInputs
+    from vllm_grpc_bench.prompts import ResolvedBlockInputs
     from vllm_grpc_bench.sweep import BlockDispatchResult, _progress
 
     # Mutable holder so the recovery loop can swap in a refreshed driver
@@ -1932,8 +1932,8 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
     * Reporter write via :func:`m6_2_reporter.write_m6_2_report`.
     """
     from vllm_grpc_bench.corpus import CorpusDriftError
-    from vllm_grpc_bench.m6_2_prompt_source import load_chat_corpus, load_embed_corpus
     from vllm_grpc_bench.m6_2_reporter import write_m6_2_report
+    from vllm_grpc_bench.prompts import load_chat_corpus, load_embed_corpus
     from vllm_grpc_bench.sweep import (
         M6_2SweepInputs,
         gate_corpus_shas,

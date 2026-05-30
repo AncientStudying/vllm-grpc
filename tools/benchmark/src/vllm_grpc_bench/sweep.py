@@ -18,7 +18,7 @@ round-5 amendments:
 * SC-018 corpus-SHA validation gate at sweep start (``CorpusDriftError``
   aborts).
 * Round-5 three-regime prompt-source dispatch via
-  :mod:`m6_2_prompt_source.resolve_block_inputs`.
+  :mod:`prompts.resolve_block_inputs`.
 
 Removes M6.1.3's multi-run / between-run variance / Phase B / audit-pooling
 logic (those concerns don't recur in M6.2's headline deliverable).
@@ -55,7 +55,7 @@ from vllm_grpc_bench.m6_2_anchor_trajectory import (
     AnchorRPCDriver,
     compute_anchor_block,
 )
-from vllm_grpc_bench.m6_2_prompt_source import (
+from vllm_grpc_bench.prompts import (
     ResolvedBlockInputs,
     load_chat_corpus,
     load_chat_corpus_provenance,

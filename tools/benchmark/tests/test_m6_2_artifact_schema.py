@@ -298,7 +298,7 @@ def test_prompt_corpus_idx_is_none_iff_synthetic_regime() -> None:
                 # prompt_corpus_idx populated when produced by the
                 # orchestrator; in this synthetic fixture we don't exercise
                 # the corpus regime side, which is covered separately by
-                # test_m6_2_prompt_source.
+                # test_prompts.
 
 
 # --- run_meta schema --------------------------------------------------------

@@ -19,7 +19,7 @@ from vllm_grpc_bench.corpus import (
     CorpusDriftError,
     RequestSample,
 )
-from vllm_grpc_bench.m6_2_prompt_source import (
+from vllm_grpc_bench.prompts import (
     load_chat_corpus,
     load_embed_corpus,
     resolve_block_inputs,

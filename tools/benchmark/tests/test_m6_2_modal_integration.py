@@ -36,7 +36,6 @@ import httpx
 import pytest
 from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
 from vllm_grpc_bench.m6_1_types import M6_1Cell
-from vllm_grpc_bench.m6_2_prompt_source import ResolvedBlockInputs
 from vllm_grpc_bench.m6_2_validate import (
     build_modal_anchor_dispatcher,
     build_modal_block_dispatcher,
@@ -44,6 +43,7 @@ from vllm_grpc_bench.m6_2_validate import (
     is_transient_modal_error,
     make_null_anchor_validation,
 )
+from vllm_grpc_bench.prompts import ResolvedBlockInputs
 from vllm_grpc_bench.sweep import BlockDispatchResult
 
 # --- Fake RPC driver --------------------------------------------------------
