@@ -39,6 +39,19 @@ Multi-package uv workspace (per plan.md). Each distributable lives under `packag
 - [ ] T002 Capture the green baseline: run `make proto` then
   `uv run pytest packages/proxy/tests packages/frontend/tests packages/client/tests tools/benchmark/tests -q`
   and record that the suite passes BEFORE changes, as the comparison point for SC-009.
+- [ ] T002a Scan **all four** published packages' own source for deprecated-API usage to build the
+  remediation worklist (FR-021): grep their `src/` for known-deprecated vLLM/grpc/fastapi/protobuf
+  calls and run each package's code paths under `python -W error::DeprecationWarning`. The expected
+  finding is the frontend's V0 `AsyncLLMEngine`/`AsyncEngineArgs` path (remediated in T016); record
+  any additional findings in `gen`/`proxy`/`client` for in-scope remediation (`gen` is generated
+  stubs — expected clean). Re-run after remediation to confirm zero deprecation warnings originate
+  from any of the four packages' own code (FR-023/SC-010).
+- [ ] T002b Verify distribution-name availability **read-only, no upload** (Edge case "Name already
+  claimed"): query both indexes for each of `vllm-grpc-gen`, `vllm-grpc-proxy`,
+  `vllm-grpc-frontend`, `vllm-grpc-client` (e.g. HTTP GET `https://pypi.org/pypi/<name>/json` and
+  `https://test.pypi.org/pypi/<name>/json`, expecting 404 = available, or `uv pip index versions`).
+  If any name is already claimed by a third party, **escalate** (rename/reserve) rather than baking a
+  colliding name into the publish-ready state. Claims/reserves nothing (FR-020/SC-008).
 
 ---
 
@@ -260,6 +273,12 @@ no-upload / green-suite gates.
   --package vllm-grpc-$p; done` (8 artifacts, SC-001); `uvx twine check packages/*/dist/*` (SC-005);
   grep all four `pyproject.toml` to confirm no third-party constraint carries an upper cap
   (FR-006a).
+- [ ] T030a Assert metadata **completeness** across all four built distributions (SC-006 — beyond
+  what `twine check` validates): parse each wheel's `METADATA` and confirm the presence of
+  `Summary` (description), `Keywords`, `Author`/`Author-Email`, `License` (MIT), all four
+  `Project-URL` entries (Homepage, Repository, Issues, Changelog), a `Description`/long-description
+  from the package's own README, and required classifiers (AI topic + `Programming Language ::
+  Python :: 3.12` + MIT). Fail if any field is missing for any package (FR-001/SC-006).
 - [ ] T031 Execute `quickstart.md` end-to-end (steps 1–8) and confirm the no-upload invariant: no
   `twine upload` / `uv publish` / publish job ran, and no distribution name was claimed on any
   external index (FR-014a/FR-020/SC-008).
@@ -300,6 +319,10 @@ no-upload / green-suite gates.
   frontend smoke (T019); both source edits before the lint + `mypy --strict` gate (T019a).
 - All four `pyproject.toml` dependency edits (T003, T008, T012, T015) before the `uv.lock` refresh
   (T026a); the lock refresh before the consolidated suite/build gates (T029, T030).
+- Deprecation scan (T002a) builds the remediation worklist before T016, and is re-run after T016 to
+  confirm all four packages are warning-free (FR-023). Name-availability check (T002b) is a
+  read-only pre-flight, independent of everything else. Metadata-completeness assertion (T030a)
+  runs after the final build (T030).
 
 ### Parallel Opportunities
 
