@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from vllm_grpc_bench.__main__ import _build_parser, _normalize_m6_1_3_modifier_defaults
+from vllm_grpc_bench.engine_cost import EngineCostSpan
 from vllm_grpc_bench.m6_1_2_types import (
     M6_1_2CohortKind,
     M6_1_2NetworkPath,
@@ -37,7 +38,6 @@ from vllm_grpc_bench.m6_1_3_sweep import (
 )
 from vllm_grpc_bench.m6_1_3_validate import run_m6_1_3
 from vllm_grpc_bench.m6_1_types import M6_1Cell
-from vllm_grpc_bench.m6_engine_cost import EngineCostSpan
 from vllm_grpc_bench.m6_sweep import RPCResult
 
 # --- Stub driver -----------------------------------------------------------

@@ -19,6 +19,7 @@ import asyncio
 import json
 from pathlib import Path
 
+from vllm_grpc_bench.engine_cost import EngineCostSpan
 from vllm_grpc_bench.m6_1_2_sweep import (
     M6_1_2RPCDriver,
     M6_1_2SweepConfig,
@@ -31,7 +32,6 @@ from vllm_grpc_bench.m6_1_2_types import (
     M6_1_2NetworkPathHop,
 )
 from vllm_grpc_bench.m6_1_types import M6_1Cell
-from vllm_grpc_bench.m6_engine_cost import EngineCostSpan
 from vllm_grpc_bench.m6_sweep import RPCResult
 
 

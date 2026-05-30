@@ -12,8 +12,8 @@ are absent (best-effort fallback per Research R-3).
 
 from __future__ import annotations
 
+from vllm_grpc_bench.engine_cost import parse_grpc_trailing_metadata, parse_rest_response
 from vllm_grpc_bench.m6_1_1_timing import extract_grpc_timings, extract_rest_timings
-from vllm_grpc_bench.m6_engine_cost import parse_grpc_trailing_metadata, parse_rest_response
 
 # --- REST: M6.1.1 fields don't perturb M6 engine_cost extraction -----------
 

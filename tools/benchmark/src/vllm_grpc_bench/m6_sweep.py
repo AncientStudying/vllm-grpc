@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from vllm_grpc_bench.ci import estimate
-from vllm_grpc_bench.m6_engine_cost import aggregate_engine_cost_per_cell
+from vllm_grpc_bench.engine_cost import aggregate_engine_cost_per_cell
 from vllm_grpc_bench.m6_seed import (
     DEFAULT_M6_BASE_SEED,
     MeasurementRpcIndexIterator,

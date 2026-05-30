@@ -1,4 +1,4 @@
-"""M6 engine-cost extraction + aggregation (T011 / T012 / T045).
+"""Engine-cost extraction + aggregation (v0.0.1 home).
 
 Implements the harness-side parsers for the gRPC trailing-metadata and REST
 JSON-payload wire formats published by the gRPC frontend and the REST shim
@@ -6,21 +6,55 @@ per ``contracts/instrumentation.md``. Also exposes the pairwise drift
 warning function used by the verdict classifier (FR-014 sub-clause) and the
 per-cell engine-cost aggregator used by the JSON companion's
 ``engine_cost_baseline[]`` section.
+
+This is the single de-prefixed home for the cost parsers (imported by
+``rpc_driver``). It is also the home for the path-discriminated cost
+dataclasses (``EngineCostSpan``, ``EngineCostAggregate``): hosting them here
+keeps the module a dependency leaf (it imports only :mod:`ci`), which avoids
+the ``engine_cost -> types -> m6_sweep -> engine_cost`` import cycle that a
+types-home facade would introduce. The legacy ``m6_types`` re-exports these
+two dataclasses from here so existing consumers keep a single nominal type.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from vllm_grpc_bench.ci import estimate
-from vllm_grpc_bench.m6_types import (
-    M6_DRIFT_WARNING_PCT,
-    EngineCostAggregate,
-    EngineCostSpan,
-    M6CohortKind,
-    M6Path,
-)
+
+# --- Cost types (own home — keeps this module a dependency leaf) -------------
+
+M6Path = Literal["embed", "chat_stream"]
+M6CohortKind = Literal["rest_https_edge", "default_grpc", "tuned_grpc_multiplexed"]
+M6_DRIFT_WARNING_PCT: float = 0.10  # FR-014 sub-clause (>10%)
+
+
+@dataclass(frozen=True)
+class EngineCostSpan:
+    """Server-instrumented per-RPC engine cost (FR-008). Path-discriminated.
+
+    Validation: ``engine_forward_ms is not None`` XOR
+    (``engine_ttft_ms is not None`` AND ``engine_tpot_ms is not None``).
+    """
+
+    engine_forward_ms: float | None = None
+    engine_ttft_ms: float | None = None
+    engine_tpot_ms: float | None = None
+
+
+@dataclass(frozen=True)
+class EngineCostAggregate:
+    """Cohort-level mean engine cost (path-discriminated)."""
+
+    engine_forward_mean_ms: float | None = None
+    engine_forward_ci_half_width_ms: float | None = None
+    engine_ttft_mean_ms: float | None = None
+    engine_ttft_ci_half_width_ms: float | None = None
+    engine_tpot_mean_ms: float | None = None
+    engine_tpot_ci_half_width_ms: float | None = None
+
 
 # --- Parsers (T011) ----------------------------------------------------------
 

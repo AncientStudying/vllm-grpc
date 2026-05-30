@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vllm_grpc_bench.m6_engine_cost import (
+from vllm_grpc_bench.engine_cost import (
     aggregate_engine_cost_per_cell,
     compute_drift_warning,
     parse_grpc_trailing_metadata,

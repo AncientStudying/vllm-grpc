@@ -237,7 +237,7 @@ async def _run_measurement_m6_1(
 def _make_incomplete_cell_aggregates(
     cell: M6_1Cell,
 ) -> dict[M6_1CohortKind, M6_1PerCohortAggregate]:
-    from vllm_grpc_bench.m6_engine_cost import aggregate_engine_cost_per_cell
+    from vllm_grpc_bench.engine_cost import aggregate_engine_cost_per_cell
 
     out: dict[M6_1CohortKind, M6_1PerCohortAggregate] = {}
     for kind in M6_1_COHORTS:

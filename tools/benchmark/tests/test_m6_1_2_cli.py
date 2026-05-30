@@ -224,8 +224,8 @@ def test_run_m6_1_2_modal_backed_success(monkeypatch: pytest.MonkeyPatch, tmp_pa
     import json
     from contextlib import asynccontextmanager
 
+    from vllm_grpc_bench.engine_cost import EngineCostSpan
     from vllm_grpc_bench.m6_1_types import M6_1Cell
-    from vllm_grpc_bench.m6_engine_cost import EngineCostSpan
     from vllm_grpc_bench.m6_sweep import RPCResult
     from vllm_grpc_bench.modal_endpoint import RESTGRPCEndpoints
 

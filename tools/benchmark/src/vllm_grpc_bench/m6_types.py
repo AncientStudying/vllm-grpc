@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from vllm_grpc_bench.engine_cost import EngineCostAggregate, EngineCostSpan
 from vllm_grpc_bench.m3_types import RTTRecord
 
 # --- Cell-iteration constants (T003) -----------------------------------------
@@ -90,19 +91,6 @@ class M6Cell:
 
 
 @dataclass(frozen=True)
-class EngineCostSpan:
-    """Server-instrumented per-RPC engine cost (FR-008). Path-discriminated.
-
-    Validation: ``engine_forward_ms is not None`` XOR
-    (``engine_ttft_ms is not None`` AND ``engine_tpot_ms is not None``).
-    """
-
-    engine_forward_ms: float | None = None
-    engine_ttft_ms: float | None = None
-    engine_tpot_ms: float | None = None
-
-
-@dataclass(frozen=True)
 class M6RPCMeasurement:
     rpc_index: int
     cell: M6Cell
@@ -117,18 +105,6 @@ class M6RPCMeasurement:
 
 
 # --- Aggregate entities ------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class EngineCostAggregate:
-    """Cohort-level mean engine cost (path-discriminated)."""
-
-    engine_forward_mean_ms: float | None = None
-    engine_forward_ci_half_width_ms: float | None = None
-    engine_ttft_mean_ms: float | None = None
-    engine_ttft_ci_half_width_ms: float | None = None
-    engine_tpot_mean_ms: float | None = None
-    engine_tpot_ci_half_width_ms: float | None = None
 
 
 @dataclass(frozen=True)

@@ -35,6 +35,10 @@ from vllm_grpc_bench.channel_config import (
     ChannelConfig,
     _client_kwargs,
 )
+from vllm_grpc_bench.engine_cost import (
+    parse_grpc_trailing_metadata,
+    parse_rest_response,
+)
 from vllm_grpc_bench.m3_types import RTTRecord
 from vllm_grpc_bench.m6_1_2_types import M6_1_2CohortKind
 from vllm_grpc_bench.m6_1_seed import build_torch_generator_for_rpc
@@ -44,10 +48,6 @@ from vllm_grpc_bench.m6_1_types import (
     EngineCostSpan,
     M6_1Cell,
     M6_1CohortKind,
-)
-from vllm_grpc_bench.m6_engine_cost import (
-    parse_grpc_trailing_metadata,
-    parse_rest_response,
 )
 from vllm_grpc_bench.m6_rpc_driver import (
     _build_chat_grpc_request,

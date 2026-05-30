@@ -49,11 +49,11 @@ from vllm_grpc_bench.channel_config import (
     ChannelConfig,
     _client_kwargs,
 )
-from vllm_grpc_bench.m3_types import RTTRecord
-from vllm_grpc_bench.m6_engine_cost import (
+from vllm_grpc_bench.engine_cost import (
     parse_grpc_trailing_metadata,
     parse_rest_response,
 )
+from vllm_grpc_bench.m3_types import RTTRecord
 from vllm_grpc_bench.m6_sweep import RPCDriver, RPCResult
 from vllm_grpc_bench.m6_types import (
     M6_CHAT_MAX_TOKENS,

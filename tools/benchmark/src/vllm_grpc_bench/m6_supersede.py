@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from vllm_grpc_bench.m6_engine_cost import compute_drift_warning
+from vllm_grpc_bench.engine_cost import compute_drift_warning
 from vllm_grpc_bench.m6_types import (
     M6_BURIED_BY_ENGINE_FACTOR,
     M6_CELL_COMPLETE_FLOOR,
