@@ -535,9 +535,7 @@ class M6_2SweepInputs:
     run. The main loop seeds its ``measurements`` list with these before
     iterating, and skips any ``(cell, cohort, max_tokens)`` block already
     present. ``None`` = no resume; start fresh."""
-    preloaded_anchor_snapshots: dict[CohortKind, list[M6_2AnchorLatencySnapshot]] | None = (
-        None
-    )
+    preloaded_anchor_snapshots: dict[CohortKind, list[M6_2AnchorLatencySnapshot]] | None = None
     """Phase-1 resume: pre-populated anchor snapshots from a prior
     partial run. ``None`` = no resume; start fresh."""
     wall_clock_start_utc_override: str | None = None
@@ -651,9 +649,7 @@ async def run_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
     completed: frozenset[tuple[str, CohortKind, int]] = frozenset(
         (m.cell_id, m.cohort, m.max_tokens) for m in measurements
     )
-    network_paths_trajectory: dict[CohortKind, list[Any]] = {
-        cohort: [] for cohort in COHORTS
-    }
+    network_paths_trajectory: dict[CohortKind, list[Any]] = {cohort: [] for cohort in COHORTS}
 
     expected_blocks = _count_expected_blocks(inputs.axis)
     expected_tuples = _count_expected_tuples(inputs.axis)
