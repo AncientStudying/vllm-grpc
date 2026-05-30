@@ -251,10 +251,10 @@ async def test_rest_cohort_corpus_none_falls_back_to_synthetic_prompts() -> None
             rtt_probe_n=1,
             warmup_n=0,
             client=client,
-            cell_id="fallback-test",
             # corpus omitted — fallback to synthetic
         )
-    for body in captured_bodies:
+    for i, body in enumerate(captured_bodies):
         prompt = body["messages"][0]["content"]
-        assert "M5.2 chat probe" in prompt
-        assert "fallback-test" in prompt
+        # FR-003: synthetic fallback uses the unified seed-keyed builder.
+        assert "M5.2 chat probe" not in prompt
+        assert f"seed={i}" in prompt

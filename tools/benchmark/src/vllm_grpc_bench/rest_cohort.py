@@ -43,8 +43,8 @@ import httpx
 import numpy as np
 
 from vllm_grpc_bench.corpus import RequestSample
-from vllm_grpc_bench.m3_sweep import DEFAULT_CHAT_MAX_TOKENS, build_chat_prompt
-from vllm_grpc_bench.m3_types import (
+from vllm_grpc_bench.prompts import DEFAULT_CHAT_MAX_TOKENS, build_chat_prompt
+from vllm_grpc_bench.types import (
     NetworkPath,
     Path_,
     RESTCohortRecord,
@@ -69,7 +69,7 @@ def _extract_m6_1_1_timing_from_sse_payload(
         return None
     # Late import to avoid touching m6_1_1_timing at module-load time on
     # callers that don't need it (consistency with the M6 extractor).
-    from vllm_grpc_bench.m6_1_1_timing import extract_rest_timings
+    from vllm_grpc_bench.timing import extract_rest_timings
 
     ckpt = extract_rest_timings(data)
     if ckpt is None:
@@ -88,7 +88,7 @@ def _extract_m6_1_1_timing_from_body_json(
 ) -> dict[str, int | str | None] | None:
     """Parse the M6.1.1 ``m6_1_1_timings`` sub-object from a parsed embed
     JSONResponse body (FR-011 audit-only controls)."""
-    from vllm_grpc_bench.m6_1_1_timing import extract_rest_timings
+    from vllm_grpc_bench.timing import extract_rest_timings
 
     ckpt = extract_rest_timings(body_json)
     if ckpt is None:
@@ -405,7 +405,7 @@ async def run_rest_cohort(
     https_edge_endpoint: str | None = None,
     client_external_geolocation_country: str | None = None,
     client_external_geolocation_region: str | None = None,
-    cell_id: str = "",
+    cell_id: str = "",  # vestigial post-FR-003 (unified builder is seed-keyed); dropped in Phase 4
     corpus: list[RequestSample] | None = None,
 ) -> RESTCohortResult:
     """Drive ``n`` requests on the configured ``path`` with concurrency ``concurrency``.
@@ -431,11 +431,12 @@ async def run_rest_cohort(
 
         async def _one_request(i: int) -> RESTCohortSample:
             if path == "chat_stream":
-                # M5.2 (FR-005c chat-corpus): when a corpus is provided,
-                # cycle through it deterministically by iteration index
-                # so REST and gRPC see the same sample for the same i.
-                # Fallback path (corpus=None) preserves the M5.1-era
-                # synthetic-prompt behavior for tests + back-compat.
+                # FR-005c chat-corpus: when a corpus is provided, cycle
+                # through it deterministically by iteration index so REST and
+                # gRPC see the same sample for the same i. Fallback path
+                # (corpus=None) uses the unified seed-keyed prompt builder
+                # (FR-003) — the engine sees the same chat content REST or
+                # gRPC for the same seed.
                 if corpus is not None:
                     sample = corpus[i % len(corpus)]
                 else:
@@ -444,7 +445,7 @@ async def run_rest_cohort(
                         messages=[
                             {
                                 "role": "user",
-                                "content": build_chat_prompt(iteration=i, cell_id=cell_id),
+                                "content": build_chat_prompt(i),
                             }
                         ],
                         model="mock",
