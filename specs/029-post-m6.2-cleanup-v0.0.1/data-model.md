@@ -34,7 +34,7 @@ The "entities" of a refactor are **modules**, **symbols**, **tests**, **CLI flag
 
 ## Entity 3 — Retained shared infra (repointed at homes)
 
-`__init__.py`, `__main__.py` (CLI stripped — Entity 6), `runner.py`, `metrics.py`, `reporter.py` (consolidated — Entity 4), `modal_endpoint.py`, `rest_cohort.py`, `rest_shim.py`, `channel_config.py` (absorbs `_client_kwargs`), `corpus.py`, `mock_engine.py`, `fake_server.py`, `io.py`, `rtt_probe.py`.
+`__init__.py`, `__main__.py` (CLI stripped — Entity 6), `runner.py`, `metrics.py`, `reporter.py` (consolidated — Entity 4), `modal_endpoint.py`, `rest_cohort.py`, `rest_shim.py`, `channel_config.py` (absorbs `_client_kwargs`), `corpus.py`, `mock_engine.py`, `fake_server.py`, `io.py`, `rtt_probe.py`, **`grpc_servicers.py`** (NEW at T020 — the live `ChatServicer`/`CompletionsServicer` + `serve_in_process[_adapter]` de-prefixed out of `m3_sweep`; see ADR 0007 / Entity 7).
 
 **Merge candidates** (merge only where cohesion improves — SC-002 directional, not forced): `symmetric_prompts.py`→`prompts.py`; `ttft.py`→`metrics.py` (tiny). (`engine_cost.py` is its own de-prefixed home, not a merge candidate.) **Audit-then-decide**: `compare.py`, `ci.py`, `m6_1_torch_pin` (keep+de-prefix if a surviving path uses them, else delete — research.md R2 open item).
 
@@ -68,7 +68,7 @@ The "entities" of a refactor are **modules**, **symbols**, **tests**, **CLI flag
 
 ## Entity 7 — Deleted legacy modules (zero live importers)
 
-All `m4_*`, `m5_*`, `m5_1_*`, `m5_2_*` (after `m5_2_regen` symbol hoist), `m6_reporter/smoke/seed/supersede/types/rpc_driver` (after helper extraction), `m6_1_*` (after `m6_1_types`/`m6_1_rpc_driver`/`m6_1_seq_len` extraction), `m6_1_1_*` (except `timing`), `m6_1_2_*` (except `network_probe`), `m6_1_3_*`, `m3_types`/`m3_sweep`/`m6_sweep` (after hoist). **Target: zero milestone-prefixed source modules** (SC-001).
+All `m4_*`, `m5_*`, `m5_1_*`, `m5_2_*` (after `m5_2_regen` symbol hoist), `m6_reporter/smoke/seed/supersede/types/rpc_driver` (after helper extraction), `m6_1_*` (after `m6_1_types`/`m6_1_rpc_driver`/`m6_1_seq_len` extraction), `m6_1_1_*` (except `timing`), `m6_1_2_*` (except `network_probe`), `m6_1_3_*`, `m3_types`/`m6_sweep` (after hoist). **`m3_sweep` is NOT pure legacy** (T020 discovery, ADR 0007): it carried the LIVE gRPC servicers `M3ChatServicer`/`M3CompletionsServicer` + `serve_in_process[_adapter]` that the Modal bench-server scripts deploy; those de-prefix into the retained `grpc_servicers.py` (Entity 3) **first**, then the now-servicer-free `m3_sweep` is deleted. **Target: zero milestone-prefixed source modules** (SC-001).
 
 ## Entity 8 — Test files (delete legacy / rename retained; FR-007)
 

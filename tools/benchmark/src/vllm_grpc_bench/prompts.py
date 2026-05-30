@@ -5,9 +5,8 @@ Two concerns live here, consolidated into the single prompt home (T015pre):
 1. **Builder.** ``build_chat_prompt`` is the unified seed+digest chat-prompt
    form (deterministic, per-RPC-varying); the divergent M5.2 ``iteration``/
    ``cell_id`` builder was dropped when ``rest_cohort`` was repointed (FR-003).
-   During the transition this re-exports from the legacy modules that still
-   define the symbols; the definitions move here when those modules are deleted
-   (Phase 4).
+   The builder + ``DEFAULT_CHAT_MAX_TOKENS`` were hoisted in-place here at
+   Phase 4 (T020); this module no longer imports from any milestone source.
 
 2. **Prompt-source resolver** (formerly ``m6_2_prompt_source``; round-5
    FR-034 / FR-035). The harness defaults are synthetic seed-derived prompts
@@ -28,6 +27,7 @@ Two concerns live here, consolidated into the single prompt home (T015pre):
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, TypedDict
@@ -42,8 +42,6 @@ from vllm_grpc_bench.corpus import (
     load_corpus,
     verify_corpus_sha,
 )
-from vllm_grpc_bench.m3_sweep import DEFAULT_CHAT_MAX_TOKENS
-from vllm_grpc_bench.m6_rpc_driver import _build_chat_prompt as build_chat_prompt
 from vllm_grpc_bench.sweep_types import (
     M6_2_INTERIOR_CAP_MAX_TOKENS,
     M6_2_NULL_ANCHOR_MAX_TOKENS,
@@ -51,6 +49,17 @@ from vllm_grpc_bench.sweep_types import (
     M6_2PromptSource,
 )
 from vllm_grpc_bench.symmetric_prompts import assign_symmetric_prompt
+
+# Hoisted in-place at Phase 4 (T020) from the legacy ``m3_sweep`` /
+# ``m6_rpc_driver`` modules; the prompt home now owns the builder + default.
+DEFAULT_CHAT_MAX_TOKENS = 64
+
+
+def build_chat_prompt(seed: int) -> str:
+    """Deterministic seed-dependent prompt so the engine output varies per RPC."""
+    digest = hashlib.blake2b(str(seed).encode(), digest_size=8).hexdigest()
+    return f"M6 chat probe seed={seed} digest={digest}. Please respond."
+
 
 __all__ = [
     "DEFAULT_CHAT_MAX_TOKENS",
