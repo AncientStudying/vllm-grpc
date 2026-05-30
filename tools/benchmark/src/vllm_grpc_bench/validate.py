@@ -1321,7 +1321,7 @@ def build_artifact(
 
     * Production-budget rows: from the sweep's ``MeasurementPoint`` list.
     * ``not_validated`` placeholders for validate-mode interior caps: via
-      :func:`m6_2_reporter.fill_validate_mode_placeholders`.
+      :func:`reporter.fill_validate_mode_placeholders`.
     * Anchor-latency trajectory: from per-cohort anchor snapshots. The
       drift threshold is derived from M6.1.3's
       ``between_run_variance.chat_stream_c1`` per :func:`derive_anchor_drift_threshold`
@@ -1335,7 +1335,7 @@ def build_artifact(
     * KV-pressure (US3): wall-clock-ratio inference consuming sub-probe rows.
     * ``network_paths``: threaded from the sweep's topology probe (T055).
     * ``integrity_warnings``: composed via
-      :func:`m6_2_reporter.build_integrity_warnings`.
+      :func:`reporter.build_integrity_warnings`.
     """
     from vllm_grpc_bench.anchor_trajectory import (
         compute_anchor_latency_trajectory,
@@ -1345,7 +1345,7 @@ def build_artifact(
         compute_kv_pressure_inference,
         compute_per_cell_crossover,
     )
-    from vllm_grpc_bench.m6_2_reporter import (
+    from vllm_grpc_bench.reporter import (
         build_integrity_warnings,
         fill_validate_mode_placeholders,
     )
@@ -1486,7 +1486,7 @@ def build_artifact(
 def _tally_failure_summary(artifact: M6_2SweepArtifact) -> dict[str, int]:
     """Count ``failed_<reason>`` markers across the table, excluding the
     validate-mode ``not_validated`` placeholders."""
-    from vllm_grpc_bench.m6_2_reporter import NOT_VALIDATED_MARKER
+    from vllm_grpc_bench.reporter import NOT_VALIDATED_MARKER
 
     counts: dict[str, int] = {}
     for per_cohort in artifact.per_cell.values():
@@ -1614,9 +1614,9 @@ async def _run_modal_backed(
     """
     from dataclasses import replace
 
-    from vllm_grpc_bench.m6_2_reporter import write_m6_2_report
     from vllm_grpc_bench.modal_endpoint import ModalDeployError, provide_m6_endpoint
     from vllm_grpc_bench.network_probe import run_topology_probe
+    from vllm_grpc_bench.reporter import write_m6_2_report
     from vllm_grpc_bench.seq_len import pin_seq_len_at_sweep_start
     from vllm_grpc_bench.sweep import M6_2SweepInputs
 
@@ -1926,11 +1926,11 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
       ``--m6_2-skip-deploy``.
     * Sweep execution via :func:`sweep.run_sweep`.
     * Artifact assembly via :func:`build_artifact`.
-    * Reporter write via :func:`m6_2_reporter.write_m6_2_report`.
+    * Reporter write via :func:`reporter.write_m6_2_report`.
     """
     from vllm_grpc_bench.corpus import CorpusDriftError
-    from vllm_grpc_bench.m6_2_reporter import write_m6_2_report
     from vllm_grpc_bench.prompts import load_chat_corpus, load_embed_corpus
+    from vllm_grpc_bench.reporter import write_m6_2_report
     from vllm_grpc_bench.sweep import (
         M6_2SweepInputs,
         gate_corpus_shas,

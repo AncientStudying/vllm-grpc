@@ -1,6 +1,6 @@
 """T031 — M6.2 artifact schema unit tests.
 
-Exercises :mod:`m6_2_reporter` directly: renders ``M6_2SweepArtifact``
+Exercises :mod:`reporter` directly: renders ``M6_2SweepArtifact``
 fixtures and asserts:
 
 - 144-row latency budget table completeness in publish + validate modes
@@ -25,7 +25,7 @@ from typing import Any
 
 from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2NetworkPath
 from vllm_grpc_bench.m6_1_types import M6_1_CELLS
-from vllm_grpc_bench.m6_2_reporter import (
+from vllm_grpc_bench.reporter import (
     EARLY_EOS_AUDIT_MIN_MAX_TOKENS,
     EARLY_EOS_RATIO_THRESHOLD,
     INTEGRITY_CHANNELS,

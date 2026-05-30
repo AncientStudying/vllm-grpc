@@ -22,7 +22,7 @@ import argparse
 import json
 from pathlib import Path
 
-from vllm_grpc_bench.m6_2_reporter import INTEGRITY_CHANNELS, NOT_VALIDATED_MARKER
+from vllm_grpc_bench.reporter import INTEGRITY_CHANNELS, NOT_VALIDATED_MARKER
 from vllm_grpc_bench.validate import run_m6_2
 
 

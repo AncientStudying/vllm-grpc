@@ -43,10 +43,10 @@ The "entities" of a refactor are **modules**, **symbols**, **tests**, **CLI flag
 | Action | Detail |
 |---|---|
 | Keep name | `reporter.py` |
-| New content | de-prefixed `m6_2_reporter` builders |
-| Delete | M1-era `reporter.py` functions (`write_summary_md`, `write_cross_run_md`, `write_wire_size_comparison_md`, M1 `write_json`/`write_csv` variants) + their M1-era `m3_types` imports |
-| Delete (modules) | `m6_reporter`, `m6_1_reporter`, `m6_1_1_reporter`, `m6_1_2_reporter`, `m6_1_3_reporter` |
-| Invariant | exactly one report-generation module remains (SC-003) |
+| New content | de-prefixed `m6_2_reporter` builders — **T017 (additive)**: spliced into `reporter.py` (M6.2 section), `m6_2_reporter.py` deleted, consumers repointed |
+| Delete | M1-era + M4/M5/M5.1/M5.2 `reporter.py` writers (`write_summary_md`, `write_cross_run_md`, `write_wire_size_comparison_md`, `write_three_way_md`, M1 `write_json`/`write_csv`, `write_m4_*`/`write_m5_*`/`write_m5_1_*`/`write_m5_2_*`) + their `m3_types`/`m5_2_regen` imports + `_fmt_legacy` — **deferred to T020 (T017-tail)**: blocked at T017 by live `__main__` (T018), retained `test_reporter` (T022b), legacy `m5_2_regen` (T020) + legacy tests (T021); held under a `# === LEGACY … ===` marker until then |
+| Delete (modules) | `m6_reporter`, `m6_1_reporter`, `m6_1_1_reporter`, `m6_1_2_reporter`, `m6_1_3_reporter` (Phase 4 / T020) |
+| Invariant | exactly one report-generation module remains (SC-003) — holds after T020 |
 
 ## Entity 5 — Preserved data pointers (MUST NOT change; FR-019)
 
