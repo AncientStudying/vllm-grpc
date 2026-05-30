@@ -1526,13 +1526,17 @@ async def _drive_main_sweep_and_sub_probe(
     Defaults to :func:`_stub_is_transient` (never retries) when omitted, so
     test paths preserve their existing behavior.
     """
-    from vllm_grpc_bench.sub_probe import run_kv_pressure_sub_probe
+    from vllm_grpc_bench.sub_probe import (
+        iter_sub_probe_tuples,
+        run_kv_pressure_sub_probe,
+    )
     from vllm_grpc_bench.sweep import (
         SweepInputs,
     )
     from vllm_grpc_bench.sweep import (
         run_sweep as _run_sweep,
     )
+    from vllm_grpc_bench.sweep_types import SUB_PROBE_MAX_TOKENS, SUB_PROBE_N
 
     if not isinstance(inputs, SweepInputs):
         raise TypeError(
@@ -1547,10 +1551,10 @@ async def _drive_main_sweep_and_sub_probe(
     sweep_outputs = await _run_sweep(inputs)
     _sweep_progress(
         "SUBPROBE_START",
-        blocks=16,
-        n=20,
+        blocks=len(iter_sub_probe_tuples()),
+        n=SUB_PROBE_N,
         ignore_eos=True,
-        caps="1024,2048",
+        caps=",".join(str(c) for c in SUB_PROBE_MAX_TOKENS),
     )
     sub_probe_perf_start = _time.monotonic()
     sub_probe_results_list = list(
