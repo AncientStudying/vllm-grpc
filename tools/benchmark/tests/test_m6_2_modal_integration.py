@@ -3,7 +3,7 @@
 Exercises the real dispatchers built by
 :func:`m6_2_validate.build_modal_block_dispatcher` +
 :func:`m6_2_validate.build_modal_anchor_dispatcher` against a **fake RPC
-driver** that mimics :func:`m6_2_rpc_driver.provide_m6_2_rpc_driver`'s
+driver** that mimics :func:`rpc_driver.provide_m6_2_rpc_driver`'s
 ``driver(cohort, cell, seed, *, max_tokens, ignore_eos, prompt,
 prompt_embeds_override) -> RPCResult`` signature.
 

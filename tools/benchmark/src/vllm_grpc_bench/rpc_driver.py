@@ -12,30 +12,34 @@ M6.1.x driver surface cannot thread:
   sub-probe regimes (FR-035). ``None`` falls back to the synthetic random
   tensor.
 
-The M6.1.x dispatchers (`_drive_grpc_chat_stream`, `_drive_grpc_embed_m6_1`,
-etc.) hardcode the M6.1.x request-builder calls and have no plumbing for the
-M6.2 args. Per the project's copy-then-refactor convention (M6.1.3 plan
-§254), M6.2 ships its own dispatchers in this module rather than mutating
-the M6.1.x ones.
-
-The request builders themselves (`_build_chat_grpc_request`,
+This is the de-prefixed production RPC driver home (v0.0.1). It owns its
+dispatchers (`_drive_*_m6_2`) and the request builders absorbed here from the
+now-legacy chat/embed drivers (`_build_chat_grpc_request`,
 `_build_chat_rest_payload`, `_build_embed_grpc_request`,
-`_build_embed_rest_payload_m6_1`) already carry the M6.2 kwargs as
-keyword-only with M6.1.x defaults (T007 / T008). This module just calls them
-with the M6.2-side values.
+`_build_embed_rest_payload_m6_1`) plus the embed seed/tensor helpers
+(`_build_torch_save_bytes`, `_build_torch_generator_for_rpc`, absorbed from the
+legacy per-RPC seed module). The builders carry the four kwargs (`max_tokens`,
+`ignore_eos`, `prompt`, `prompt_embeds_override`) as keyword-only; the
+dispatchers thread the per-block values. Cost parsers come from the
+de-prefixed `engine_cost` home; timing extraction from the `timing` home;
+cohort/cell types from the `types` home.
 """
 
 from __future__ import annotations
 
+import base64
 import contextlib
+import io
 import json
 import os
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 import grpc
 import httpx
+from vllm_grpc.v1 import chat_pb2, completions_pb2
 
 from vllm_grpc_bench.channel_config import (
     M1_BASELINE,
@@ -47,23 +51,10 @@ from vllm_grpc_bench.engine_cost import (
     parse_grpc_trailing_metadata,
     parse_rest_response,
 )
-from vllm_grpc_bench.m3_types import RTTRecord
-from vllm_grpc_bench.m6_1_2_types import M6_1_2CohortKind
-from vllm_grpc_bench.m6_1_rpc_driver import (
-    _build_embed_grpc_request,
-    _build_embed_rest_payload_m6_1,
-    _normalize_rest_url_for_httpx,
-    _resolve_rpc_index,
-)
-from vllm_grpc_bench.m6_1_types import M6_1Cell
-from vllm_grpc_bench.m6_rpc_driver import (
-    _build_chat_grpc_request,
-    _build_chat_rest_payload,
-    _rest_rtt_probe,
-)
-from vllm_grpc_bench.m6_sweep import RPCResult
 from vllm_grpc_bench.modal_endpoint import RESTGRPCEndpoints
+from vllm_grpc_bench.prompts import DEFAULT_CHAT_MAX_TOKENS, build_chat_prompt
 from vllm_grpc_bench.rtt_probe import measure_rtt
+from vllm_grpc_bench.types import Cell, CohortKind, RPCResult, RTTRecord
 
 __all__ = [
     "M6_2RPCDriver",
@@ -71,11 +62,218 @@ __all__ = [
 ]
 
 
+# --- Embed seed / tensor helpers (absorbed from the legacy embed driver) -----
+
+
+def _build_torch_generator_for_rpc(
+    rpc_index: int,
+    base_seed: int = 42,
+    device: str = "cpu",
+) -> Any:
+    """Build a ``torch.Generator`` seeded for the given measurement RPC.
+
+    Two generators built for the same ``rpc_index`` produce bit-identical
+    output sequences under ``torch.randn(...)`` (FR-028 / SC-006).
+    """
+    import torch  # local import — keeps non-embed callers torch-free
+
+    if rpc_index < 0:
+        raise ValueError(f"rpc_index must be >= 0, got {rpc_index}")
+    g = torch.Generator(device=device)
+    g.manual_seed(base_seed + rpc_index)
+    return g
+
+
+def _build_torch_save_bytes(
+    seq_len: int,
+    hidden_size: int,
+    rpc_index: int,
+    base_seed: int,
+) -> bytes:
+    """Build the ``torch.save`` bytes for one embed RPC (FR-002 / FR-028).
+
+    Returns the raw ZIP-magic-prefixed bytes that ship in
+    ``CompletionRequest.prompt_embeds`` (gRPC) OR get base64-wrapped for the
+    REST shim.
+    """
+    import torch
+
+    g = _build_torch_generator_for_rpc(rpc_index, base_seed=base_seed)
+    tensor = torch.randn((seq_len, hidden_size), dtype=torch.float16, generator=g)
+    buf = io.BytesIO()
+    torch.save(tensor, buf)
+    return buf.getvalue()
+
+
+def _resolve_rpc_index(seed: int, base_seed: int) -> int:
+    """Convert a per-RPC sampling seed into a non-negative ``rpc_index``.
+
+    Measurement RPCs use ``seed = base_seed + rpc_index`` (FR-019), so
+    ``seed - base_seed`` recovers the index. Smoke + warmup RPCs pass
+    ``seed=0`` by convention, which would otherwise produce a negative index;
+    clamping to 0 means those non-measurement paths share a single
+    deterministic tensor.
+    """
+    return max(0, seed - base_seed)
+
+
+def _normalize_rest_url_for_httpx(url: str) -> str:
+    """Convert Modal's published REST URLs into an httpx-compatible scheme.
+
+    Modal's ``modal.forward(unencrypted=True)`` publishes plain-TCP tunnels as
+    ``tcp+plaintext://host:port``; httpx only accepts HTTP or HTTPS, so rewrite
+    the scheme to ``http://`` (plain TCP without TLS *is* plain HTTP from the
+    client's perspective). HTTPS edge URLs and bare ``host:port`` forms pass
+    through unchanged or get an ``http://`` prefix respectively.
+    """
+    if url.startswith("tcp+plaintext://"):
+        return "http://" + url[len("tcp+plaintext://") :]
+    if url.startswith(("http://", "https://")):
+        return url
+    return "http://" + url
+
+
+# --- Request builders (absorbed from the legacy chat/embed drivers) ----------
+
+
+def _build_chat_grpc_request(
+    seed: int,
+    *,
+    max_tokens: int = DEFAULT_CHAT_MAX_TOKENS,
+    ignore_eos: bool = False,
+    prompt: str | None = None,
+) -> chat_pb2.ChatCompleteRequest:
+    content = prompt if prompt is not None else build_chat_prompt(seed)
+    return chat_pb2.ChatCompleteRequest(
+        messages=[chat_pb2.ChatMessage(role="user", content=content)],
+        model="mock-engine",
+        max_tokens=max_tokens,
+        seed=seed,
+        ignore_eos=ignore_eos,
+    )
+
+
+def _build_chat_rest_payload(
+    seed: int,
+    *,
+    max_tokens: int = DEFAULT_CHAT_MAX_TOKENS,
+    ignore_eos: bool = False,
+    prompt: str | None = None,
+) -> dict[str, Any]:
+    content = prompt if prompt is not None else build_chat_prompt(seed)
+    payload: dict[str, Any] = {
+        "model": "mock",
+        "messages": [{"role": "user", "content": content}],
+        "stream": True,
+        "max_tokens": max_tokens,
+        "temperature": 1.0,
+        "seed": seed,
+    }
+    if ignore_eos:
+        payload["ignore_eos"] = True
+    return payload
+
+
+def _build_embed_grpc_request(
+    seq_len: int,
+    hidden_size: int,
+    rpc_index: int,
+    base_seed: int,
+    *,
+    max_tokens: int = 10,
+    ignore_eos: bool = False,
+    prompt_embeds_override: bytes | None = None,
+    seed: int | None = None,
+) -> completions_pb2.CompletionRequest:
+    """Build a gRPC embed request.
+
+    The ``seed`` field is the ``SamplingParams.seed`` (FR-019). If omitted,
+    defaults to ``base_seed + rpc_index``. ``max_tokens`` / ``ignore_eos`` /
+    ``prompt_embeds_override`` are keyword-only so the default call sites stay
+    byte-identical while the prompt-source resolver can pass corpus-derived
+    tensors and forced-cap flags.
+    """
+    payload = (
+        prompt_embeds_override
+        if prompt_embeds_override is not None
+        else _build_torch_save_bytes(seq_len, hidden_size, rpc_index, base_seed)
+    )
+    sampling_seed = seed if seed is not None else base_seed + rpc_index
+    return completions_pb2.CompletionRequest(
+        prompt_embeds=payload,
+        max_tokens=max_tokens,
+        seed=sampling_seed,
+        ignore_eos=ignore_eos,
+    )
+
+
+def _build_embed_rest_payload_m6_1(
+    seq_len: int,
+    hidden_size: int,
+    rpc_index: int,
+    base_seed: int,
+    *,
+    max_tokens: int = 10,
+    ignore_eos: bool = False,
+    prompt_embeds_override: bytes | None = None,
+    seed: int | None = None,
+) -> dict[str, Any]:
+    """Build the REST embed payload.
+
+    Emits ``input_kind="prompt_embedding_torch_b64"`` and the base64-encoded
+    ``torch.save`` bytes. Parameterized identically to the gRPC builder so the
+    prompt-source resolver can route corpus tensors + forced caps through both
+    transports.
+    """
+    raw = (
+        prompt_embeds_override
+        if prompt_embeds_override is not None
+        else _build_torch_save_bytes(seq_len, hidden_size, rpc_index, base_seed)
+    )
+    encoded = base64.b64encode(raw).decode("ascii")
+    sampling_seed = seed if seed is not None else base_seed + rpc_index
+    body: dict[str, Any] = {
+        "model": "mock",
+        "input_kind": "prompt_embedding_torch_b64",
+        "input": encoded,
+        "hidden_size": hidden_size,
+        "max_tokens": max_tokens,
+        "seed": sampling_seed,
+    }
+    if ignore_eos:
+        body["ignore_eos"] = True
+    return body
+
+
+async def _rest_rtt_probe(
+    client: httpx.AsyncClient, base_url: str, n: int, timeout_s: float = 5.0
+) -> RTTRecord:
+    """``GET /healthz`` n times against the live REST URL."""
+    samples_ms: list[float] = []
+    for _ in range(n):
+        start = time.perf_counter()
+        resp = await client.get(f"{base_url}/healthz", timeout=timeout_s)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        if resp.status_code != 200:
+            raise RuntimeError(f"REST /healthz returned {resp.status_code}; body={resp.text!r}")
+        samples_ms.append(elapsed_ms)
+    sorted_samples = sorted(samples_ms)
+    median = sorted_samples[len(sorted_samples) // 2]
+    p95_idx = max(0, int(0.95 * (len(sorted_samples) - 1)))
+    p95 = sorted_samples[p95_idx]
+    return RTTRecord(
+        n=len(samples_ms),
+        median_ms=median,
+        p95_ms=p95,
+        samples_ms=tuple(samples_ms),
+    )
+
+
 _DEFAULT_RTT_PROBE_N: int = 32
 
 
 M6_2RPCDriver = Callable[
-    [M6_1_2CohortKind, M6_1Cell, int],
+    [CohortKind, Cell, int],
     Awaitable[RPCResult],
 ]
 """Async per-RPC dispatcher with the M6.2 kwargs.
@@ -83,8 +281,8 @@ M6_2RPCDriver = Callable[
 The concrete signature (see :func:`provide_m6_2_rpc_driver`) is::
 
     async def driver(
-        cohort: M6_1_2CohortKind,
-        cell: M6_1Cell,
+        cohort: CohortKind,
+        cell: Cell,
         seed: int,
         *,
         max_tokens: int,
@@ -151,7 +349,7 @@ async def _drive_grpc_chat_stream_m6_2(
     except Exception:  # noqa: BLE001
         md = None
     engine_cost = parse_grpc_trailing_metadata(md, "chat_stream") if md is not None else None
-    from vllm_grpc_bench.m6_1_1_timing import extract_grpc_timings, timing_checkpoint_to_payload
+    from vllm_grpc_bench.timing import extract_grpc_timings, timing_checkpoint_to_payload
 
     md_dict = {k: v for k, v in md} if md is not None else None
     m6_1_1_payload = timing_checkpoint_to_payload(
@@ -169,7 +367,7 @@ async def _drive_grpc_chat_stream_m6_2(
 
 async def _drive_grpc_embed_m6_2(
     channel: grpc.aio.Channel,
-    cell: M6_1Cell,
+    cell: Cell,
     seq_len: int,
     rpc_index: int,
     base_seed: int,
@@ -211,7 +409,7 @@ async def _drive_grpc_embed_m6_2(
     except Exception:  # noqa: BLE001
         md = None
     engine_cost = parse_grpc_trailing_metadata(md, "embed") if md is not None else None
-    from vllm_grpc_bench.m6_1_1_timing import extract_grpc_timings, timing_checkpoint_to_payload
+    from vllm_grpc_bench.timing import extract_grpc_timings, timing_checkpoint_to_payload
 
     md_dict = {k: v for k, v in md} if md is not None else None
     m6_1_1_payload = timing_checkpoint_to_payload(
@@ -299,7 +497,7 @@ async def _drive_rest_chat_stream_m6_2(
             terminal = None
         if isinstance(terminal, dict):
             engine_cost = parse_rest_response(terminal, "chat_stream")
-            from vllm_grpc_bench.m6_1_1_timing import (
+            from vllm_grpc_bench.timing import (
                 extract_rest_timings,
                 timing_checkpoint_to_payload,
             )
@@ -319,7 +517,7 @@ async def _drive_rest_embed_m6_2(
     client: httpx.AsyncClient,
     base_url: str,
     auth: dict[str, str],
-    cell: M6_1Cell,
+    cell: Cell,
     seq_len: int,
     rpc_index: int,
     base_seed: int,
@@ -375,7 +573,7 @@ async def _drive_rest_embed_m6_2(
     except (ValueError, json.JSONDecodeError):
         payload = {}
     engine_cost = parse_rest_response(payload, "embed") if isinstance(payload, dict) else None
-    from vllm_grpc_bench.m6_1_1_timing import extract_rest_timings, timing_checkpoint_to_payload
+    from vllm_grpc_bench.timing import extract_rest_timings, timing_checkpoint_to_payload
 
     m6_1_1_payload = timing_checkpoint_to_payload(
         extract_rest_timings(payload) if isinstance(payload, dict) else None
@@ -408,7 +606,7 @@ async def provide_m6_2_rpc_driver(
 ) -> AsyncIterator[
     tuple[
         Callable[..., Awaitable[RPCResult]],
-        dict[M6_1_2CohortKind, RTTRecord],
+        dict[CohortKind, RTTRecord],
     ]
 ]:
     """Open gRPC channels + httpx client; yield ``(driver, rtt_distribution)``.
@@ -454,7 +652,7 @@ async def provide_m6_2_rpc_driver(
         limits=httpx.Limits(max_keepalive_connections=8, max_connections=8),
     )
     try:
-        rtt: dict[M6_1_2CohortKind, RTTRecord] = {
+        rtt: dict[CohortKind, RTTRecord] = {
             "default_grpc": await measure_rtt(
                 default_channel, n=rtt_probe_n, metadata=grpc_metadata
             ),
@@ -470,8 +668,8 @@ async def provide_m6_2_rpc_driver(
         }
 
         async def driver(
-            cohort: M6_1_2CohortKind,
-            cell: M6_1Cell,
+            cohort: CohortKind,
+            cell: Cell,
             seed: int,
             *,
             max_tokens: int,

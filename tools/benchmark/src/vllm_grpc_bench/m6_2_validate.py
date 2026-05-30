@@ -489,8 +489,8 @@ async def build_modal_make_driver_callable(
     """
     import contextlib
 
-    from vllm_grpc_bench.m6_2_rpc_driver import provide_m6_2_rpc_driver
     from vllm_grpc_bench.modal_endpoint import refresh_rest_grpc_urls
+    from vllm_grpc_bench.rpc_driver import provide_m6_2_rpc_driver
 
     # Open the initial driver context. The inner stack is tracked on
     # ``outer_stack`` so any leftover driver contexts (from earlier
@@ -1606,7 +1606,7 @@ async def _run_modal_backed(
 
     Mirrors :func:`m6_1_3_validate._run_modal_backed` (T013 / FR-028) but:
 
-    * Uses :func:`m6_2_rpc_driver.provide_m6_2_rpc_driver` so the driver
+    * Uses :func:`rpc_driver.provide_m6_2_rpc_driver` so the driver
       callable threads the M6.2 kwargs (max_tokens / ignore_eos / prompt /
       prompt_embeds_override) per block.
     * Wraps the driver in :func:`build_modal_block_dispatcher` +

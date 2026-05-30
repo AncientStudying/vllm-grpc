@@ -543,7 +543,7 @@ class TestBlockDispatcherRecoveryBudget:
 class TestBuildModalMakeDriverCallable:
     """T074d: the production ``make_driver`` factory wraps
     ``modal_endpoint.refresh_rest_grpc_urls`` (real Modal Dict polling) and
-    ``m6_2_rpc_driver.provide_m6_2_rpc_driver`` (real gRPC channel +
+    ``rpc_driver.provide_m6_2_rpc_driver`` (real gRPC channel +
     httpx client). Both are monkey-patched so the test exercises the
     factory's lifecycle wiring without a Modal connection.
     """
@@ -569,7 +569,7 @@ class TestBuildModalMakeDriverCallable:
                 closed_count["n"] += 1
 
         monkeypatch.setattr(
-            "vllm_grpc_bench.m6_2_rpc_driver.provide_m6_2_rpc_driver",
+            "vllm_grpc_bench.rpc_driver.provide_m6_2_rpc_driver",
             _fake_provide_driver,
         )
         initial_endpoints = SimpleNamespace(
@@ -642,7 +642,7 @@ class TestBuildModalMakeDriverCallable:
             _fake_refresh,
         )
         monkeypatch.setattr(
-            "vllm_grpc_bench.m6_2_rpc_driver.provide_m6_2_rpc_driver",
+            "vllm_grpc_bench.rpc_driver.provide_m6_2_rpc_driver",
             _fake_provide_driver,
         )
 
@@ -703,7 +703,7 @@ class TestBuildModalMakeDriverCallable:
             _fake_refresh_returns_none,
         )
         monkeypatch.setattr(
-            "vllm_grpc_bench.m6_2_rpc_driver.provide_m6_2_rpc_driver",
+            "vllm_grpc_bench.rpc_driver.provide_m6_2_rpc_driver",
             _fake_provide_driver,
         )
 
@@ -765,7 +765,7 @@ class TestBuildModalMakeDriverCallable:
             _fake_refresh,
         )
         monkeypatch.setattr(
-            "vllm_grpc_bench.m6_2_rpc_driver.provide_m6_2_rpc_driver",
+            "vllm_grpc_bench.rpc_driver.provide_m6_2_rpc_driver",
             _fake_provide_driver,
         )
 
