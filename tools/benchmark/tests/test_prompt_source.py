@@ -20,11 +20,11 @@ from vllm_grpc_bench.corpus import (
     RequestSample,
 )
 from vllm_grpc_bench.prompts import (
+    assign_symmetric_prompt,
     load_chat_corpus,
     load_embed_corpus,
     resolve_block_inputs,
 )
-from vllm_grpc_bench.symmetric_prompts import assign_symmetric_prompt
 
 
 def _make_chat_corpus(n: int = 8) -> list[RequestSample]:

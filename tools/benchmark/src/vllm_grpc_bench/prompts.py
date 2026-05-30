@@ -48,7 +48,6 @@ from vllm_grpc_bench.sweep_types import (
     SUB_PROBE_MAX_TOKENS,
     PromptSource,
 )
-from vllm_grpc_bench.symmetric_prompts import assign_symmetric_prompt
 
 # Hoisted in-place at Phase 4 (T020) from the legacy ``m3_sweep`` /
 # ``m6_rpc_driver`` modules; the prompt home now owns the builder + default.
@@ -61,10 +60,35 @@ def build_chat_prompt(seed: int) -> str:
     return f"M6 chat probe seed={seed} digest={digest}. Please respond."
 
 
+def assign_symmetric_prompt[T](
+    iter_idx: int,
+    cohort: str,
+    corpus: list[T],
+) -> T:
+    """Return ``corpus[iter_idx % len(corpus)]`` regardless of ``cohort``.
+
+    When symmetric-prompts mode is set, every cohort sees the SAME prompt at
+    the SAME iteration index. The deterministic assignment is
+    ``corpus[iter_idx % len(corpus)]``; ``cohort`` is accepted but
+    intentionally ignored so the function signature documents the symmetry
+    guarantee at the call site. Generic over the corpus element type so the
+    embed regime can pass ``list[CompletionEmbedSample]`` alongside chat's
+    ``list[RequestSample]`` or ``list[str]``.
+
+    Folded into the prompt home at T029 (it was the only live survivor of the
+    former ``symmetric_prompts`` module, and this module is its sole consumer).
+    """
+    del cohort  # Symmetric-prompts mode: prompt is cohort-invariant by design.
+    if not corpus:
+        raise ValueError("assign_symmetric_prompt: corpus must be non-empty")
+    return corpus[iter_idx % len(corpus)]
+
+
 __all__ = [
     "DEFAULT_CHAT_MAX_TOKENS",
     "CorpusDriftError",
     "ResolvedBlockInputs",
+    "assign_symmetric_prompt",
     "build_chat_prompt",
     "load_chat_corpus",
     "load_chat_corpus_provenance",
