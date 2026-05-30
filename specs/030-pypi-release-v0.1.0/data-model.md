@@ -32,7 +32,7 @@ One of the four workspace members. Each produces a wheel + sdist.
 |---------|----------------|------------|-----------------|
 | `vllm-grpc-gen` | — | `protobuf>=6.33`, `grpcio>=1.80` (FR-006c) | build hook runs `protoc`; `grpcio-tools` in `[build-system].requires`; stubs gitignored, generated into wheel+sdist (FR-007a/SC-013) |
 | `vllm-grpc-proxy` | `vllm-grpc-proxy = vllm_grpc_proxy.main:main` | `fastapi>=0.136`, `uvicorn[standard]>=0.46`, `grpcio>=1.80`, `vllm-grpc-gen~=0.1.0` | new `main()` calling `uvicorn.run` |
-| `vllm-grpc-frontend` | `vllm-grpc-frontend = vllm_grpc_frontend.main:main` | `grpcio>=1.80`, `vllm-grpc-gen~=0.1.0`; **vLLM NOT in deps** (FR-005) | V0→V1 engine remediation (FR-022) |
+| `vllm-grpc-frontend` | `vllm-grpc-frontend = vllm_grpc_frontend.main:main` | default: `grpcio>=1.80`, `vllm-grpc-gen~=0.1.0` (**no vLLM**); optional extra `engine = ["vllm>=0.20"]` (FR-005/FR-005a) | V0→V1 engine remediation (FR-022) |
 | `vllm-grpc-client` | — | `grpcio>=1.80`, `vllm-grpc-gen~=0.1.0` | lean — no web-server deps (FR-009/SC-003) |
 
 **State transitions (per package)**
@@ -80,14 +80,15 @@ Each arrow is a verification gate (FR-007/008/008a/010, SC-001/002/004). DoD = a
 |---------|-----------------|-------|
 | SDK consumer | `pip install vllm-grpc-client` | gen installs transitively (FR-016) |
 | Proxy operator | `pip install vllm-grpc-proxy` | console script `vllm-grpc-proxy` |
-| Frontend operator | `pip install vllm-grpc-frontend` + vLLM `>=0.20` (separately) | vLLM is a peer prerequisite (FR-005); requires the V1 `AsyncLLM` API → documented practical floor (FR-005a/FR-016) |
+| Frontend operator | `pip install vllm-grpc-frontend` (base, no vLLM) or `pip install "vllm-grpc-frontend[engine]"` (pulls `vllm>=0.20`) | vLLM is a non-forced peer (FR-005); requires the V1 `AsyncLLM` API → expressed as the optional `engine` extra + documented (FR-005a/FR-016) |
 
 **Validation rules**:
 - VR-10 — a reader determines the correct command per persona in one read (SC-007); package names
   + commands consistent across all docs (SC-012).
-- VR-12 — the frontend README + root install matrix state the vLLM V1-API prerequisite and its
-  `>=0.20` practical floor, while **no** package metadata declares vLLM in any form (hard dep or
-  optional extra) — the floor is documentation-only (FR-005a/SC-007a).
+- VR-12 — the frontend declares vLLM **only** as the optional `engine` extra (`vllm>=0.20`), never
+  as a default dependency: `pip install vllm-grpc-frontend` pulls zero vLLM; `…[engine]` pulls
+  `vllm>=0.20`. The frontend README + root install matrix state the V1-API prerequisite, the
+  `[engine]` extra, and the `>=0.20` floor (FR-005a/SC-007a).
 
 ---
 

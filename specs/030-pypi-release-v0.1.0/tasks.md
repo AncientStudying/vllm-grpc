@@ -133,8 +133,9 @@ vLLM-less env and surfaces missing vLLM only at runtime.
 - [ ] T015 [P] [US2] Fill complete metadata in `packages/frontend/pyproject.toml` per
   `contracts/package-metadata.md`. Bump deps floor-only/no-caps: `grpcio>=1.80`, internal
   `vllm-grpc-gen~=0.1.0`. Add `[project.scripts]` →
-  `vllm-grpc-frontend = "vllm_grpc_frontend.main:main"` (FR-004). Ensure vLLM appears in **no**
-  form — not in `dependencies`, not as an optional extra (FR-005/SC-007a).
+  `vllm-grpc-frontend = "vllm_grpc_frontend.main:main"` (FR-004). Add
+  `[project.optional-dependencies] engine = ["vllm>=0.20"]` (FR-005a) — vLLM MUST NOT be in the
+  default `dependencies` (base install stays vLLM-free), only in the `engine` extra (FR-005).
 - [ ] T016 [US2] Remediate the deprecated V0 engine path in
   `packages/frontend/src/vllm_grpc_frontend/main.py:52–56`: replace
   `AsyncLLMEngine.from_engine_args(AsyncEngineArgs(model=…, enable_prompt_embeds=True))` with the V1
@@ -145,22 +146,31 @@ vLLM-less env and surfaces missing vLLM only at runtime.
 - [ ] T017 [P] [US2] Author `packages/frontend/README.md`: purpose (gRPC frontend), `pip install
   vllm-grpc-frontend`, how to run the `vllm-grpc-frontend` console script, a usage snippet, repo +
   changelog links, AND a prerequisite note that the frontend requires vLLM's V1 engine API
-  (`AsyncLLM`) with a practical floor `vllm>=0.20` installed separately by the operator
+  (`AsyncLLM`), floor `vllm>=0.20` — installed either via the extra
+  `pip install "vllm-grpc-frontend[engine]"` or separately by the operator for their platform
   (FR-002/FR-005a).
 - [ ] T018 [US2] Build + validate the server packages: `uv build --package vllm-grpc-proxy` and
   `uv build --package vllm-grpc-frontend`; `uvx twine check` both with zero errors/warnings; assert
-  the frontend wheel `METADATA` contains **no** `vllm` (hard dep or extra) (FR-005/SC-007a/C-D4).
-  Depends on T012–T017.
+  the frontend wheel `METADATA` declares vLLM **only** under the `engine` extra
+  (`Provides-Extra: engine` + `Requires-Dist: vllm>=0.20; extra == "engine"`) and has **no**
+  unconditional `Requires-Dist: vllm` (FR-005/FR-005a/SC-007a/C-D4). Depends on T012–T017.
 - [ ] T019 [US2] Clean-env install + console-script smoke (no GPU/model): install proxy and frontend
   into fresh venvs with `--find-links packages/gen/dist`; run `vllm-grpc-proxy` and curl `/healthz`;
   run `vllm-grpc-frontend` against the existing fake-engine fixture and confirm the gRPC server
-  starts (FR-010/SC-004); confirm install succeeds on a vLLM-less env and missing vLLM surfaces as a
-  runtime error, not an install failure (FR-005, US2 scenario 3); assert no `DeprecationWarning`
+  starts (FR-010/SC-004); confirm the **base** `pip install vllm-grpc-frontend` pulls no vLLM
+  (`pip freeze | grep -i '^vllm'` empty) and missing vLLM surfaces as a runtime error, not an install
+  failure (FR-005, US2 scenario 3); assert no `DeprecationWarning`
   originates from `vllm_grpc_frontend.*` (`python -W error::DeprecationWarning`) (FR-023/SC-010).
   Run `uv run pytest packages/proxy/tests packages/frontend/tests -q` green at floors.
+- [ ] T019a [US2] Run the Constitution §IV merge-gate checks after the source edits in T013
+  (proxy `main()`) and T016 (frontend V0→V1): `make proto` then
+  `uv run ruff check . && uv run ruff format --check . && uv run mypy --strict packages/proxy/src
+  packages/frontend/src packages/client/src tools/benchmark/src`. Must pass with zero errors —
+  every runtime module of proxy/frontend MUST satisfy `mypy --strict` (Quality Standards). Depends
+  on T013, T016.
 
-**Checkpoint**: Both server packages install, launch via console script, and the frontend is
-deprecation-free and vLLM-peer-safe.
+**Checkpoint**: Both server packages install, launch via console script, pass lint + `mypy
+--strict`, and the frontend is deprecation-free and vLLM-peer-safe.
 
 ---
 
@@ -200,8 +210,9 @@ procedure, and the v0.1.0 history entry are all present and consistent.
 
 - [ ] T022 [P] [US4] Update the root `README.md` install matrix: `pip install vllm-grpc-client` for
   SDK consumers, `vllm-grpc-proxy` / `vllm-grpc-frontend` for operator roles, a note that
-  `vllm-grpc-gen` installs transitively, and — for the frontend row — the vLLM V1-API prerequisite
-  with practical floor `vllm>=0.20` installed separately (FR-016/FR-005a/SC-007/SC-007a).
+  `vllm-grpc-gen` installs transitively, and — for the frontend row — the vLLM V1-API prerequisite,
+  the opt-in `pip install "vllm-grpc-frontend[engine]"` form, and the `>=0.20` floor
+  (FR-016/FR-005a/SC-007/SC-007a).
 - [ ] T023 [P] [US4] Update `CONTRIBUTING.md` with the release procedure: version bump (all four in
   lockstep) → tag (`v*`) → pipeline publish (test index then gated real index) → release-notes draft
   (FR-017).
@@ -221,8 +232,20 @@ cross-consistent.
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-**Purpose**: Clarity pass, consolidated verification, and the global no-upload / green-suite gates.
+**Purpose**: Clarity pass, lockfile refresh, ADRs, consolidated verification, and the global
+no-upload / green-suite gates.
 
+- [ ] T026a Regenerate and commit `uv.lock` after the dependency-declaration changes (T003 gen
+  deps + build-system reqs, T008 client floors, T012 proxy floors, T015 frontend floors + `engine`
+  extra): run `uv lock` from repo root and commit the updated `uv.lock`. This keeps `uv.lock`
+  consistent with the bumped `pyproject.toml` constraints so CI's `uv sync --frozen --all-packages`
+  (ci.yml / proto.yml) does not fail on a stale lock. If delivering incrementally, re-run after each
+  phase that changes a `pyproject.toml`. Depends on T003, T008, T012, T015. Run before T029/T030.
+- [ ] T026b Commit the v0.1.0 packaging ADR `docs/decisions/0009-pypi-packaging-v0.1.0.md` (the
+  non-obvious architectural choices: build-time stub generation hook, vLLM declared as an opt-in
+  `engine` extra reconciling Constitution §II, and static literal versioning) as required by the
+  constitution's Development Workflow; add a follow-up ADR for any further non-obvious decision
+  surfaced during implementation.
 - [ ] T027 [P] Simplify `README.md` and `ANALYSIS.md` section-by-section per FR-025: rewrite dense
   or jargon-heavy passages in plainer terms, gloss/link undefined acronyms and milestone shorthand
   (M5.2, TTFT, OIDC, …) on first use, keep a reader-facing summary near the top of each section —
@@ -274,7 +297,9 @@ cross-consistent.
 - Metadata (`pyproject.toml`) + README before that package's build.
 - Build before `twine check` before clean-env install/smoke.
 - Proxy `main()` (T013) before proxy smoke (T019); frontend V0→V1 remediation (T016) before
-  frontend smoke (T019).
+  frontend smoke (T019); both source edits before the lint + `mypy --strict` gate (T019a).
+- All four `pyproject.toml` dependency edits (T003, T008, T012, T015) before the `uv.lock` refresh
+  (T026a); the lock refresh before the consolidated suite/build gates (T029, T030).
 
 ### Parallel Opportunities
 

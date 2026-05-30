@@ -51,8 +51,10 @@ dependencies = ["fastapi>=0.136", "uvicorn[standard]>=0.46", "grpcio>=1.80", "vl
 [project.scripts]
 vllm-grpc-proxy = "vllm_grpc_proxy.main:main"                      # FR-004
 
-# frontend  (vLLM intentionally absent — FR-005)
+# frontend  (vLLM absent from DEFAULT deps; offered as opt-in extra — FR-005/FR-005a)
 dependencies = ["grpcio>=1.80", "vllm-grpc-gen~=0.1.0"]
+[project.optional-dependencies]
+engine = ["vllm>=0.20"]                                           # FR-005a — opt-in V1 engine floor
 [project.scripts]
 vllm-grpc-frontend = "vllm_grpc_frontend.main:main"               # FR-004
 
@@ -65,7 +67,8 @@ dependencies = ["grpcio>=1.80", "vllm-grpc-gen~=0.1.0"]
 - C-D2: floors are exactly the lock-resolved values or higher: grpcio≥1.80, fastapi≥0.136,
   uvicorn≥0.46, protobuf≥6.33. (FR-006b/FR-006c)
 - C-D3: internal dep is `vllm-grpc-gen~=0.1.0` in every leaf package. (FR-006)
-- C-D4: frontend `METADATA` has **no** `Requires-Dist: vllm` and **no** vLLM optional extra
-  (`Provides-Extra` / `Requires-Dist: vllm; extra == …`) — vLLM is a pure peer; the V1-API floor
-  (`vllm>=0.20`) lives only in the frontend README + root install matrix. (FR-005/FR-005a)
+- C-D4: frontend `METADATA` has **no** unconditional `Requires-Dist: vllm` (base install pulls no
+  vLLM), and declares vLLM **only** under the `engine` extra — i.e. `Provides-Extra: engine` plus
+  `Requires-Dist: vllm>=0.20; extra == "engine"`. The floor is also stated in the frontend README +
+  root install matrix. (FR-005/FR-005a/SC-007a)
 - C-D5: `[tool.uv.sources]` does not appear in built `METADATA`. (edge case — no workspace leak)

@@ -96,12 +96,19 @@ Current-state delta.
 - **Current-state delta**: Verified V0 path at `main.py:52–56`. The exact V1 entry symbol is the one
   mechanical unknown; resolve from the M6.x benchmark harness (which already runs V1) during /tasks.
   This is a runtime-logic touch explicitly authorized by FR-021–FR-023 within the scope fence.
-- **Documented practical floor (FR-005a)**: The V1 dependency creates a *practical* vLLM floor that
-  is **not** machine-enforced — vLLM stays a pure peer (no hard dep, no optional extra; FR-005).
-  The project locks/tests against vLLM `0.20.1` (root `graph-targets` pin + `uv.lock`; macOS uses
-  the `vllm-metal 0.2.0` build), so the documented floor is `vllm>=0.20` framed as "the line this
-  project is built and tested against," not a bisected absolute minimum. This floor is stated in the
-  frontend README and the root install matrix only.
+- **vLLM floor via optional extra (FR-005a)**: The V1 dependency is a real functional floor, so it
+  is expressed **machine-readably** as an optional dependency extra
+  `[project.optional-dependencies] engine = ["vllm>=0.20"]` (installed via `pip install
+  "vllm-grpc-frontend[engine]"`) **and** in documentation (frontend README + root install matrix).
+  The base `pip install vllm-grpc-frontend` pulls **no** vLLM, preserving the peer posture on
+  vLLM-less platforms (FR-005). The project locks/tests against vLLM `0.20.1` (root `graph-targets`
+  pin + `uv.lock`; macOS uses the `vllm-metal 0.2.0` build), so `>=0.20` is "the line this project is
+  built and tested against," not a bisected absolute minimum.
+  - *Decision history*: an earlier pass chose "no vLLM in any metadata, doc-only floor." The
+    `/speckit-analyze` C1 finding showed that conflicted with Constitution Principle II (which
+    requires a pinned vLLM declaration in `pyproject.toml`) and hid a real floor. The optional-extra
+    form resolves C1 at the source — vLLM is a versioned library dependency (II satisfied) that is
+    never force-installed (FR-005 satisfied) — so **no constitution amendment is needed**.
 
 ## R6 — Release pipeline (Trusted Publishing, no upload in-feature)
 

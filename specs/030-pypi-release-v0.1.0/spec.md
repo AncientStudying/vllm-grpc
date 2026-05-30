@@ -38,14 +38,22 @@ web server's dependencies into their environment.
   operator-triggered and outside DoD.
 - Q: How should the release pipeline authenticate to PyPI/TestPyPI? → A: Trusted Publishing
   (OIDC) — no long-lived API token stored in the repository.
-- Q: How should `vllm-grpc-frontend` declare its vLLM runtime requirement? → A: As a peer /
-  documented prerequisite — vLLM is NOT in `install_requires`; the operator installs it
-  separately for their platform. The peer posture is preserved deliberately (correct
-  architectural call), so vLLM appears in **no** package metadata, not even an optional extra.
-  Because the frontend targets vLLM's **V1 engine API** (`AsyncLLM`), there is a *practical*
-  floor the operator must satisfy even though it is not machine-enforced; this floor MUST be
-  stated in documentation (frontend README + install matrix), naming the V1-API dependency and
-  the tested vLLM line (`>=0.20`, the version this project is built and tested against).
+- Q: How should `vllm-grpc-frontend` declare its vLLM runtime requirement? → A: As a peer that is
+  **not force-installed** — vLLM is NOT in the frontend's default/hard install requirements, so
+  `pip install vllm-grpc-frontend` pulls no vLLM and stays installable on platforms with no vLLM
+  build. The frontend targets vLLM's **V1 engine API** (`AsyncLLM`), which is a real functional
+  floor, so that floor is expressed two ways: (1) machine-readably as an **optional dependency
+  extra** `engine = ["vllm>=0.20"]`, installed on demand via `pip install
+  "vllm-grpc-frontend[engine]"`; and (2) in documentation (frontend README + root install matrix).
+  Declaring vLLM as a pinned-range optional extra in `pyproject.toml` also satisfies Constitution
+  Principle II (vLLM is a declared library dependency, not a fork) without forcing it on
+  incompatible platforms.
+  - Refinement note (2026-05-30, post-`/speckit-analyze`): this supersedes an earlier "no vLLM in
+    any metadata, floor is documentation-only" stance. Analysis surfaced that the doc-only choice
+    both hid a real V1-API floor and conflicted with Constitution Principle II's requirement to
+    declare vLLM via a pinned `pyproject.toml` dependency. The optional-extra form preserves the
+    peer architecture (base install pulls no vLLM) while making the floor machine-readable and
+    constitution-compliant.
 - Q: How should each package's PyPI long-description be sourced? → A: Author a short,
   dedicated `README.md` inside each `packages/*/` directory.
 - Q: What dependency version-constraint policy should the published packages use? → A:
@@ -245,17 +253,19 @@ history listing the version line.
   packages in lockstep as a single documented step before tagging.
 - **FR-004**: The proxy and the frontend packages MUST each expose a console-script entry
   point that launches the respective server process.
-- **FR-005**: The frontend package MUST treat vLLM as a peer / documented prerequisite —
-  vLLM MUST NOT appear in the frontend's hard install requirements, and the frontend MUST
-  remain installable on platforms where vLLM has no available build. vLLM MUST NOT appear in
-  the frontend's package metadata in any form — not as a hard dependency and not as an optional
-  extra; the peer posture is total.
-- **FR-005a**: Because the frontend depends on vLLM's **V1 engine API** (`AsyncLLM`), there is a
-  practical minimum vLLM version that is not machine-enforced (vLLM stays a pure peer per FR-005).
-  This practical floor MUST be documented for adopters: the frontend's own README AND the root
-  README install matrix MUST state that the frontend requires the vLLM V1 engine API and name the
-  tested/supported vLLM line (`>=0.20`, the version this project is built and tested against), so an
-  operator installs a compatible vLLM even though no version constraint is enforced at install time.
+- **FR-005**: The frontend package MUST treat vLLM as a peer that is not force-installed — vLLM
+  MUST NOT appear in the frontend's **default** (hard) install requirements, and `pip install
+  vllm-grpc-frontend` MUST remain installable on platforms where vLLM has no available build
+  (no vLLM is pulled by the base install).
+- **FR-005a**: The frontend depends on vLLM's **V1 engine API** (`AsyncLLM`), which is a real
+  functional floor. This floor MUST be expressed two ways: (1) **machine-readably** as an optional
+  dependency extra `engine = ["vllm>=0.20"]` in the frontend's `pyproject.toml`, installable via
+  `pip install "vllm-grpc-frontend[engine]"`; and (2) in **documentation** — the frontend README AND
+  the root README install matrix MUST state that the frontend requires the vLLM V1 engine API and
+  name the tested/supported vLLM line (`>=0.20`). The optional extra MUST NOT cause the base
+  `pip install vllm-grpc-frontend` to pull vLLM. Declaring vLLM as a pinned-range optional extra
+  also satisfies Constitution Principle II (vLLM declared as a versioned library dependency, not a
+  fork) without forcing it onto incompatible platforms.
 - **FR-006**: The three leaf packages (proxy, frontend, client) MUST depend on the
   generated-stubs package such that, when installed from a package index, the dependency
   resolves to a published version of the stubs package rather than a local workspace path.
@@ -317,7 +327,8 @@ history listing the version line.
 - **FR-016**: The project README MUST document the install matrix: the install command for
   SDK consumers, the command for each operator role, a note that the generated-stubs
   package installs transitively, and — for the frontend operator row — the vLLM V1-API
-  prerequisite and its practical floor per FR-005a.
+  prerequisite, the optional `pip install "vllm-grpc-frontend[engine]"` form, and the `>=0.20`
+  floor per FR-005a.
 - **FR-017**: The contributing guide MUST document the release procedure: version bump → tag
   → pipeline publish → release-notes draft.
 - **FR-018**: A release-history document `docs/RELEASES.md` MUST exist and list the prior
@@ -401,9 +412,11 @@ history listing the version line.
 - **SC-007**: A reader can determine the correct install command for any of the three
   personas from the README in one read, and the release procedure and v0.1.0 history entry
   are both present.
-- **SC-007a**: The frontend README and the root install matrix both state the vLLM V1-API
-  prerequisite and its practical floor (`>=0.20`), and no package's metadata declares vLLM in any
-  form (hard dependency or optional extra) — the floor is documentation-only.
+- **SC-007a**: The frontend declares vLLM **only** as the optional `engine` extra
+  (`vllm>=0.20`) — never as a default/hard dependency — so `pip install vllm-grpc-frontend` resolves
+  with zero vLLM pulled, while `pip install "vllm-grpc-frontend[engine]"` resolves `vllm>=0.20`. The
+  frontend README and the root install matrix both state the vLLM V1-API prerequisite, the `[engine]`
+  extra, and the `>=0.20` floor. No package other than the frontend's `engine` extra references vLLM.
 - **SC-008**: No artifact is uploaded to any external package index (neither the test index
   nor the public index) and no name is permanently claimed as a result of this feature.
 - **SC-009**: Third-party dependency floors are bumped to the latest resolved versions

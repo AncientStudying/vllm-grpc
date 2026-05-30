@@ -84,13 +84,18 @@ for p in gen proxy frontend client; do test -f packages/$p/README.md; done   # p
 grep -q "pip install vllm-grpc-client" README.md                              # install matrix
 # Manual: consistency of package names/commands/terminology across README, ANALYSIS, CONTRIBUTING.
 
-# vLLM peer-prerequisite floor is documented, NOT in metadata (FR-005a / SC-007a):
-grep -Eiq "vllm.*v1|AsyncLLM" packages/frontend/README.md && grep -Eq ">=\s*0\.20|0\.20" packages/frontend/README.md
-grep -Eiq "vllm" README.md            # root install matrix names the vLLM prerequisite
-# And assert vLLM appears in NO built frontend metadata (hard dep or extra):
-python -m zipfile -l packages/frontend/dist/*.whl >/dev/null
-unzip -p packages/frontend/dist/*.whl "*/METADATA" | grep -i "vllm" \
-  && echo "FAIL: vLLM leaked into frontend metadata" || echo "ok: vLLM is pure peer"
+# vLLM floor: optional `engine` extra (machine-readable) + documented (FR-005a / SC-007a):
+grep -Eiq "vllm.*v1|AsyncLLM" packages/frontend/README.md \
+  && grep -Eq "engine\]|>=\s*0\.20|0\.20" packages/frontend/README.md
+grep -Eiq "vllm-grpc-frontend\[engine\]|vllm" README.md   # root install matrix names the extra/floor
+# Assert vLLM is ONLY under the engine extra, never an unconditional dependency:
+META=$(unzip -p packages/frontend/dist/*.whl "*/METADATA")
+echo "$META" | grep -Eq 'Requires-Dist: vllm>=0\.20; extra == "engine"' && echo "ok: engine extra declares vllm>=0.20"
+echo "$META" | grep -E '^Requires-Dist: vllm' | grep -vq 'extra == "engine"' \
+  && echo "FAIL: vLLM is an unconditional dependency" || echo "ok: no unconditional vLLM dep"
+# Base install pulls no vLLM:
+uv pip install --python /tmp/fe/bin/python --no-project --find-links packages/gen/dist packages/frontend/dist/*.whl
+/tmp/fe/bin/python -m pip freeze | grep -iq '^vllm' && echo "FAIL: base install pulled vLLM" || echo "ok: base install vLLM-free"
 ```
 
 ## No-upload invariant (FR-014a / FR-020 / SC-008)
