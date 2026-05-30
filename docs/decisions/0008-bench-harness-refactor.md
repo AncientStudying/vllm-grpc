@@ -106,13 +106,17 @@ The non-obvious sub-decisions:
   paths; changed REST-cohort prompt bytes; dropped `tuned_grpc_channels`/`tuned_grpc`
   cohort members; flat CLI (old `--mN` invocations no longer parse). Documented for
   users in `ANALYSIS.md` → "Bench-harness refactor (v0.0.1)" (FR-015).
-- **Symbol-name de-prefix deferred.** This beat de-prefixes module names + imports;
-  milestone-flavored *symbol* names (`M6_2SweepArtifact`, `M6_2_MAX_TOKENS_AXIS`, the
-  `M6_1_2_COHORTS`/`M6_1Path` home aliases, …) were intentionally left intact — the
-  import-only de-prefix is "milestone-agnostic enough" for v0.0.1. Whether to rename the
-  ~30 public symbols is tracked as a separate decision-gated task (T028a); if declined,
-  SC-003's interpretation is the import-level (not symbol-level) milestone-agnosticism
-  this ADR records.
+- **Symbol-name de-prefix — APPROVED (2026-05-30), not deferred.** The Phase 3 de-prefix
+  (T009–T018) renamed module names + imports only; milestone-flavored *symbol* names
+  (`M6_2SweepArtifact`, `M6_2_MAX_TOKENS_AXIS`, the `M6_1_2_COHORTS`/`M6_1Path` home
+  aliases, `M5_2*`, …) were left intact, and whether to also rename the ~30 public symbols
+  was raised as a decision-gated task (T028a). **The owner decided to proceed with the
+  symbol cleanup** — so v0.0.1 carries milestone-agnosticism through to the *symbol* level,
+  not just imports. SC-003 is therefore interpreted at the symbol level: no public symbol
+  in the harness carries a milestone prefix. (Had it been declined, SC-003 would have meant
+  only import-level agnosticism.) The mechanical rename is executed under T028a (one symbol
+  cluster at a time, gate green after each, collisions like `Path`/`Cell` resolved first);
+  every rename is a tag-recoverable BC break, consistent with the forward-only policy above.
 
 ## References
 
