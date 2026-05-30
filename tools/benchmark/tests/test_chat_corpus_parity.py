@@ -98,7 +98,6 @@ def test_grpc_chat_request_built_from_corpus_sample_carries_per_sample_fields() 
     """When a corpus sample is provided to ``_send_chat_rpc``, the gRPC
     request payload's max_tokens, temperature, seed come from the sample
     — not from a hardcoded default."""
-    from vllm_grpc_bench.m5_1_grpc_cohort import _send_chat_rpc  # noqa: F401  (import as guard)
 
     sample = RequestSample(
         id="corpus-x",
@@ -251,10 +250,10 @@ async def test_rest_cohort_corpus_none_falls_back_to_synthetic_prompts() -> None
             rtt_probe_n=1,
             warmup_n=0,
             client=client,
-            cell_id="fallback-test",
             # corpus omitted — fallback to synthetic
         )
-    for body in captured_bodies:
+    for i, body in enumerate(captured_bodies):
         prompt = body["messages"][0]["content"]
-        assert "M5.2 chat probe" in prompt
-        assert "fallback-test" in prompt
+        # FR-003: synthetic fallback uses the unified seed-keyed builder.
+        assert "M5.2 chat probe" not in prompt
+        assert f"seed={i}" in prompt

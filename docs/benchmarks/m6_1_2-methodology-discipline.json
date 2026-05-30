@@ -1,0 +1,573 @@
+{
+  "schema_version": "m6_1_2.v1",
+  "dispatch_mode": "concurrent",
+  "run_id": "2026-05-17T20:09:46Z-b0b9d72e",
+  "run_started_at": "2026-05-17T20:09:46Z",
+  "run_completed_at": "2026-05-17T20:20:14Z",
+  "run_meta": {
+    "git_sha": "",
+    "modal_region": "eu-west-1",
+    "base_seed": 42,
+    "model_identifier": "Qwen/Qwen3-8B",
+    "sweep_mode": "validate",
+    "seq_len": 19,
+    "run_started_at": "2026-05-17T20:09:46Z",
+    "run_completed_at": "2026-05-17T20:20:14Z",
+    "m6_1_1_baseline_pointer": "docs/benchmarks/m6_1_1-engine-cost-instrumentation.json"
+  },
+  "measurements": [
+    {
+      "path": "embed",
+      "concurrency": 1,
+      "cohort": "default_grpc",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 465.3263383603189,
+      "engine_ttft_ms_mean": null,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "embed",
+      "concurrency": 1,
+      "cohort": "rest_https_edge",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 490.7513808418298,
+      "engine_ttft_ms_mean": null,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "embed",
+      "concurrency": 1,
+      "cohort": "rest_plain_tcp",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 541.5407416402013,
+      "engine_ttft_ms_mean": null,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "embed",
+      "concurrency": 4,
+      "cohort": "default_grpc",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 574.3850434207707,
+      "engine_ttft_ms_mean": null,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "embed",
+      "concurrency": 4,
+      "cohort": "tuned_grpc_multiplexed",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 562.9248775186716,
+      "engine_ttft_ms_mean": null,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "embed",
+      "concurrency": 4,
+      "cohort": "rest_https_edge",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 603.6316225980408,
+      "engine_ttft_ms_mean": null,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "embed",
+      "concurrency": 4,
+      "cohort": "rest_plain_tcp",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 668.5572742013028,
+      "engine_ttft_ms_mean": null,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "embed",
+      "concurrency": 8,
+      "cohort": "default_grpc",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 712.3006950193667,
+      "engine_ttft_ms_mean": null,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "embed",
+      "concurrency": 8,
+      "cohort": "tuned_grpc_multiplexed",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 1068.184751640074,
+      "engine_ttft_ms_mean": null,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "embed",
+      "concurrency": 8,
+      "cohort": "rest_https_edge",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 741.5999401189038,
+      "engine_ttft_ms_mean": null,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "embed",
+      "concurrency": 8,
+      "cohort": "rest_plain_tcp",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 765.8846657798858,
+      "engine_ttft_ms_mean": null,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "chat_stream",
+      "concurrency": 1,
+      "cohort": "default_grpc",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 1809.5178525993833,
+      "engine_ttft_ms_mean": 47.8031,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "chat_stream",
+      "concurrency": 1,
+      "cohort": "rest_https_edge",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 1780.9479966995423,
+      "engine_ttft_ms_mean": 43.21529428000986,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "chat_stream",
+      "concurrency": 1,
+      "cohort": "rest_plain_tcp",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 1804.4004500997835,
+      "engine_ttft_ms_mean": 43.28050991999817,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "chat_stream",
+      "concurrency": 4,
+      "cohort": "default_grpc",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 1937.784026680456,
+      "engine_ttft_ms_mean": 89.30926,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "chat_stream",
+      "concurrency": 4,
+      "cohort": "tuned_grpc_multiplexed",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 1946.6038067397312,
+      "engine_ttft_ms_mean": 88.33464,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "chat_stream",
+      "concurrency": 4,
+      "cohort": "rest_https_edge",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 1922.9675074791885,
+      "engine_ttft_ms_mean": 87.46428466000452,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "chat_stream",
+      "concurrency": 4,
+      "cohort": "rest_plain_tcp",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 1940.8211857819697,
+      "engine_ttft_ms_mean": 90.23857090000092,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "chat_stream",
+      "concurrency": 8,
+      "cohort": "default_grpc",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 1969.4938901197747,
+      "engine_ttft_ms_mean": 97.67804,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "chat_stream",
+      "concurrency": 8,
+      "cohort": "tuned_grpc_multiplexed",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 1955.5771266997908,
+      "engine_ttft_ms_mean": 91.4255,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "chat_stream",
+      "concurrency": 8,
+      "cohort": "rest_https_edge",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 1951.7436242388794,
+      "engine_ttft_ms_mean": 96.8212860600056,
+      "top_failure_reasons": {}
+    },
+    {
+      "path": "chat_stream",
+      "concurrency": 8,
+      "cohort": "rest_plain_tcp",
+      "n_attempts": 50,
+      "n_successes": 50,
+      "wall_clock_ms_mean": 1972.1919467585394,
+      "engine_ttft_ms_mean": 98.19746897999721,
+      "top_failure_reasons": {}
+    }
+  ],
+  "classifier_notes": [],
+  "network_paths": {
+    "rest_https_edge": {
+      "endpoint_ip": "98.92.241.71",
+      "hops": [
+        {
+          "hop_number": 1,
+          "ip": "192.168.2.1",
+          "rtt_ms_or_null": 3.151,
+          "cloud_provider": "Internet Assigned Numbers Authority (IANA)"
+        },
+        {
+          "hop_number": 2,
+          "ip": "192.168.1.1",
+          "rtt_ms_or_null": 3.453,
+          "cloud_provider": "Internet Assigned Numbers Authority (IANA)"
+        },
+        {
+          "hop_number": 3,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 4,
+          "ip": "173.219.208.88",
+          "rtt_ms_or_null": 12.583,
+          "cloud_provider": "Optimum (SUDDE)"
+        },
+        {
+          "hop_number": 5,
+          "ip": "173.219.197.48",
+          "rtt_ms_or_null": 14.297,
+          "cloud_provider": "Optimum (SUDDE)"
+        },
+        {
+          "hop_number": 6,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 7,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 8,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 9,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 10,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        }
+      ],
+      "cloud_provider": "AWS",
+      "region": "us-east-1",
+      "probe_method": "tcptraceroute",
+      "probed_at_utc": "2026-05-17T20:09:46Z"
+    },
+    "rest_plain_tcp": {
+      "endpoint_ip": "100.26.248.115",
+      "hops": [
+        {
+          "hop_number": 1,
+          "ip": "192.168.2.1",
+          "rtt_ms_or_null": 2.855,
+          "cloud_provider": "Internet Assigned Numbers Authority (IANA)"
+        },
+        {
+          "hop_number": 2,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 3,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 4,
+          "ip": "173.219.208.88",
+          "rtt_ms_or_null": 17.842,
+          "cloud_provider": "Optimum (SUDDE)"
+        },
+        {
+          "hop_number": 5,
+          "ip": "173.219.197.48",
+          "rtt_ms_or_null": 17.689,
+          "cloud_provider": "Optimum (SUDDE)"
+        },
+        {
+          "hop_number": 6,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 7,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 8,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 9,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 10,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        }
+      ],
+      "cloud_provider": "AWS",
+      "region": "us-east-1",
+      "probe_method": "tcptraceroute",
+      "probed_at_utc": "2026-05-17T20:09:46Z"
+    },
+    "default_grpc": {
+      "endpoint_ip": "13.220.63.3",
+      "hops": [
+        {
+          "hop_number": 1,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 2,
+          "ip": "192.168.1.1",
+          "rtt_ms_or_null": 4.919,
+          "cloud_provider": "Internet Assigned Numbers Authority (IANA)"
+        },
+        {
+          "hop_number": 3,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 4,
+          "ip": "173.219.208.88",
+          "rtt_ms_or_null": 12.955,
+          "cloud_provider": "Optimum (SUDDE)"
+        },
+        {
+          "hop_number": 5,
+          "ip": "173.219.197.48",
+          "rtt_ms_or_null": 17.281,
+          "cloud_provider": "Optimum (SUDDE)"
+        },
+        {
+          "hop_number": 6,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 7,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 8,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 9,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 10,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 11,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 12,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 13,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 14,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        }
+      ],
+      "cloud_provider": "AWS",
+      "region": "us-east-1",
+      "probe_method": "tcptraceroute",
+      "probed_at_utc": "2026-05-17T20:09:46Z"
+    },
+    "tuned_grpc_multiplexed": {
+      "endpoint_ip": "13.220.63.3",
+      "hops": [
+        {
+          "hop_number": 1,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 2,
+          "ip": "192.168.1.1",
+          "rtt_ms_or_null": 5.211,
+          "cloud_provider": "Internet Assigned Numbers Authority (IANA)"
+        },
+        {
+          "hop_number": 3,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 4,
+          "ip": "173.219.208.88",
+          "rtt_ms_or_null": 18.648,
+          "cloud_provider": "Optimum (SUDDE)"
+        },
+        {
+          "hop_number": 5,
+          "ip": "173.219.197.48",
+          "rtt_ms_or_null": 12.971,
+          "cloud_provider": "Optimum (SUDDE)"
+        },
+        {
+          "hop_number": 6,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 7,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 8,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 9,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 10,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 11,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 12,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 13,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        },
+        {
+          "hop_number": 14,
+          "ip": null,
+          "rtt_ms_or_null": null,
+          "cloud_provider": null
+        }
+      ],
+      "cloud_provider": "AWS",
+      "region": "us-east-1",
+      "probe_method": "tcptraceroute",
+      "probed_at_utc": "2026-05-17T20:09:46Z"
+    }
+  },
+  "cohort_set": [
+    "default_grpc",
+    "rest_https_edge",
+    "rest_plain_tcp",
+    "tuned_grpc_multiplexed"
+  ]
+}

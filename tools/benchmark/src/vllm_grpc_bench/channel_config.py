@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 import grpc
 
@@ -79,7 +79,7 @@ class ChannelConfig:
         _validate_options(self.client_options)
 
 
-M1_BASELINE = ChannelConfig(
+BASELINE = ChannelConfig(
     name="m1-baseline",
     axis="baseline",
     description="No explicit channel options; matches M1 wire shape exactly.",
@@ -194,7 +194,7 @@ HTTP2_BDP_PROBE = ChannelConfig(
 # M6.1.1's working 3-cohort pattern.
 
 ALL_PRESETS: tuple[ChannelConfig, ...] = (
-    M1_BASELINE,
+    BASELINE,
     MAX_MSG_16MIB,
     MAX_MSG_UNLIMITED,
     KEEPALIVE_AGGRESSIVE,
@@ -213,4 +213,18 @@ def preset_by_name(name: str) -> ChannelConfig:
 
 def presets_for_axis(axis: Axis) -> tuple[ChannelConfig, ...]:
     """Return baseline + every candidate preset on the given axis."""
-    return (M1_BASELINE,) + tuple(c for c in ALL_PRESETS if c.axis == axis)
+    return (BASELINE,) + tuple(c for c in ALL_PRESETS if c.axis == axis)
+
+
+def _client_kwargs(cfg: ChannelConfig) -> dict[str, Any]:
+    """Build the ``grpc.aio.insecure_channel`` kwargs for a channel config.
+
+    Hoisted from ``m3_sweep`` in the v0.0.1 refactor (T008) so it sits with the
+    other channel-config helpers; consumers import it from here.
+    """
+    kwargs: dict[str, Any] = {}
+    if cfg.client_options:
+        kwargs["options"] = list(cfg.client_options)
+    if cfg.compression is not grpc.Compression.NoCompression:
+        kwargs["compression"] = cfg.compression
+    return kwargs

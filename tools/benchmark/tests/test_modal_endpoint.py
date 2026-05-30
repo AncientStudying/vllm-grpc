@@ -9,7 +9,7 @@ sourcing, ``static_endpoint_provider`` yields, and the URL-scheme stripper.
 from __future__ import annotations
 
 import pytest
-from vllm_grpc_bench.channel_config import M1_BASELINE
+from vllm_grpc_bench.channel_config import BASELINE
 from vllm_grpc_bench.mock_engine import MockEngine, MockEngineConfig
 from vllm_grpc_bench.modal_endpoint import (
     ModalDeployError,
@@ -28,7 +28,7 @@ async def test_provide_endpoint_refuses_when_token_env_unset(
     monkeypatch.delenv("M5_TEST_TOKEN", raising=False)
     engine = MockEngine(MockEngineConfig(hidden_size=2048, seed=0))
     with pytest.raises(ModalDeployError, match=r"MODAL_BENCH_TOKEN"):
-        async with provide_endpoint(engine, M1_BASELINE, region="us-east-1") as _:
+        async with provide_endpoint(engine, BASELINE, region="us-east-1") as _:
             pytest.fail("provide_endpoint should have raised before yielding")  # pragma: no cover
 
 
@@ -45,7 +45,7 @@ async def test_static_endpoint_provider_yields_endpoint_with_metadata(
     engine = MockEngine(MockEngineConfig(hidden_size=2048, seed=0))
     async with static_endpoint_provider(
         engine,
-        M1_BASELINE,
+        BASELINE,
         target="tcp://r3.modal.host:54321",
     ) as (target, credentials, metadata):
         # Scheme is stripped to plain host:port.
@@ -64,7 +64,7 @@ async def test_static_endpoint_provider_refuses_unset_token(
     monkeypatch.delenv("MODAL_BENCH_TOKEN", raising=False)
     engine = MockEngine(MockEngineConfig(hidden_size=2048, seed=0))
     with pytest.raises(ModalDeployError, match=r"MODAL_BENCH_TOKEN"):
-        async with static_endpoint_provider(engine, M1_BASELINE, target="r3.modal.host:54321") as _:
+        async with static_endpoint_provider(engine, BASELINE, target="r3.modal.host:54321") as _:
             pytest.fail("expected refusal")  # pragma: no cover
 
 

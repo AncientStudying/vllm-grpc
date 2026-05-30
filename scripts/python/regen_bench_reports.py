@@ -30,39 +30,6 @@ def main() -> None:
         description="Regenerate markdown benchmark reports from JSON result files."
     )
 
-    # M5.2 mode (see specs/019-m5-2-transport-tuning/contracts/m5_2-regenerator.md).
-    parser.add_argument(
-        "--m5_2-sidecar",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help="M5.2: gzipped events JSONL sidecar (e.g. docs/benchmarks/m5_2-...events.jsonl.gz).",
-    )
-    parser.add_argument(
-        "--m5_2-run-config",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help="M5.2: per-run config JSON (bench-results/m5_2-full/{run_id}.run_config.json).",
-    )
-    parser.add_argument(
-        "--m5_2-report-out",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help="M5.2: output path prefix (writes {prefix}.md and {prefix}.json).",
-    )
-    parser.add_argument(
-        "--m5_2-m5_1-published",
-        type=Path,
-        default=None,
-        metavar="PATH",
-        help=(
-            "M5.2: override path to M5.1's published JSON "
-            "(default docs/benchmarks/m5_1-rest-vs-grpc.json)."
-        ),
-    )
-
     # Phase 4.2 non-streaming
     parser.add_argument(
         "--rest",
@@ -101,71 +68,7 @@ def main() -> None:
         default=_DOCS / "phase-5-grpc-direct-streaming.json",
         metavar="PATH",
     )
-    # Phase 6 completions
-    parser.add_argument(
-        "--phase6-native",
-        type=Path,
-        default=_DOCS / "phase-6-completions-native.json",
-        metavar="PATH",
-    )
-    parser.add_argument(
-        "--phase6-proxy",
-        type=Path,
-        default=_DOCS / "phase-6-completions-proxy.json",
-        metavar="PATH",
-    )
-    parser.add_argument(
-        "--phase6-direct",
-        type=Path,
-        default=_DOCS / "phase-6-completions-grpc-direct.json",
-        metavar="PATH",
-    )
     args = parser.parse_args()
-
-    # M5.2 mode short-circuit. When --m5_2-sidecar and --m5_2-run-config are
-    # both set, dispatch into the round-trippable regenerator and exit per
-    # the contract's exit-code mapping. M5.2 mode does NOT also produce the
-    # phase-3/-4/-5/-6 markdown — it is the M5.2-only entry point.
-    if args.m5_2_sidecar is not None or args.m5_2_run_config is not None:
-        if args.m5_2_sidecar is None or args.m5_2_run_config is None:
-            print(
-                "Error: --m5_2-sidecar and --m5_2-run-config must be set together",
-                file=sys.stderr,
-            )
-            sys.exit(2)
-        from vllm_grpc_bench.m5_2_regen import (
-            RunConfigInvalid,
-            SidecarChecksumMismatch,
-            regen_m5_2,
-        )
-        from vllm_grpc_bench.m5_2_supersede import M5_1PublishedJsonUnavailable
-        from vllm_grpc_bench.m5_2_symmetry import SymmetryAssertionFailed
-
-        try:
-            result = regen_m5_2(
-                args.m5_2_sidecar,
-                args.m5_2_run_config,
-                report_out_prefix=args.m5_2_report_out,
-                m5_1_published_path=args.m5_2_m5_1_published,
-            )
-        except RunConfigInvalid as exc:
-            print(f"Error: M5.2 run config invalid: {exc}", file=sys.stderr)
-            sys.exit(4)
-        except SidecarChecksumMismatch as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            sys.exit(8)
-        except SymmetryAssertionFailed as exc:
-            print(f"Error: M5.2 symmetry assertion failed at report-build: {exc}", file=sys.stderr)
-            sys.exit(5)
-        except M5_1PublishedJsonUnavailable as exc:
-            print(f"Error: M5.1 published JSON unavailable: {exc}", file=sys.stderr)
-            sys.exit(9)
-        print(
-            f"M5.2 regenerated → {result.markdown_path} + {result.json_path}; "
-            f"records: {result.computed_aggregates_count}; "
-            f"sidecar SHA-256: {result.observed_sha256}"
-        )
-        sys.exit(0)
 
     from vllm_grpc_bench.compare import compare_cross, compare_three_way
     from vllm_grpc_bench.io import load_run
@@ -173,7 +76,6 @@ def main() -> None:
         write_cross_run_md,
         write_summary_md,
         write_three_way_md,
-        write_wire_size_comparison_md,
     )
 
     rest_path: Path = args.rest
@@ -257,22 +159,10 @@ def main() -> None:
         missing_p5 = [p for p in p5_paths if not p.exists()]
         print(f"Skipping Phase 5 streaming (missing: {', '.join(str(p) for p in missing_p5)})")
 
-    # Phase-6 completions comparison (skip if files not present)
-    p6_paths = (args.phase6_native, args.phase6_proxy, args.phase6_direct)
-    if all(p.exists() for p in p6_paths):
-        print(f"Loading {args.phase6_native} ...")
-        p6_native = load_run(args.phase6_native)
-        print(f"Loading {args.phase6_proxy} ...")
-        p6_proxy = load_run(args.phase6_proxy)
-        print(f"Loading {args.phase6_direct} ...")
-        p6_direct = load_run(args.phase6_direct)
-        combined_summaries = p6_native.summaries + p6_proxy.summaries + p6_direct.summaries
-        dest = _DOCS / "phase-6-completions-comparison.md"
-        write_wire_size_comparison_md(combined_summaries, dest)
-        print(f"Written {dest}")
-    else:
-        missing_p6 = [p for p in p6_paths if not p.exists()]
-        print(f"Skipping Phase 6 completions (missing: {', '.join(str(p) for p in missing_p6)})")
+    # Phase-6 completions wire-size regeneration was dropped at v0.0.1: its
+    # writer (``write_wire_size_comparison_md``) was deleted in T020 as an
+    # orphaned M4/M5-era report writer (ADR 0007). Recover the M6.2-era wire-size
+    # numbers from the `milestone/m6.2-token-budget` tag if needed.
 
     print("Done.")
 

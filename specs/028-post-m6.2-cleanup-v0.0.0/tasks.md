@@ -152,11 +152,11 @@ description: "Task list for v0.0.0 — Post-M6.2 Housekeeping (re-derived 2026-0
   4. FR-003 exception still satisfied: rerun the audit anchor `grep -hoE 'docs/benchmarks/[^"'\'']+\.json' tools/benchmark/src/vllm_grpc_bench/*.py | sort -u | while read p; do test -e "$p" && echo "$p"; done | grep -v 'm6_2-' | wc -l` returns `9`.
 - [ ] T038 Push the branch to origin: `git push -u origin chore/post-m6.2-cleanup-v0.0.0`.
 - [ ] T039 Open the PR via `gh pr create --base main --title "v0.0.0 — Post-M6.2 housekeeping" --body "$(cat …)"` using the PR body template from `quickstart.md` Step 7 (which names the FR-003 exception explicitly). Capture the PR URL.
-- [ ] T040 **[POST-MERGE]** After the PR merges to `main`, switch to `main` and pull: `git checkout main && git pull origin main`. Confirm the merge commit hash.
-- [ ] T041 **[POST-MERGE]** Create the annotated `v0.0.0` tag on the merge commit using the message body from `research.md` § R8 / `quickstart.md` Step 8 (which mentions the FR-003 exception in the body): `git tag -a v0.0.0 -m "$(cat …)"`. (Covers FR-015.)
-- [ ] T042 **[POST-MERGE]** Push the new tag: `git push origin v0.0.0`.
-- [ ] T043 **[POST-MERGE]** Final SC-008 verification: `git ls-remote --tags origin v0.0.0 milestone/m6.2-token-budget`. Expect both tags present on origin. Capture for release notes.
-- [ ] T044 **[POST-MERGE]** Final SC-003 verification: clone the repo into a scratch directory on a sweep-naive machine and confirm `git status` clean: `git clone https://github.com/AncientStudying/vllm-grpc.git /tmp/v000-fresh && cd /tmp/v000-fresh && git status`. Expect "nothing to commit, working tree clean." Remove the scratch clone after verification.
+- [X] T040 **[POST-MERGE]** After the PR merges to `main`, switch to `main` and pull: `git checkout main && git pull origin main`. Confirm the merge commit hash. **DONE 2026-05-29**: on `main`, fast-forwarded to merge commit `8c75ea0`.
+- [X] T041 **[POST-MERGE]** Create the annotated `v0.0.0` tag on the merge commit using the message body from `research.md` § R8 / `quickstart.md` Step 8 (which mentions the FR-003 exception in the body): `git tag -a v0.0.0 -m "$(cat …)"`. (Covers FR-015.) **DONE 2026-05-29**: annotated tag `v0.0.0` (object `ed1013a`) created on merge commit `8c75ea0`.
+- [X] T042 **[POST-MERGE]** Push the new tag: `git push origin v0.0.0`. **DONE 2026-05-29**: pushed (`* [new tag] v0.0.0 -> v0.0.0`).
+- [X] T043 **[POST-MERGE]** Final SC-008 verification: `git ls-remote --tags origin v0.0.0 milestone/m6.2-token-budget`. Expect both tags present on origin. Capture for release notes. **DONE 2026-05-29**: both present on origin — `v0.0.0` → `ed1013a`, `milestone/m6.2-token-budget` → `8b5b131`.
+- [X] T044 **[POST-MERGE]** Final SC-003 verification: clone the repo into a scratch directory on a sweep-naive machine and confirm `git status` clean: `git clone https://github.com/AncientStudying/vllm-grpc.git /tmp/v000-fresh && cd /tmp/v000-fresh && git status`. Expect "nothing to commit, working tree clean." Remove the scratch clone after verification. **DONE 2026-05-29**: fresh clone verified clean; scratch clone removed after verification.
 
 **Checkpoint**: All eight success criteria (SC-001 through SC-008) verified. Both annotated tags live on origin. The branch is merged. v0.0.0 ships.
 

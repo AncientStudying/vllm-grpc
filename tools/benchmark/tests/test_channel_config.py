@@ -4,11 +4,11 @@ import grpc
 import pytest
 from vllm_grpc_bench.channel_config import (
     ALL_PRESETS,
+    BASELINE,
     COMPRESSION_GZIP,
     HTTP2_BDP_PROBE,
     KEEPALIVE_AGGRESSIVE,
     KEEPALIVE_RELAXED,
-    M1_BASELINE,
     MAX_MSG_16MIB,
     MAX_MSG_UNLIMITED,
     ChannelConfig,
@@ -33,9 +33,9 @@ class TestPresets:
         }
 
     def test_m1_baseline_is_empty(self) -> None:
-        assert M1_BASELINE.server_options == ()
-        assert M1_BASELINE.client_options == ()
-        assert M1_BASELINE.compression is grpc.Compression.NoCompression
+        assert BASELINE.server_options == ()
+        assert BASELINE.client_options == ()
+        assert BASELINE.compression is grpc.Compression.NoCompression
 
     def test_compression_gzip_carries_compression(self) -> None:
         assert COMPRESSION_GZIP.compression is grpc.Compression.Gzip
@@ -101,7 +101,7 @@ class TestAllowedArgs:
 
 class TestLookups:
     def test_preset_by_name_known(self) -> None:
-        assert preset_by_name("m1-baseline") is M1_BASELINE
+        assert preset_by_name("m1-baseline") is BASELINE
 
     def test_preset_by_name_unknown_raises(self) -> None:
         with pytest.raises(KeyError):

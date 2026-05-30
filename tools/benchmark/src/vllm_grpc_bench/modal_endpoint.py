@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from vllm_grpc_bench.channel_config import ChannelConfig
-from vllm_grpc_bench.m3_types import EndpointTuple
+from vllm_grpc_bench.types import EndpointTuple
 
 if TYPE_CHECKING:
     from vllm_grpc_bench.mock_engine import MockEngine

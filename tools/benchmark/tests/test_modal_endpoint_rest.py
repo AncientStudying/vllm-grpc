@@ -13,7 +13,7 @@ clear-error path when ``rest`` is missing from the dict.
 from __future__ import annotations
 
 import pytest
-from vllm_grpc_bench.channel_config import M1_BASELINE
+from vllm_grpc_bench.channel_config import BASELINE
 from vllm_grpc_bench.mock_engine import MockEngine, MockEngineConfig
 from vllm_grpc_bench.modal_endpoint import (
     ModalDeployError,
@@ -84,7 +84,7 @@ async def test_legacy_grpc_only_provide_endpoint_unchanged(
     monkeypatch.delenv("MODAL_BENCH_TOKEN", raising=False)
     engine = MockEngine(MockEngineConfig(hidden_size=2048, seed=0))
     with pytest.raises(ModalDeployError, match=r"MODAL_BENCH_TOKEN"):
-        async with provide_endpoint(engine, M1_BASELINE, region="us-east-1") as _:
+        async with provide_endpoint(engine, BASELINE, region="us-east-1") as _:
             pytest.fail("expected refusal")  # pragma: no cover
 
 

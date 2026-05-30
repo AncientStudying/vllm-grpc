@@ -422,3 +422,56 @@ To recover a deleted historical narrative:
     git show milestone/m5.2-transport-tuning:docs/benchmarks/m5_2-transport-vs-tuning.md
 
 Replace `milestone/m5.2-transport-tuning` with the milestone tag whose era owns the file, and the path with the file you want. `git tag --list 'milestone/*'` lists every available tag.
+
+### Bench-harness refactor (v0.0.1)
+
+After M6.2 closed, the `tools/benchmark/` harness still carried every milestone's
+sweep code side-by-side — 84 source modules and 137 test files, most named by
+milestone (`m3_*`, `m4_*`, `m5_2_*`, `m6_1_3_*`, `m6_2_*`, …). v0.0.1 refactored
+the live tree into a **forward-only codebase organized by function, not by
+milestone**: generic homes (`types.py`, `prompts.py`, `timing.py`,
+`exceptions.py`), one `reporter.py`, and de-prefixed sweep/driver/validate modules
+(`sweep.py`, `rpc_driver.py`, `validate.py`, `resume.py`, `crossover.py`,
+`null_anchor.py`, `anchor_trajectory.py`, `sub_probe.py`, `network_probe.py`,
+`engine_cost.py`, `seq_len.py`, `grpc_servicers.py`). Result: **35 source modules
+(−58%) and 41 test files (−70%)**, with zero milestone-prefixed module names and
+zero milestone-prefixed import statements anywhere in `src` or `tests`. The
+non-obvious architectural choices are recorded in
+[ADR 0008](docs/decisions/0008-bench-harness-refactor.md) (citing the feature's
+`research.md`), with two mid-flight course corrections in
+[ADR 0006](docs/decisions/0006-cli-keep-bench-add-sweep.md) (keep `bench`/`compare*`,
+add `sweep` subcommand) and [ADR 0007](docs/decisions/0007-m3-sweep-servicer-relocation.md)
+(relocate the live `m3_sweep` servicers to `grpc_servicers.py`).
+
+**Deliberate backward-compatibility breaks** (all forward-only, all recoverable —
+see below):
+
+- **Renamed modules + import paths.** Every `from vllm_grpc_bench.m6_2_sweep import …`
+  (and all other `m*` module paths) is gone; the surfaces live in their de-prefixed
+  homes.
+- **Unified prompt format.** The two divergent chat-prompt builders collapsed to a
+  single seed+digest `build_chat_prompt(seed)` in `prompts.py`; `rest_cohort` was
+  repointed at it, so **the prompt bytes the REST cohort sends changed** (the M5.2
+  `iteration`/`cell_id` builder is gone).
+- **Dropped cohort members.** `CohortKind` collapsed from the M5.2 6-member enum to
+  the forward **4 members** (`rest_https_edge`, `rest_plain_tcp`, `default_grpc`,
+  `tuned_grpc_multiplexed`); the vestigial `tuned_grpc_channels` / `tuned_grpc`
+  members and their dead `symmetric_prompts` branches were removed.
+- **Flat CLI.** The ~30 `--m3`…`--m6_1_3` flag groups and their dispatch branches
+  were deleted; the surviving operator flags de-prefixed (`--m6_2-modal-region` →
+  `--modal-region`, etc.). The CLI is now `bench` (no-arg default) +
+  `{compare, compare-cross, compare-three-way, sweep}` subcommands — **old
+  `--mN` invocations no longer parse.**
+
+**Recovery path.** Every removed module, dropped cohort member, old prompt
+convention, and retired CLI invocation is intact at its `milestone/m*` tag (all 16
+tags, M2→M6.2, are on origin). For example, the full M5.2 harness + its 6-member
+cohort enum + its prompt builder:
+
+    git show milestone/m5.2-transport-tuning:tools/benchmark/src/vllm_grpc_bench/m5_2_sweep.py
+
+The milestone-named **data pointers were deliberately preserved** — the published
+deliverable `docs/benchmarks/m6_2-token-budget.{json,md}` and every baseline-chain
+input the sweep reads at runtime (e.g. `m6_1_3-attribution-closure.json`) keep their
+names on disk; only *code* was de-prefixed. Re-targeting those output paths to a new
+milestone's artifacts is future (M7) scope.

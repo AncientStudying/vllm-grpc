@@ -94,7 +94,7 @@ async def serve_bench(token: str, region: str) -> dict[str, object]:
         health_pb2,
         health_pb2_grpc,
     )
-    from vllm_grpc_bench.m3_sweep import M3ChatServicer, M3CompletionsServicer
+    from vllm_grpc_bench.grpc_servicers import ChatServicer, CompletionsServicer
     from vllm_grpc_bench.mock_engine import MockEngine, MockEngineConfig
 
     class _HealthServicer(health_pb2_grpc.HealthServicer):  # type: ignore[misc]
@@ -145,9 +145,9 @@ async def serve_bench(token: str, region: str) -> dict[str, object]:
     )
 
     server = grpc.aio.server(interceptors=[_BearerTokenInterceptor(token)])
-    chat_pb2_grpc.add_ChatServiceServicer_to_server(M3ChatServicer(engine), server)
+    chat_pb2_grpc.add_ChatServiceServicer_to_server(ChatServicer(engine), server)
     completions_pb2_grpc.add_CompletionsServiceServicer_to_server(
-        M3CompletionsServicer(engine), server
+        CompletionsServicer(engine), server
     )
     health_pb2_grpc.add_HealthServicer_to_server(_HealthServicer(), server)
     server.add_insecure_port(f"[::]:{_GRPC_PORT}")
