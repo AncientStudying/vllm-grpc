@@ -144,8 +144,8 @@ async def _modal_backed_sweep(args: argparse.Namespace, config: M6_1_2SweepConfi
     from dataclasses import replace
 
     from vllm_grpc_bench.m6_1_rpc_driver import provide_m6_1_2_rpc_driver
-    from vllm_grpc_bench.m6_1_seq_len import pin_seq_len_at_sweep_start
     from vllm_grpc_bench.modal_endpoint import provide_m6_endpoint
+    from vllm_grpc_bench.seq_len import pin_seq_len_at_sweep_start
 
     token_env = str(getattr(args, "m6_1_2_modal_token_env", "MODAL_BENCH_TOKEN"))
 

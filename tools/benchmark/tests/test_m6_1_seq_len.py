@@ -1,11 +1,11 @@
-"""Tests for ``m6_1_seq_len`` — seq_len pinning helper (FR-028)."""
+"""Tests for ``seq_len`` — seq_len pinning helper (FR-028)."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
-from vllm_grpc_bench import m6_1_seq_len
+from vllm_grpc_bench import seq_len
 
 
 class _StubTokenizer:
@@ -22,35 +22,35 @@ class _StubTokenizer:
 def test_pin_seq_len_returns_token_count(monkeypatch: pytest.MonkeyPatch) -> None:
     """Slow path: tokenizer is consulted when (model, sample) isn't precomputed.
     Use a synthetic model identifier that bypasses the precomputed lookup."""
-    monkeypatch.setattr(m6_1_seq_len, "_tokenizer_cache", {})
+    monkeypatch.setattr(seq_len, "_tokenizer_cache", {})
 
     def fake_load(model_identifier: str) -> Any:
         return _StubTokenizer(token_count=8)
 
-    monkeypatch.setattr(m6_1_seq_len, "_load_tokenizer", fake_load)
-    assert m6_1_seq_len.pin_seq_len_at_sweep_start("stub-model-not-precomputed") == 8
+    monkeypatch.setattr(seq_len, "_load_tokenizer", fake_load)
+    assert seq_len.pin_seq_len_at_sweep_start("stub-model-not-precomputed") == 8
 
 
 def test_pin_seq_len_rejects_zero_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(m6_1_seq_len, "_tokenizer_cache", {})
+    monkeypatch.setattr(seq_len, "_tokenizer_cache", {})
 
     def fake_load(model_identifier: str) -> Any:
         return _StubTokenizer(token_count=0)
 
-    monkeypatch.setattr(m6_1_seq_len, "_load_tokenizer", fake_load)
+    monkeypatch.setattr(seq_len, "_load_tokenizer", fake_load)
     with pytest.raises(RuntimeError):
-        m6_1_seq_len.pin_seq_len_at_sweep_start("stub-model-not-precomputed")
+        seq_len.pin_seq_len_at_sweep_start("stub-model-not-precomputed")
 
 
 def test_pin_seq_len_returns_positive_integer(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(m6_1_seq_len, "_tokenizer_cache", {})
+    monkeypatch.setattr(seq_len, "_tokenizer_cache", {})
 
     def fake_load(model_identifier: str) -> Any:
         return _StubTokenizer(token_count=5)
 
-    monkeypatch.setattr(m6_1_seq_len, "_load_tokenizer", fake_load)
+    monkeypatch.setattr(seq_len, "_load_tokenizer", fake_load)
     # Use the slow path so the stub takes effect.
-    result = m6_1_seq_len.pin_seq_len_at_sweep_start("stub-model-not-precomputed")
+    result = seq_len.pin_seq_len_at_sweep_start("stub-model-not-precomputed")
     assert isinstance(result, int)
     assert result >= 1
 
@@ -62,7 +62,7 @@ def test_pin_seq_len_fast_path_skips_tokenizer_for_precomputed_pair(
     calling ``_load_tokenizer`` (so ``transformers`` doesn't need to be
     importable). Critical for CI runs that skip the ``investigation``
     dependency group."""
-    monkeypatch.setattr(m6_1_seq_len, "_tokenizer_cache", {})
+    monkeypatch.setattr(seq_len, "_tokenizer_cache", {})
 
     def fake_load_should_not_be_called(model_identifier: str) -> Any:
         raise AssertionError(
@@ -70,10 +70,10 @@ def test_pin_seq_len_fast_path_skips_tokenizer_for_precomputed_pair(
             "fast path should have short-circuited"
         )
 
-    monkeypatch.setattr(m6_1_seq_len, "_load_tokenizer", fake_load_should_not_be_called)
-    assert m6_1_seq_len.pin_seq_len_at_sweep_start("Qwen/Qwen3-8B") == 19
+    monkeypatch.setattr(seq_len, "_load_tokenizer", fake_load_should_not_be_called)
+    assert seq_len.pin_seq_len_at_sweep_start("Qwen/Qwen3-8B") == 19
     # Default arg also hits the fast path.
-    assert m6_1_seq_len.pin_seq_len_at_sweep_start() == 19
+    assert seq_len.pin_seq_len_at_sweep_start() == 19
 
 
 def test_pin_seq_len_precomputed_table_has_canonical_default_pair() -> None:
@@ -82,5 +82,5 @@ def test_pin_seq_len_precomputed_table_has_canonical_default_pair() -> None:
     the default sweep config back onto the slow tokenizer path."""
     assert (
         "Qwen/Qwen3-8B",
-        m6_1_seq_len._M6_TEXT_DIGEST_SAMPLE,
-    ) in m6_1_seq_len._PRECOMPUTED_SEQ_LEN
+        seq_len._M6_TEXT_DIGEST_SAMPLE,
+    ) in seq_len._PRECOMPUTED_SEQ_LEN

@@ -5,7 +5,7 @@ Reuses M6.1's stack verbatim:
 * :func:`modal_endpoint.provide_m6_endpoint` to deploy / reuse the Modal app.
 * :func:`m6_1_rpc_driver.provide_m6_1_rpc_driver` to open the gRPC + REST
   clients and yield a per-RPC dispatcher.
-* :func:`m6_1_seq_len.pin_seq_len_at_sweep_start` to fix ``seq_len`` at the
+* :func:`seq_len.pin_seq_len_at_sweep_start` to fix ``seq_len`` at the
   sweep start.
 
 Adds M6.1.1-specific aggregation on top of M6.1's per-RPC ``RPCResult``
@@ -51,13 +51,13 @@ from vllm_grpc_bench.m6_1_1_types import (
     Phase1RunRecord,
     Phase2Choice,
 )
-from vllm_grpc_bench.m6_1_seq_len import pin_seq_len_at_sweep_start
 from vllm_grpc_bench.m6_1_types import (
     M6_1_CELLS,
     M6_1_COHORTS,
     M6_1Cell,
 )
 from vllm_grpc_bench.m6_sweep import RPCDriver, RPCResult
+from vllm_grpc_bench.seq_len import pin_seq_len_at_sweep_start
 
 # --- Progress reporter (stderr lines as the sweep advances) ----------------
 

@@ -8,7 +8,7 @@ seeded with the same scalar so the wire bytes are bit-reproducible across
 re-runs (SC-006).
 
 Cell shape (``[seq_len, hidden_size=4096] fp16``) is pinned at sweep start
-by :mod:`vllm_grpc_bench.m6_1_seq_len`; only the values vary per RPC.
+by :mod:`vllm_grpc_bench.seq_len`; only the values vary per RPC.
 """
 
 from __future__ import annotations

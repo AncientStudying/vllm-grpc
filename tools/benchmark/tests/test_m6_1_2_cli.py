@@ -360,6 +360,6 @@ def test_pin_seq_len_returns_19_for_qwen3_8b() -> None:
     RESOURCE_EXHAUSTED issue stems from sending seq_len=512 instead of 19;
     this test pins the expectation so future planners can't accidentally
     raise the default."""
-    from vllm_grpc_bench.m6_1_seq_len import pin_seq_len_at_sweep_start
+    from vllm_grpc_bench.seq_len import pin_seq_len_at_sweep_start
 
     assert pin_seq_len_at_sweep_start("Qwen/Qwen3-8B") == 19

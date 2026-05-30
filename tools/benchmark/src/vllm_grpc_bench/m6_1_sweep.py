@@ -501,7 +501,7 @@ def _read_pinned_vllm_version() -> str:
 def _resolve_seq_len(model_identifier: str) -> int:
     """Attempt to pin seq_len; fall back to a safe default if HuggingFace unreachable."""
     try:
-        from vllm_grpc_bench.m6_1_seq_len import pin_seq_len_at_sweep_start
+        from vllm_grpc_bench.seq_len import pin_seq_len_at_sweep_start
 
         return pin_seq_len_at_sweep_start(model_identifier)
     except Exception:  # noqa: BLE001
