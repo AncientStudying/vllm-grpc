@@ -77,6 +77,10 @@ web server's dependencies into their environment.
   cap (an upper cap would hard-block installs on newer Python and can't be relaxed for
   already-published versions); advertise the tested 3.12 via trove classifiers. The root
   workspace's `<3.13` lock is a dev/lock concern, not a published-library constraint.
+- Q: How is each package's version number sourced? → A: Static literals — `version = "0.1.0"`
+  in each `pyproject.toml`. No VCS-derived versioning. The release procedure bumps all four
+  packages in lockstep as one documented step, then tags (`milestone/*` tags never drive a
+  package version).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -231,6 +235,9 @@ history listing the version line.
 - **FR-003a**: All four packages MUST declare `requires-python = ">=3.12"` with no upper
   version cap; the tested Python version (3.12) is advertised via trove classifiers rather
   than an upper bound.
+- **FR-003b**: Each package's version MUST be a static literal (`version = "0.1.0"`) in its
+  `pyproject.toml` — no VCS-derived versioning. The release procedure (FR-017) bumps all four
+  packages in lockstep as a single documented step before tagging.
 - **FR-004**: The proxy and the frontend packages MUST each expose a console-script entry
   point that launches the respective server process.
 - **FR-005**: The frontend package MUST treat vLLM as a peer / documented prerequisite —
