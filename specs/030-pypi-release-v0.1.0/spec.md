@@ -64,6 +64,19 @@ web server's dependencies into their environment.
   Additionally, simplify the language in the top-level `README.md` and `ANALYSIS.md` sections,
   and scan/review all top-level documentary files (`README.md`, `ANALYSIS.md`,
   `CONTRIBUTING.md`) for simplicity, clarity, and consistency.
+- Q: How do the generated proto stubs reach the `vllm-grpc-gen` distribution? → A: Build-time
+  generation — a build hook runs `protoc` (grpcio-tools) during the package build so the
+  stubs are produced into the wheel/sdist and excluded from version control, keeping `proto/`
+  the single source of truth (honors PLAN.md §4).
+- Q: Where should the protobuf/gRPC runtime dependencies be declared? → A: `vllm-grpc-gen`
+  declares `protobuf>=6.33` and `grpcio>=1.80` (it owns the generated code that imports them),
+  making it independently installable; the three leaf packages inherit `protobuf` transitively
+  and keep their own direct `grpcio>=1.80`. (The generated gRPC stubs hard-require
+  `grpcio>=1.80.0`, so the floor is mandatory, not merely "latest".)
+- Q: What `requires-python` should the published packages declare? → A: `>=3.12` with no upper
+  cap (an upper cap would hard-block installs on newer Python and can't be relaxed for
+  already-published versions); advertise the tested 3.12 via trove classifiers. The root
+  workspace's `<3.13` lock is a dev/lock concern, not a published-library constraint.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -215,6 +228,9 @@ history listing the version line.
   command, a link back to the repository, **and a dedicated usage/examples section with a
   short, copy-pasteable snippet** (per the Option C documentation set).
 - **FR-003**: All four packages MUST be versioned at `0.1.0` for this release.
+- **FR-003a**: All four packages MUST declare `requires-python = ">=3.12"` with no upper
+  version cap; the tested Python version (3.12) is advertised via trove classifiers rather
+  than an upper bound.
 - **FR-004**: The proxy and the frontend packages MUST each expose a console-script entry
   point that launches the respective server process.
 - **FR-005**: The frontend package MUST treat vLLM as a peer / documented prerequisite —
@@ -229,12 +245,22 @@ history listing the version line.
 - **FR-006b**: Each third-party dependency floor MUST be bumped to the latest released
   version currently resolved in `uv.lock` — at minimum `grpcio>=1.80`, `fastapi>=0.136`,
   `uvicorn>=0.46` — and the published packages MUST remain installable and pass their tests
-  at those floors.
+  at those floors. The `grpcio>=1.80` floor is additionally mandatory because the generated
+  gRPC stubs hard-require `grpcio>=1.80.0` at runtime.
+- **FR-006c**: `vllm-grpc-gen` MUST declare the runtime dependencies its generated code
+  imports — `protobuf>=6.33` and `grpcio>=1.80` — so it is independently installable and
+  importable. The three leaf packages inherit `protobuf` transitively via `gen` and retain a
+  direct `grpcio>=1.80` dependency.
 
 #### Build & install verification
 
 - **FR-007**: The build process MUST produce both a wheel and a source distribution for each
   of the four packages.
+- **FR-007a**: The `vllm-grpc-gen` build MUST generate the protobuf/gRPC stubs from `proto/`
+  at build time (a build hook invoking `protoc`/grpcio-tools), declare grpcio-tools as a
+  build-system requirement, and include the generated stubs in both the wheel and the sdist.
+  The generated stubs MUST remain excluded from version control; `proto/` stays the single
+  source of truth.
 - **FR-008**: Each produced wheel MUST install successfully into a clean, isolated
   environment.
 - **FR-008a**: Each produced distribution's metadata and rendered long-description MUST pass
@@ -367,6 +393,9 @@ history listing the version line.
 - **SC-012**: Across all top-level documentary files, package names, install commands, and
   shared terminology are consistent (zero contradictory or stale variants), and every acronym
   or milestone shorthand is defined or linked on first use within each file.
+- **SC-013**: The `vllm-grpc-gen` wheel/sdist contains the generated proto stubs (produced at
+  build time, not from version control), and installing `vllm-grpc-gen` alone into a clean
+  environment imports `vllm_grpc.v1` successfully (its `protobuf`/`grpcio` deps resolve).
 
 ## Assumptions
 
@@ -383,8 +412,11 @@ history listing the version line.
 - Both the test-index upload and the real public-index publish are deliberate, manually-
   triggered operator actions taken after this feature merges; this feature delivers and
   validates everything needed for those actions but performs neither.
-- The existing per-package source layout and runtime logic are correct; only packaging
-  concerns (metadata, console scripts, READMEs, index-resolvable dependencies) are in scope.
+- The existing per-package source layout and runtime logic are correct apart from the
+  in-scope changes named in the requirements: packaging concerns (metadata, console scripts,
+  READMEs, index-resolvable dependencies), the build-time stub generation for `vllm-grpc-gen`
+  (FR-007a), the dependency floor bumps (FR-006b), and the deprecated-API remediation
+  (FR-021–FR-023).
 
 ## Dependencies
 

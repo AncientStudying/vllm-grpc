@@ -42,6 +42,11 @@
   `CHANGELOG.md` + `docs/RELEASES.md`; simplicity/clarity bar; simplify top-level README.md
   and ANALYSIS.md; review all top-level docs for clarity and consistency). FR-006a/b, 008a,
   013/014a, 021–026 and SC-009–012 added/updated accordingly.
+- `/speckit-clarify` general pass (2nd run, 2026-05-30) added three build-correctness
+  decisions: build-time proto-stub generation for `vllm-grpc-gen` (FR-007a), runtime-dep
+  declaration split — `gen` owns `protobuf>=6.33`+`grpcio>=1.80`, leaves inherit (FR-006c) —
+  and `requires-python = ">=3.12"` with no upper cap (FR-003a). SC-013 added. Verified the
+  generated gRPC stubs hard-require `grpcio>=1.80.0`, reinforcing FR-006b.
 - Specification is technology-aware where unavoidable (it is a packaging/release feature)
   but kept outcome-focused: requirements name capabilities (e.g. "console-script entry
   point", "Trusted Publishing / OIDC", "test index dry-run") that are intrinsic to the
