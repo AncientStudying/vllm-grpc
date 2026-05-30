@@ -27,13 +27,13 @@ The "entities" of a refactor are **modules**, **symbols**, **tests**, **CLI flag
 | `m6_2_sub_probe.py` | `sub_probe.py` | — |
 | `m6_1_1_timing.py` | `timing.py` | (= Entity 1 timing home) |
 | `m6_1_2_network_probe.py` | `network_probe.py` | — |
-| `m6_engine_cost.py` | `engine_cost.py` | merge candidate → `metrics.py` |
+| `m6_engine_cost.py` | `engine_cost.py` | single de-prefixed home for cost parsers (imported by `rpc_driver`; not a merge candidate) |
 
 ## Entity 3 — Retained shared infra (repointed at homes)
 
 `__init__.py`, `__main__.py` (CLI stripped — Entity 6), `runner.py`, `metrics.py`, `reporter.py` (consolidated — Entity 4), `modal_endpoint.py`, `rest_cohort.py`, `rest_shim.py`, `channel_config.py` (absorbs `_client_kwargs`), `corpus.py`, `mock_engine.py`, `fake_server.py`, `io.py`, `rtt_probe.py`.
 
-**Merge candidates** (merge only where cohesion improves — SC-002 directional, not forced): `symmetric_prompts.py`→`prompts.py`; `ttft.py`→`metrics.py` (tiny); `engine_cost.py`→`metrics.py`. **Audit-then-decide**: `compare.py`, `ci.py`, `m6_1_torch_pin` (keep+de-prefix if a surviving path uses them, else delete — research.md R2 open item).
+**Merge candidates** (merge only where cohesion improves — SC-002 directional, not forced): `symmetric_prompts.py`→`prompts.py`; `ttft.py`→`metrics.py` (tiny). (`engine_cost.py` is its own de-prefixed home, not a merge candidate.) **Audit-then-decide**: `compare.py`, `ci.py`, `m6_1_torch_pin` (keep+de-prefix if a surviving path uses them, else delete — research.md R2 open item).
 
 ## Entity 4 — Reporter consolidation (FR-005)
 

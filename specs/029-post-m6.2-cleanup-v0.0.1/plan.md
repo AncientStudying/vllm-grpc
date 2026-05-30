@@ -92,7 +92,7 @@ tools/benchmark/
 │   ├── rpc_driver.py          # ← m6_2_rpc_driver (+ live helpers from m6_rpc_driver, m6_1_rpc_driver)
 │   ├── validate.py            # ← m6_2_validate (canonical-path constants PRESERVED, FR-019)
 │   ├── resume.py crossover.py null_anchor.py anchor_trajectory.py sub_probe.py  # ← m6_2_*
-│   ├── engine_cost.py         # ← m6_engine_cost (merge candidate: metrics.py)
+│   ├── engine_cost.py         # ← m6_engine_cost (single home for cost parsers; not merged)
 │   ├── network_probe.py       # ← m6_1_2_network_probe
 │   │   # ── retained shared infra (some merge candidates) ──
 │   ├── reporter.py            # CONSOLIDATED: M6.2 reporter content; M1-era reporter deleted (FR-005)
@@ -120,7 +120,7 @@ tools/benchmark/
 
 Re-evaluated after Phase 1 artifacts (research.md, data-model.md, contracts/, quickstart.md):
 
-- **III Phase Discipline** — still PASS: the disposition table (research.md) confirms every change lands inside `tools/benchmark/`; the only `docs/` edits are `ANALYSIS.md` (FR-015, required output) and preserved benchmark artifacts (FR-019). No M7 re-targeting performed.
+- **III Phase Discipline** — still PASS: the disposition table (research.md) confirms every change lands inside `tools/benchmark/`; the only `docs/` edits are `ANALYSIS.md` (FR-015, required output), a new ADR under `docs/decisions/` (FR-015 / constitution Development Workflow), and preserved benchmark artifacts (FR-019). No M7 re-targeting performed.
 - **IV CI is the Merge Gate** — still PASS: the per-step bisectable sequence (quickstart.md) keeps `mypy --strict` + `ruff` + `pytest` green at every commit; the test rename map (data-model.md) preserves coverage of all retained code.
 - **V Honest Measurement** — still PASS: data-model.md's "preserved data pointers" entity confirms no artifact filename or baseline input changes.
 
