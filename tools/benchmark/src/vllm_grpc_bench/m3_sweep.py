@@ -46,6 +46,7 @@ from vllm_grpc_bench.channel_config import (
     M1_BASELINE,
     Axis,
     ChannelConfig,
+    _client_kwargs,
     presets_for_axis,
 )
 from vllm_grpc_bench.ci import estimate, is_winner
@@ -256,15 +257,6 @@ async def serve_in_process_adapter(
     """
     async with serve_in_process(engine, channel_config) as addr:
         yield (addr, None, None)
-
-
-def _client_kwargs(cfg: ChannelConfig) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {}
-    if cfg.client_options:
-        kwargs["options"] = list(cfg.client_options)
-    if cfg.compression is not grpc.Compression.NoCompression:
-        kwargs["compression"] = cfg.compression
-    return kwargs
 
 
 # ---------------------------------------------------------------------------

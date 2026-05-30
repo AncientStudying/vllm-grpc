@@ -38,14 +38,13 @@ from typing import Any
 import grpc
 from vllm_grpc.v1 import chat_pb2, chat_pb2_grpc, completions_pb2_grpc
 
-from vllm_grpc_bench.channel_config import ChannelConfig
+from vllm_grpc_bench.channel_config import ChannelConfig, _client_kwargs
 from vllm_grpc_bench.corpus import RequestSample
 from vllm_grpc_bench.m3_sweep import (
     DEFAULT_CHAT_MAX_TOKENS,
     _build_chat_request,
     _build_embed_request,
     _classify_error,
-    _client_kwargs,
     build_chat_prompt,
 )
 from vllm_grpc_bench.m3_types import GRPCSubCohortKind, Path_, RTTRecord, Sample

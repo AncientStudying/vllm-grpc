@@ -29,8 +29,12 @@ import grpc
 import httpx
 from vllm_grpc.v1 import completions_pb2
 
-from vllm_grpc_bench.channel_config import M1_BASELINE, MAX_MSG_16MIB, ChannelConfig
-from vllm_grpc_bench.m3_sweep import _client_kwargs
+from vllm_grpc_bench.channel_config import (
+    M1_BASELINE,
+    MAX_MSG_16MIB,
+    ChannelConfig,
+    _client_kwargs,
+)
 from vllm_grpc_bench.m3_types import RTTRecord
 from vllm_grpc_bench.m6_1_2_types import M6_1_2CohortKind
 from vllm_grpc_bench.m6_1_seed import build_torch_generator_for_rpc

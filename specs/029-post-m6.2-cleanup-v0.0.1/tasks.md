@@ -33,13 +33,13 @@ description: "Task list for v0.0.1 — Bench-harness refactor"
 
 **⚠️ CRITICAL**: No de-prefix or deletion work begins until this phase is complete.
 
-- [ ] T004 [P] Create `$SRC/exceptions.py` with `SchemaValidationFailed` hoisted from `m5_2_regen.M5_2SchemaValidationFailed`. Gate green.
-- [ ] T005 [P] Create `$SRC/timing.py` as the de-prefixed `m6_1_1_timing` (`extract_grpc_timings`, `extract_rest_timings`, `timing_checkpoint_to_payload`, `TimingCheckpoint`). Gate green.
-- [ ] T006 Create `$SRC/types.py` with all hoisted types (data-model Entity 1): `CohortKind` (4-member, research.md R3), `COHORTS`, `cohorts_at_concurrency`, `CELLS`, `Cell`, `Path`, `RTTRecord`, `EndpointTuple`, `RunCohort`, `RPCResult`, `NetworkPath`, `Path_`, `RESTCohortRecord`, `RestHttpsEdgeCohortRecord`, `CloudProvider`, `NetworkPathError`, `NetworkPathHop`, `CohortOmissions` — sourced from `m3_types`/`m6_1_types`/`m6_1_2_types`/`m6_sweep`/`m6_2_types`. Gate green.
-- [ ] T007 Create `$SRC/prompts.py` with the single unified seed+digest `build_chat_prompt`, `DEFAULT_CHAT_MAX_TOKENS`, and the `m6_2_prompt_source` wiring (collapsing `m3_sweep.build_chat_prompt` + `m6_rpc_driver._build_chat_prompt`, FR-003). Gate green.
-- [ ] T008 Absorb `_client_kwargs` (from `m3_sweep`) into `$SRC/channel_config.py`. Gate green.
+- [X] T004 [P] Create `$SRC/exceptions.py` with `SchemaValidationFailed` (facade: re-exports `m5_2_regen.M5_2SchemaValidationFailed`; real def moves here at Phase 4). **DONE 2026-05-29**.
+- [X] T005 [P] Create `$SRC/timing.py` (de-prefixed `m6_1_1_timing` surface: `extract_grpc_timings`, `extract_rest_timings`, `compute_per_segment_delta`, `timing_checkpoint_to_payload`, `TimingCheckpoint`, `PerSegmentDelta`). **DONE 2026-05-29**.
+- [X] T006 Create `$SRC/types.py` with the non-colliding core (facade re-exports): `CohortKind` (4-member), `COHORTS`, `cohorts_at_concurrency`, `CELLS`, `Cell`, `Path`, `Path_`, `RTTRecord`, `EndpointTuple`, `RunCohort`, `RPCResult`, `RESTCohortRecord`, `RestHttpsEdgeCohortRecord`, `NetworkPath` (transport Literal), `CloudProvider`, `CohortOmissions`. **DONE 2026-05-29**. NOTE: the network-probe dataclasses (`M6_1_2NetworkPath`/`Hop`/`Error`) are deferred to `network_probe.py` (Phase 3 T014) to avoid colliding with the `NetworkPath` literal.
+- [X] T007 Create `$SRC/prompts.py` with the unified seed+digest `build_chat_prompt` (facade: aliases `m6_rpc_driver._build_chat_prompt`) + `DEFAULT_CHAT_MAX_TOKENS`. **DONE 2026-05-29**. (rest_cohort repoint / M5.2-builder drop is Phase 3 T009; prompt_source merge is Phase 3.)
+- [X] T008 Move `_client_kwargs` from `m3_sweep` into `$SRC/channel_config.py` (real move, not facade — avoids a channel_config↔m3_sweep cycle); repointed all 4 importers (`m5_1_grpc_cohort`, `m6_rpc_driver`, `m6_1_rpc_driver`, `m6_2_rpc_driver`) + `m3_sweep` itself at the new home. **DONE 2026-05-29**.
 
-**Checkpoint**: Four homes exist and type-check; no consumer repointed yet.
+**Checkpoint**: Four homes exist and type-check; gate green (ruff + mypy --strict 88 files + pytest 1457 passed / 2 skipped, no regression vs baseline). Consumers not yet repointed (Phase 3) except the `_client_kwargs` importers.
 
 ---
 

@@ -43,8 +43,12 @@ import httpx
 import numpy as np
 from vllm_grpc.v1 import chat_pb2, chat_pb2_grpc, completions_pb2, completions_pb2_grpc
 
-from vllm_grpc_bench.channel_config import M1_BASELINE, MAX_MSG_16MIB, ChannelConfig
-from vllm_grpc_bench.m3_sweep import _client_kwargs
+from vllm_grpc_bench.channel_config import (
+    M1_BASELINE,
+    MAX_MSG_16MIB,
+    ChannelConfig,
+    _client_kwargs,
+)
 from vllm_grpc_bench.m3_types import RTTRecord
 from vllm_grpc_bench.m6_engine_cost import (
     parse_grpc_trailing_metadata,
