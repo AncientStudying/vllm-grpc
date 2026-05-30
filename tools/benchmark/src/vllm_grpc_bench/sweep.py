@@ -490,7 +490,7 @@ def compute_failure_summary_header_fired(
 
 @dataclass(slots=True, kw_only=True)
 class M6_2SweepInputs:
-    """Sweep inputs assembled by ``m6_2_validate.run_m6_2(...)`` and handed
+    """Sweep inputs assembled by ``validate.run_m6_2(...)`` and handed
     to :func:`run_sweep`.
 
     ``axis`` controls the publish-vs-validate axis subset; ``n`` is the
@@ -550,7 +550,7 @@ class M6_2SweepInputs:
 
 @dataclass(slots=True, kw_only=True)
 class M6_2SweepOutputs:
-    """Sweep outputs handed back to ``m6_2_validate.run_m6_2(...)`` which
+    """Sweep outputs handed back to ``validate.run_m6_2(...)`` which
     then ships them to the reporter.
 
     The orchestrator emits the per-block ``M6_2MeasurementPoint`` rows + the
@@ -882,7 +882,7 @@ class _AggregatedRPCMetrics:
     Wall percentiles come from `timings_ms` directly. Segment means + TPOT
     come from the per-RPC payload dict (M6.1.1 timing checkpoints +
     `engine_cost.engine_tpot_ms` threaded through by
-    `m6_2_validate.build_modal_block_dispatcher`).
+    `validate.build_modal_block_dispatcher`).
 
     Each field is `None` when its source data is missing — e.g., REST cohorts
     without the M6.1.3 proxy-edge anchors leave `seg_ingress_ms` /

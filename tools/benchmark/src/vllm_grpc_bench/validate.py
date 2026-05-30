@@ -46,8 +46,6 @@ from vllm_grpc_bench.corpus import (
     CompletionEmbedSample,
     RequestSample,
 )
-from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
-from vllm_grpc_bench.m6_1_types import M6_1_CELLS, M6_1Cell
 from vllm_grpc_bench.m6_2_crossover import M6_1_3CohortBaseline
 from vllm_grpc_bench.sweep_types import (
     M6_2_NULL_ANCHOR_MAX_TOKENS,
@@ -57,6 +55,7 @@ from vllm_grpc_bench.sweep_types import (
     M6_2SweepArtifact,
     M6_2SweepMode,
 )
+from vllm_grpc_bench.types import CELLS, COHORTS, Cell, CohortKind
 
 __all__ = [
     "M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD",
@@ -395,12 +394,12 @@ def block_has_endpoint_death(results: list[Any]) -> bool:
     return any(_is_endpoint_death_result(r) for r in results)
 
 
-def _cell_from_cell_id(cell_id: str) -> M6_1Cell:
-    """Resolve a cell id (e.g. ``"chat_stream_c4"``) into an :class:`M6_1Cell`."""
-    for path, hidden_size, concurrency in M6_1_CELLS:
+def _cell_from_cell_id(cell_id: str) -> Cell:
+    """Resolve a cell id (e.g. ``"chat_stream_c4"``) into an :class:`Cell`."""
+    for path, hidden_size, concurrency in CELLS:
         if cell_id == f"{path}_c{concurrency}":
-            return M6_1Cell(path=path, hidden_size=hidden_size, concurrency=concurrency)
-    raise ValueError(f"unknown M6.2 cell id {cell_id!r}; not in M6_1_CELLS")
+            return Cell(path=path, hidden_size=hidden_size, concurrency=concurrency)
+    raise ValueError(f"unknown M6.2 cell id {cell_id!r}; not in CELLS")
 
 
 # T074c — Modal-preemption budget enforcement -------------------------------
@@ -554,7 +553,7 @@ def build_modal_block_dispatcher(
 
     The dispatcher:
 
-    * Resolves ``cell_id`` → :class:`M6_1Cell` via :func:`_cell_from_cell_id`.
+    * Resolves ``cell_id`` → :class:`Cell` via :func:`_cell_from_cell_id`.
     * Allocates per-RPC seeds from ``base_seed`` + the block's iteration
       index (the orchestrator already advances ``iter_idx`` by block, so we
       stripe per-RPC seeds within the block).
@@ -613,8 +612,8 @@ def build_modal_block_dispatcher(
     )
 
     async def _gather_block(
-        cell: M6_1Cell,
-        cohort: M6_1_2CohortKind,
+        cell: Cell,
+        cohort: CohortKind,
         max_tokens: int,
         n: int,
         prompt: Any,
@@ -649,7 +648,7 @@ def build_modal_block_dispatcher(
     async def _dispatcher(
         *,
         cell_id: str,
-        cohort: M6_1_2CohortKind,
+        cohort: CohortKind,
         max_tokens: int,
         n: int,
         block_inputs: ResolvedBlockInputs,
@@ -848,7 +847,7 @@ def _classify_dispatcher_exc(exc: BaseException) -> str:
 def build_modal_anchor_dispatcher(
     driver: Any,  # M6_2RPCDriver
     *,
-    anchor_cell: M6_1Cell | None = None,
+    anchor_cell: Cell | None = None,
     anchor_max_tokens: int = 10,
     make_driver: Any = None,  # Callable[[], Awaitable[M6_2RPCDriver]] | None
     preemption_budget: int = M6_2_PREEMPTION_RECURRENCE_THRESHOLD,
@@ -887,14 +886,14 @@ def build_modal_anchor_dispatcher(
         anchor_dispatcher.preemption_events  # callable returning int
         anchor_dispatcher.preemption_budget  # int constant
     """
-    from vllm_grpc_bench.m6_1_types import M6_1Cell as _M6_1Cell
     from vllm_grpc_bench.sweep import _progress
+    from vllm_grpc_bench.types import Cell as _M6_1Cell
 
     cell = anchor_cell or _M6_1Cell(path="chat_stream", hidden_size=4096, concurrency=1)
     state = SimpleNamespace(driver=driver, preemption_events=0, consecutive_death_blocks=0)
 
     async def _gather_anchor(
-        cohort: M6_1_2CohortKind, n: int, base_seed: int, seed_offset: int
+        cohort: CohortKind, n: int, base_seed: int, seed_offset: int
     ) -> list[Any]:
         """Fire the anchor block once and return raw per-RPC results
         (success records OR exceptions). The caller distinguishes the
@@ -927,7 +926,7 @@ def build_modal_anchor_dispatcher(
         return await asyncio.gather(*[_one(i) for i in range(n)])
 
     async def _anchor(
-        *, cohort: M6_1_2CohortKind, n: int, base_seed: int, seed_offset: int
+        *, cohort: CohortKind, n: int, base_seed: int, seed_offset: int
     ) -> list[float]:
         results = await _gather_anchor(cohort, n, base_seed, seed_offset)
 
@@ -1033,7 +1032,7 @@ def build_modal_anchor_dispatcher(
 def load_m6_1_3_baseline(
     baseline_path: str | Path,
 ) -> tuple[
-    dict[str, dict[M6_1_2CohortKind, M6_1_3CohortBaseline]],
+    dict[str, dict[CohortKind, M6_1_3CohortBaseline]],
     dict[str, str],
 ]:
     """Read the M6.1.3 artifact and return ``(per_cell_baseline, base_verdicts)``.
@@ -1065,7 +1064,7 @@ def load_m6_1_3_baseline(
     except (OSError, json.JSONDecodeError):
         return {}, {}
 
-    baseline_per_cell: dict[str, dict[M6_1_2CohortKind, M6_1_3CohortBaseline]] = {}
+    baseline_per_cell: dict[str, dict[CohortKind, M6_1_3CohortBaseline]] = {}
     for measurement in data.get("measurements", []):
         cell_id = measurement.get("cell_id")
         cohort = measurement.get("cohort")
@@ -1204,11 +1203,11 @@ def _cross_checkable_max_tokens(path: str) -> int:
 
 def make_null_anchor_validation(
     measurements: list[Any],  # list[M6_2MeasurementPoint]
-    baseline_per_cell: dict[str, dict[M6_1_2CohortKind, M6_1_3CohortBaseline]],
+    baseline_per_cell: dict[str, dict[CohortKind, M6_1_3CohortBaseline]],
 ) -> list[M6_2NullAnchor]:
     """FR-012 / FR-013 null-anchor assembly across the 48 anchor cells.
 
-    Iterates ``M6_1_CELLS × M6_1_2_COHORTS × {10, 50}`` (= 48 cells), pairing
+    Iterates ``CELLS × COHORTS × {10, 50}`` (= 48 cells), pairing
     each with the M6.2 measurement at that (cell_id, cohort, max_tokens).
     For each, decides cross-checkable vs new-baseline by whether M6.1.3
     published a baseline at the ``max_tokens`` value matched to the cell
@@ -1224,18 +1223,18 @@ def make_null_anchor_validation(
         make_null_anchor,
     )
 
-    by_key: dict[tuple[str, M6_1_2CohortKind, int], Any] = {}
+    by_key: dict[tuple[str, CohortKind, int], Any] = {}
     for point in measurements:
         if point.max_tokens not in M6_2_NULL_ANCHOR_MAX_TOKENS:
             continue
         by_key[(point.cell_id, point.cohort, point.max_tokens)] = point
 
     anchors: list[M6_2NullAnchor] = []
-    for path, _hidden_size, concurrency in M6_1_CELLS:
+    for path, _hidden_size, concurrency in CELLS:
         cell_id = f"{path}_c{concurrency}"
         baseline_max_tokens = _cross_checkable_max_tokens(path)
         cohorts_for_cell = baseline_per_cell.get(cell_id, {})
-        for cohort in M6_1_2_COHORTS:
+        for cohort in COHORTS:
             for max_tokens in M6_2_NULL_ANCHOR_MAX_TOKENS:
                 point = by_key.get((cell_id, cohort, max_tokens))
                 m6_2_p50: float | None = None
@@ -1312,7 +1311,7 @@ def build_artifact(
     sub_probe_ran: bool = False,
     run_id: str | None = None,
     m6_1_3_baseline_path: str = "docs/benchmarks/m6_1_3-attribution-closure.json",
-    network_paths: dict[M6_1_2CohortKind, list[Any]] | None = None,
+    network_paths: dict[CohortKind, list[Any]] | None = None,
     preemption_events: int = 0,
 ) -> M6_2SweepArtifact:
     """Assemble :class:`M6_2SweepArtifact` from the sweep outputs + ancillary
@@ -1351,10 +1350,8 @@ def build_artifact(
         fill_validate_mode_placeholders,
     )
     from vllm_grpc_bench.sweep import M6_2SweepOutputs
-    from vllm_grpc_bench.sweep_types import (
-        M6_1_2_COHORTS,
-        M6_2_MAX_TOKENS_AXIS,
-    )
+    from vllm_grpc_bench.sweep_types import M6_2_MAX_TOKENS_AXIS
+    from vllm_grpc_bench.types import COHORTS
 
     if not isinstance(sweep_outputs, M6_2SweepOutputs):
         raise TypeError(
@@ -1452,10 +1449,10 @@ def build_artifact(
     null_anchor_validation = make_null_anchor_validation(
         sweep_outputs.measurements, baseline_per_cell
     )
-    resolved_network_paths: dict[M6_1_2CohortKind, list[Any]] = (
-        {c: list(network_paths.get(c, [])) for c in M6_1_2_COHORTS}
+    resolved_network_paths: dict[CohortKind, list[Any]] = (
+        {c: list(network_paths.get(c, [])) for c in COHORTS}
         if network_paths is not None
-        else {c: [] for c in M6_1_2_COHORTS}
+        else {c: [] for c in COHORTS}
     )
 
     artifact = M6_2SweepArtifact(
@@ -1467,7 +1464,7 @@ def build_artifact(
         run_meta=run_meta,
         per_cell=per_cell_filled,
         network_paths=resolved_network_paths,
-        cohort_set=list(M6_1_2_COHORTS),
+        cohort_set=list(COHORTS),
         cohort_omissions=None,
         null_anchor_validation=null_anchor_validation,
         max_tokens_axis=list(
@@ -1597,7 +1594,7 @@ async def _run_modal_backed(
     model_identifier: str,
     checkpoint_path: Path | None = None,
     preloaded_measurements: list[Any] | None = None,
-    preloaded_anchor_snapshots: dict[M6_1_2CohortKind, list[Any]] | None = None,
+    preloaded_anchor_snapshots: dict[CohortKind, list[Any]] | None = None,
     resumed_run_id: str | None = None,
     resumed_run_started_at: str | None = None,
 ) -> int:
@@ -1627,7 +1624,7 @@ async def _run_modal_backed(
 
     pinned_seq_len = pin_seq_len_at_sweep_start(model_identifier)
     print(
-        f"[m6_2_validate] pinned seq_len={pinned_seq_len} for model={model_identifier}",
+        f"[validate] pinned seq_len={pinned_seq_len} for model={model_identifier}",
         file=sys.stderr,
         flush=True,
     )
@@ -1670,7 +1667,7 @@ async def _run_modal_backed(
                 make_driver=make_driver,
             )
 
-            async def _topology_probe() -> dict[M6_1_2CohortKind, Any]:
+            async def _topology_probe() -> dict[CohortKind, Any]:
                 # T074d: re-read endpoints each call so a topology probe
                 # that runs AFTER a preemption recovery sees the refreshed
                 # URLs instead of the stale closure-captured ones.
@@ -1718,7 +1715,7 @@ async def _run_modal_backed(
             )
     except ModalDeployError as exc:
         print(
-            f"[m6_2_validate] Modal deploy/handshake failed: {exc}",
+            f"[validate] Modal deploy/handshake failed: {exc}",
             file=sys.stderr,
             flush=True,
         )
@@ -1730,7 +1727,7 @@ async def _run_modal_backed(
         # the operator (and the monitor script) can tell this apart from
         # a generic sweep failure.
         print(
-            f"[m6_2_validate] sweep aborted: {exc}",
+            f"[validate] sweep aborted: {exc}",
             file=sys.stderr,
             flush=True,
         )
@@ -1739,14 +1736,14 @@ async def _run_modal_backed(
         # T074c: make_driver() exhausted its refresh_timeout_s without
         # finding fresh URLs in the Modal Dict. Likely Modal-side outage.
         print(
-            f"[m6_2_validate] sweep aborted: preemption recovery failed: {exc}",
+            f"[validate] sweep aborted: preemption recovery failed: {exc}",
             file=sys.stderr,
             flush=True,
         )
         return 7
     except Exception as exc:  # noqa: BLE001
         print(
-            f"[m6_2_validate] sweep failed: {type(exc).__name__}: {exc}",
+            f"[validate] sweep failed: {type(exc).__name__}: {exc}",
             file=sys.stderr,
             flush=True,
         )
@@ -1775,7 +1772,7 @@ async def _run_modal_backed(
         f" checkpoint={checkpoint_path}" if checkpoint_path else ""
     )
     print(
-        f"[m6_2_validate] sweep_mode={sweep_mode} n_per_point={n_per_point} "
+        f"[validate] sweep_mode={sweep_mode} n_per_point={n_per_point} "
         f"axis={list(axis)} md_out={md_path} json_out={json_path}{extra}",
         flush=True,
     )
@@ -1786,7 +1783,7 @@ async def _run_modal_backed(
 
 
 class _CheckpointMismatchAdapter(RuntimeError):
-    """Local alias used by :func:`_resolve_resume_state` so the m6_2_validate
+    """Local alias used by :func:`_resolve_resume_state` so the validate
     layer doesn't leak ``m6_2_resume.CheckpointMismatchError`` into its
     public surface. The orchestrator catches the local class and renders
     its ``str(exc)`` to stderr; the exit code is rc=8 (distinct from the
@@ -1808,7 +1805,7 @@ def _resolve_resume_state(
 ) -> tuple[
     Path | None,  # checkpoint_path
     list[Any] | None,  # preloaded_measurements (M6_2MeasurementPoint)
-    dict[M6_1_2CohortKind, list[Any]] | None,  # preloaded_anchor_snapshots
+    dict[CohortKind, list[Any]] | None,  # preloaded_anchor_snapshots
     str | None,  # resumed_run_id (Phase-1: propagate from checkpoint header on resume)
     str | None,  # resumed_run_started_at
 ]:
@@ -1862,7 +1859,7 @@ def _resolve_resume_state(
         except CheckpointMismatchError as exc:
             raise _CheckpointMismatchAdapter(str(exc)) from exc
         print(
-            f"[m6_2_validate] resumed from checkpoint {resume_path} "
+            f"[validate] resumed from checkpoint {resume_path} "
             f"({len(measurements)} measurements + "
             f"{sum(len(v) for v in anchor_snapshots.values())} anchor snapshots carried over)",
             file=sys.stderr,
@@ -1907,7 +1904,7 @@ def _resolve_resume_state(
     )
     write_checkpoint_header(checkpoint_path, header)
     print(
-        f"[m6_2_validate] checkpoint sidecar opened at {checkpoint_path} (run_id={run_id})",
+        f"[validate] checkpoint sidecar opened at {checkpoint_path} (run_id={run_id})",
         file=sys.stderr,
         flush=True,
     )
@@ -2084,7 +2081,7 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
         f" checkpoint={checkpoint_path}" if checkpoint_path else ""
     )
     print(
-        f"[m6_2_validate] sweep_mode={sweep_mode} n_per_point={n_per_point} "
+        f"[validate] sweep_mode={sweep_mode} n_per_point={n_per_point} "
         f"axis={list(axis)} md_out={md_path} json_out={json_path}{extra}",
         flush=True,
     )

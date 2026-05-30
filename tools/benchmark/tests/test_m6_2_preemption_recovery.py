@@ -1,6 +1,6 @@
 """T074a — Modal-preemption mid-sweep detection classifier.
 
-Exercises :func:`vllm_grpc_bench.m6_2_validate.is_modal_endpoint_death` and
+Exercises :func:`vllm_grpc_bench.validate.is_modal_endpoint_death` and
 the matching block-level predicate :func:`block_failed_with_endpoint_death`
 against synthetic exception shapes drawn from the 2026-05-24 13:44 UTC
 validate run that died at Modal worker preemption.
@@ -20,7 +20,7 @@ from typing import Any
 import grpc
 import httpx
 import pytest
-from vllm_grpc_bench.m6_2_validate import (
+from vllm_grpc_bench.validate import (
     block_failed_with_endpoint_death,
     is_modal_endpoint_death,
 )
@@ -358,7 +358,7 @@ class TestBlockDispatcherRecoveryHappyPath:
 
     @pytest.mark.asyncio
     async def test_recovery_on_first_preemption_succeeds(self, _fake_rpc_success: Any) -> None:
-        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+        from vllm_grpc_bench.validate import build_modal_block_dispatcher
 
         dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
         fresh = _RecordingDriver(yield_each=[_fake_rpc_success])
@@ -387,7 +387,7 @@ class TestBlockDispatcherRecoveryHappyPath:
         """Backward compatibility: ``make_driver=None`` (the default)
         disables recovery entirely. The pre-T074 behaviour is preserved
         and the block fails with the usual aggregation path."""
-        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+        from vllm_grpc_bench.validate import build_modal_block_dispatcher
 
         dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
         dispatcher = build_modal_block_dispatcher(dead, base_seed=42)
@@ -409,7 +409,7 @@ class TestBlockDispatcherRecoveryHappyPath:
         Mixed success / failure stays on the normal aggregation path
         (some timings recorded, ``failed_reason=None`` if at least one
         RPC succeeded)."""
-        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+        from vllm_grpc_bench.validate import build_modal_block_dispatcher
 
         # Interleave 2 successes and 2 dead-endpoint exceptions.
         driver = _RecordingDriver(
@@ -444,7 +444,7 @@ class TestBlockDispatcherRecoveryBudget:
 
     @pytest.mark.asyncio
     async def test_budget_exhausted_raises_after_threshold(self, _fake_rpc_success: Any) -> None:
-        from vllm_grpc_bench.m6_2_validate import (
+        from vllm_grpc_bench.validate import (
             PreemptionBudgetExhausted,
             build_modal_block_dispatcher,
         )
@@ -475,7 +475,7 @@ class TestBlockDispatcherRecoveryBudget:
     async def test_recovery_failed_raises_when_make_driver_throws(
         self,
     ) -> None:
-        from vllm_grpc_bench.m6_2_validate import (
+        from vllm_grpc_bench.validate import (
             PreemptionRecoveryFailed,
             build_modal_block_dispatcher,
         )
@@ -504,7 +504,7 @@ class TestBlockDispatcherRecoveryBudget:
         """The FR-026 threshold is load-bearing for the sweep-abort
         contract; a silent drift would change when the orchestrator
         gives up vs spins forever."""
-        from vllm_grpc_bench.m6_2_validate import (
+        from vllm_grpc_bench.validate import (
             M6_2_PREEMPTION_RECURRENCE_THRESHOLD,
         )
 
@@ -515,7 +515,7 @@ class TestBlockDispatcherRecoveryBudget:
         """Two preemptions in a row, both recover successfully (third
         block succeeds) → no abort, the dispatcher returns a normal
         BlockDispatchResult."""
-        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+        from vllm_grpc_bench.validate import build_modal_block_dispatcher
 
         dead1 = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
         dead2 = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
@@ -554,7 +554,7 @@ class TestBuildModalMakeDriverCallable:
     ) -> None:
         import contextlib as _contextlib
 
-        from vllm_grpc_bench.m6_2_validate import build_modal_make_driver_callable
+        from vllm_grpc_bench.validate import build_modal_make_driver_callable
 
         opened_endpoints: list[Any] = []
         closed_count = {"n": 0}
@@ -604,7 +604,7 @@ class TestBuildModalMakeDriverCallable:
         the refreshed URLs, and returns the new driver."""
         import contextlib as _contextlib
 
-        from vllm_grpc_bench.m6_2_validate import build_modal_make_driver_callable
+        from vllm_grpc_bench.validate import build_modal_make_driver_callable
 
         initial_endpoints = SimpleNamespace(
             grpc_url="old-host:1",
@@ -681,7 +681,7 @@ class TestBuildModalMakeDriverCallable:
         aborts cleanly."""
         import contextlib as _contextlib
 
-        from vllm_grpc_bench.m6_2_validate import build_modal_make_driver_callable
+        from vllm_grpc_bench.validate import build_modal_make_driver_callable
 
         initial_endpoints = SimpleNamespace(
             grpc_url="host:1",
@@ -731,7 +731,7 @@ class TestBuildModalMakeDriverCallable:
         accumulates the contexts for cleanup."""
         import contextlib as _contextlib
 
-        from vllm_grpc_bench.m6_2_validate import build_modal_make_driver_callable
+        from vllm_grpc_bench.validate import build_modal_make_driver_callable
 
         endpoints_seq = [
             SimpleNamespace(
@@ -804,7 +804,7 @@ class TestAnchorDispatcherRecovery:
     async def test_anchor_recovery_on_first_preemption_succeeds(
         self, _fake_rpc_success: Any
     ) -> None:
-        from vllm_grpc_bench.m6_2_validate import build_modal_anchor_dispatcher
+        from vllm_grpc_bench.validate import build_modal_anchor_dispatcher
 
         dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
         fresh = _RecordingDriver(yield_each=[_fake_rpc_success])
@@ -827,7 +827,7 @@ class TestAnchorDispatcherRecovery:
         """Backward compatibility: omit ``make_driver`` and the anchor
         dispatcher behaves like the pre-T074e implementation — exceptions
         are swallowed and the anchor returns an empty list of timings."""
-        from vllm_grpc_bench.m6_2_validate import build_modal_anchor_dispatcher
+        from vllm_grpc_bench.validate import build_modal_anchor_dispatcher
 
         dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
         anchor = build_modal_anchor_dispatcher(dead)
@@ -844,7 +844,7 @@ class TestAnchorDispatcherRecovery:
         on a whole-block endpoint-death pattern, so a mix of successes and
         failures returns the successful timings without invoking
         make_driver."""
-        from vllm_grpc_bench.m6_2_validate import build_modal_anchor_dispatcher
+        from vllm_grpc_bench.validate import build_modal_anchor_dispatcher
 
         driver = _RecordingDriver(
             yield_each=[
@@ -869,7 +869,7 @@ class TestAnchorDispatcherRecovery:
         :class:`PreemptionBudgetExhausted` — same shape as the block
         dispatcher path. The orchestrator's outer except clause catches
         either."""
-        from vllm_grpc_bench.m6_2_validate import (
+        from vllm_grpc_bench.validate import (
             PreemptionBudgetExhausted,
             build_modal_anchor_dispatcher,
         )
@@ -894,7 +894,7 @@ class TestAnchorDispatcherRecovery:
     async def test_anchor_recovery_failed_raises(self) -> None:
         """If make_driver itself throws (Modal Dict polling timed out),
         the dispatcher wraps it in :class:`PreemptionRecoveryFailed`."""
-        from vllm_grpc_bench.m6_2_validate import (
+        from vllm_grpc_bench.validate import (
             PreemptionRecoveryFailed,
             build_modal_anchor_dispatcher,
         )
@@ -911,7 +911,7 @@ class TestAnchorDispatcherRecovery:
 
     @pytest.mark.asyncio
     async def test_anchor_counter_starts_at_zero(self, _fake_rpc_success: Any) -> None:
-        from vllm_grpc_bench.m6_2_validate import build_modal_anchor_dispatcher
+        from vllm_grpc_bench.validate import build_modal_anchor_dispatcher
 
         driver = _RecordingDriver(yield_each=[_fake_rpc_success])
         anchor = build_modal_anchor_dispatcher(driver)
@@ -972,7 +972,7 @@ class TestArtifactPreemptionEventsField:
         and threads the sum into ``build_artifact(preemption_events=...)``.
         This test exercises the dispatcher → sum path against the same
         fixtures used in the recovery-loop tests."""
-        from vllm_grpc_bench.m6_2_validate import (
+        from vllm_grpc_bench.validate import (
             build_modal_anchor_dispatcher,
             build_modal_block_dispatcher,
         )
@@ -1026,7 +1026,7 @@ class TestBlockDispatcherPreemptionEvents:
 
     @pytest.mark.asyncio
     async def test_counter_starts_at_zero(self, _fake_rpc_success: Any) -> None:
-        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+        from vllm_grpc_bench.validate import build_modal_block_dispatcher
 
         driver = _RecordingDriver(yield_each=[_fake_rpc_success])
         dispatcher = build_modal_block_dispatcher(driver, base_seed=42)
@@ -1034,7 +1034,7 @@ class TestBlockDispatcherPreemptionEvents:
 
     @pytest.mark.asyncio
     async def test_counter_increments_per_recovery(self, _fake_rpc_success: Any) -> None:
-        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+        from vllm_grpc_bench.validate import build_modal_block_dispatcher
 
         dead = _RecordingDriver(yield_each=[_dead_endpoint_exc()])
         sequence = iter(
@@ -1108,7 +1108,7 @@ class TestIsModalEndpointDeathReason:
     over-trigger on alive-but-erroring payloads."""
 
     def test_grpc_unavailable_reason_fires(self) -> None:
-        from vllm_grpc_bench.m6_2_validate import is_modal_endpoint_death_reason
+        from vllm_grpc_bench.validate import is_modal_endpoint_death_reason
 
         reason = (
             "grpc embed: StatusCode.UNAVAILABLE failed to connect to all addresses; "
@@ -1117,19 +1117,19 @@ class TestIsModalEndpointDeathReason:
         assert is_modal_endpoint_death_reason(reason) is True
 
     def test_rest_connect_error_reason_fires(self) -> None:
-        from vllm_grpc_bench.m6_2_validate import is_modal_endpoint_death_reason
+        from vllm_grpc_bench.validate import is_modal_endpoint_death_reason
 
         reason = "rest embed: ConnectError: All connection attempts failed"
         assert is_modal_endpoint_death_reason(reason) is True
 
     def test_rest_dns_reason_fires(self) -> None:
-        from vllm_grpc_bench.m6_2_validate import is_modal_endpoint_death_reason
+        from vllm_grpc_bench.validate import is_modal_endpoint_death_reason
 
         reason = "rest embed: ConnectError: [Errno 8] nodename nor servname provided, or not known"
         assert is_modal_endpoint_death_reason(reason) is True
 
     def test_case_insensitive(self) -> None:
-        from vllm_grpc_bench.m6_2_validate import is_modal_endpoint_death_reason
+        from vllm_grpc_bench.validate import is_modal_endpoint_death_reason
 
         assert is_modal_endpoint_death_reason("FAILED TO CONNECT TO ALL ADDRESSES") is True
 
@@ -1147,7 +1147,7 @@ class TestIsModalEndpointDeathReason:
         ],
     )
     def test_each_fragment_recognised(self, fragment: str) -> None:
-        from vllm_grpc_bench.m6_2_validate import is_modal_endpoint_death_reason
+        from vllm_grpc_bench.validate import is_modal_endpoint_death_reason
 
         assert is_modal_endpoint_death_reason(f"prefix {fragment} suffix") is True
 
@@ -1156,7 +1156,7 @@ class TestIsModalEndpointDeathReason:
         endpoint URL is still reachable; the engine just refused the
         request. Pattern-matching this as preemption would cause false
         recoveries on rate limits or transient 503s."""
-        from vllm_grpc_bench.m6_2_validate import is_modal_endpoint_death_reason
+        from vllm_grpc_bench.validate import is_modal_endpoint_death_reason
 
         assert is_modal_endpoint_death_reason("rest embed: 503") is False
         assert is_modal_endpoint_death_reason("rest chat: 429") is False
@@ -1165,7 +1165,7 @@ class TestIsModalEndpointDeathReason:
     def test_grpc_deadline_does_not_fire(self) -> None:
         """DEADLINE_EXCEEDED is alive-but-slow, not endpoint-death — even
         if the message happens to contain a fragment."""
-        from vllm_grpc_bench.m6_2_validate import is_modal_endpoint_death_reason
+        from vllm_grpc_bench.validate import is_modal_endpoint_death_reason
 
         assert (
             is_modal_endpoint_death_reason("grpc chat: StatusCode.DEADLINE_EXCEEDED slow engine")
@@ -1173,17 +1173,17 @@ class TestIsModalEndpointDeathReason:
         )
 
     def test_none_does_not_fire(self) -> None:
-        from vllm_grpc_bench.m6_2_validate import is_modal_endpoint_death_reason
+        from vllm_grpc_bench.validate import is_modal_endpoint_death_reason
 
         assert is_modal_endpoint_death_reason(None) is False
 
     def test_empty_string_does_not_fire(self) -> None:
-        from vllm_grpc_bench.m6_2_validate import is_modal_endpoint_death_reason
+        from vllm_grpc_bench.validate import is_modal_endpoint_death_reason
 
         assert is_modal_endpoint_death_reason("") is False
 
     def test_non_string_does_not_fire(self) -> None:
-        from vllm_grpc_bench.m6_2_validate import is_modal_endpoint_death_reason
+        from vllm_grpc_bench.validate import is_modal_endpoint_death_reason
 
         # Defensive: orchestrator may pass anything in if RPCResult was
         # constructed off-spec. Must not crash, must not over-trigger.
@@ -1257,7 +1257,7 @@ class TestBlockHasEndpointDeath:
     shape it takes."""
 
     def test_all_success_does_not_fire(self) -> None:
-        from vllm_grpc_bench.m6_2_validate import block_has_endpoint_death
+        from vllm_grpc_bench.validate import block_has_endpoint_death
 
         class _Success:
             success = True
@@ -1267,12 +1267,12 @@ class TestBlockHasEndpointDeath:
         assert block_has_endpoint_death([_Success(), _Success()]) is False
 
     def test_empty_does_not_fire(self) -> None:
-        from vllm_grpc_bench.m6_2_validate import block_has_endpoint_death
+        from vllm_grpc_bench.validate import block_has_endpoint_death
 
         assert block_has_endpoint_death([]) is False
 
     def test_single_endpoint_death_exception_fires(self) -> None:
-        from vllm_grpc_bench.m6_2_validate import block_has_endpoint_death
+        from vllm_grpc_bench.validate import block_has_endpoint_death
 
         class _Success:
             success = True
@@ -1283,7 +1283,7 @@ class TestBlockHasEndpointDeath:
         assert block_has_endpoint_death([_Success(), _Success(), exc]) is True
 
     def test_single_endpoint_death_rpc_result_fires(self) -> None:
-        from vllm_grpc_bench.m6_2_validate import block_has_endpoint_death
+        from vllm_grpc_bench.validate import block_has_endpoint_death
 
         class _Success:
             success = True
@@ -1297,7 +1297,7 @@ class TestBlockHasEndpointDeath:
         """A block full of non-endpoint-death failures (503s, transient
         timeouts) must NOT trip the secondary trigger — that's normal
         engine-side failure territory, handled by FR-029."""
-        from vllm_grpc_bench.m6_2_validate import block_has_endpoint_death
+        from vllm_grpc_bench.validate import block_has_endpoint_death
 
         # ReadTimeout doesn't carry a transport fragment by default.
         assert (
@@ -1370,7 +1370,7 @@ class TestSecondaryTriggerConsecutiveDeathBlocks:
     def test_threshold_constant_is_two(self) -> None:
         """Load-bearing for the sweep-abort contract — a silent drift
         would change when secondary recovery fires."""
-        from vllm_grpc_bench.m6_2_validate import M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD
+        from vllm_grpc_bench.validate import M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD
 
         assert M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD == 2
 
@@ -1380,7 +1380,7 @@ class TestSecondaryTriggerConsecutiveDeathBlocks:
     ) -> None:
         """Two partial-death blocks in a row → recovery fires on the
         second block. The retry against the fresh driver succeeds."""
-        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+        from vllm_grpc_bench.validate import build_modal_block_dispatcher
 
         # Block 1 (n=4): one death + 3 successes — primary predicate
         # doesn't fire, but block_has_endpoint_death does. Block 2 same
@@ -1440,7 +1440,7 @@ class TestSecondaryTriggerConsecutiveDeathBlocks:
     ) -> None:
         """One partial-death block alone doesn't trip the secondary
         trigger — could be a transient blip. The counter stays at 1."""
-        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+        from vllm_grpc_bench.validate import build_modal_block_dispatcher
 
         partial_death_block: list[Any] = [
             _dead_endpoint_rpc_result(),
@@ -1471,7 +1471,7 @@ class TestSecondaryTriggerConsecutiveDeathBlocks:
         """Partial-death block → clean block → partial-death block → no
         recovery (counter was reset by the clean block, then incremented
         to 1, never reaches threshold)."""
-        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+        from vllm_grpc_bench.validate import build_modal_block_dispatcher
 
         partial_death_block: list[Any] = [
             _dead_endpoint_rpc_result(),
@@ -1507,7 +1507,7 @@ class TestSecondaryTriggerConsecutiveDeathBlocks:
         consecutive partial-death blocks → one recovery on block 2; block
         3 starts counter back at 0 (well, 1 after itself) and does not
         re-trigger."""
-        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+        from vllm_grpc_bench.validate import build_modal_block_dispatcher
 
         partial_death_block: list[Any] = [
             _dead_endpoint_rpc_result(),
@@ -1556,7 +1556,7 @@ class TestSecondaryTriggerConsecutiveDeathBlocks:
         """Tests with ``consecutive_death_threshold=1`` should trigger on
         the very first partial-death block. Useful as a tighter setting
         for high-confidence cohorts (or for unit tests)."""
-        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+        from vllm_grpc_bench.validate import build_modal_block_dispatcher
 
         partial_death_block: list[Any] = [
             _dead_endpoint_rpc_result(),
@@ -1597,7 +1597,7 @@ class TestSecondaryTriggerConsecutiveDeathBlocks:
         """The primary trigger consumes the consecutive-death streak —
         once we've recovered from a clean preemption, the secondary
         trigger starts fresh."""
-        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+        from vllm_grpc_bench.validate import build_modal_block_dispatcher
 
         partial_death_block: list[Any] = [
             _dead_endpoint_rpc_result(),
@@ -1651,7 +1651,7 @@ class TestSecondaryTriggerConsecutiveDeathBlocks:
         debugging. The event carries ``trigger=consecutive_endpoint_death``
         when the secondary path fires."""
         from vllm_grpc_bench import sweep
-        from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
+        from vllm_grpc_bench.validate import build_modal_block_dispatcher
 
         events: list[tuple[str, dict[str, Any]]] = []
 
@@ -1699,7 +1699,7 @@ class TestSecondaryTriggerConsecutiveDeathBlocks:
         """The secondary trigger counts against the same
         ``preemption_budget`` as the primary trigger. After 2 secondary
         recoveries, the 3rd raises ``PreemptionBudgetExhausted``."""
-        from vllm_grpc_bench.m6_2_validate import (
+        from vllm_grpc_bench.validate import (
             PreemptionBudgetExhausted,
             build_modal_block_dispatcher,
         )
@@ -1753,7 +1753,7 @@ class TestAnchorDispatcherSecondaryTrigger:
     async def test_anchor_two_consecutive_partial_death_blocks_trigger(
         self, _fake_rpc_success: Any
     ) -> None:
-        from vllm_grpc_bench.m6_2_validate import build_modal_anchor_dispatcher
+        from vllm_grpc_bench.validate import build_modal_anchor_dispatcher
 
         # Anchor is c=1 with n RPCs; for n=4 the in-flight bound is 1 but
         # all 4 still dispatch. Build a block-sequencing driver that
@@ -1790,7 +1790,7 @@ class TestAnchorDispatcherSecondaryTrigger:
     async def test_anchor_threshold_override(self, _fake_rpc_success: Any) -> None:
         """Anchor dispatcher exposes the same ``consecutive_death_threshold``
         knob as the block dispatcher."""
-        from vllm_grpc_bench.m6_2_validate import build_modal_anchor_dispatcher
+        from vllm_grpc_bench.validate import build_modal_anchor_dispatcher
 
         partial_death_block: list[Any] = [
             _dead_endpoint_rpc_result(),
@@ -1817,7 +1817,7 @@ class TestAnchorDispatcherSecondaryTrigger:
     async def test_anchor_default_threshold_matches_constant(self, _fake_rpc_success: Any) -> None:
         """The anchor and block dispatchers default to the same
         threshold constant — operators expect symmetry."""
-        from vllm_grpc_bench.m6_2_validate import (
+        from vllm_grpc_bench.validate import (
             M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD,
             build_modal_anchor_dispatcher,
             build_modal_block_dispatcher,

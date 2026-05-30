@@ -2749,7 +2749,7 @@ def _run_m6_2(args: argparse.Namespace) -> int:
 
     Per ``contracts/cli.md`` FR-020 + R-7: both ``--m6_2`` and
     ``--m6_2-validate`` route to the single entry function
-    :func:`vllm_grpc_bench.m6_2_validate.run_m6_2`; the operator-intent
+    :func:`vllm_grpc_bench.validate.run_m6_2`; the operator-intent
     distinction lives in the ``sweep_mode`` metadata argument and is
     recorded in ``run_meta.sweep_mode`` on the published artifact.
     """
@@ -2757,7 +2757,7 @@ def _run_m6_2(args: argparse.Namespace) -> int:
     if rc != 0:
         return rc
 
-    from vllm_grpc_bench.m6_2_validate import run_m6_2
+    from vllm_grpc_bench.validate import run_m6_2
 
     if getattr(args, "m6_2", False):
         return run_m6_2(args, sweep_mode="publish")

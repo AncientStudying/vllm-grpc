@@ -36,15 +36,15 @@ import httpx
 import pytest
 from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
 from vllm_grpc_bench.m6_1_types import M6_1Cell
-from vllm_grpc_bench.m6_2_validate import (
+from vllm_grpc_bench.prompts import ResolvedBlockInputs
+from vllm_grpc_bench.sweep import BlockDispatchResult
+from vllm_grpc_bench.validate import (
     build_modal_anchor_dispatcher,
     build_modal_block_dispatcher,
     derive_anchor_drift_threshold,
     is_transient_modal_error,
     make_null_anchor_validation,
 )
-from vllm_grpc_bench.prompts import ResolvedBlockInputs
-from vllm_grpc_bench.sweep import BlockDispatchResult
 
 # --- Fake RPC driver --------------------------------------------------------
 
@@ -443,8 +443,8 @@ class TestArtifactPathIntegration:
     def test_make_null_anchor_validation_emits_48_anchors(self, tmp_path: Any) -> None:
         # Build a stub measurement list: 48 anchors (6 cells × 4 cohorts × 2 caps).
         from vllm_grpc_bench.m6_1_types import M6_1_CELLS
-        from vllm_grpc_bench.m6_2_validate import load_m6_1_3_baseline
         from vllm_grpc_bench.sweep_types import M6_2MeasurementPoint
+        from vllm_grpc_bench.validate import load_m6_1_3_baseline
 
         measurements: list[M6_2MeasurementPoint] = []
         for path, _hidden_size, concurrency in M6_1_CELLS:

@@ -23,7 +23,7 @@ import json
 from pathlib import Path
 
 from vllm_grpc_bench.m6_2_reporter import INTEGRITY_CHANNELS, NOT_VALIDATED_MARKER
-from vllm_grpc_bench.m6_2_validate import run_m6_2
+from vllm_grpc_bench.validate import run_m6_2
 
 
 def _build_validate_args(*, md_path: Path, json_path: Path) -> argparse.Namespace:

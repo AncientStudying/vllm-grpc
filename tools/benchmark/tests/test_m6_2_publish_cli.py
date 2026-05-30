@@ -28,8 +28,8 @@ import json
 from pathlib import Path
 
 from vllm_grpc_bench.m6_2_reporter import INTEGRITY_CHANNELS, NOT_VALIDATED_MARKER
-from vllm_grpc_bench.m6_2_validate import run_m6_2
 from vllm_grpc_bench.sweep_types import M6_2_PUBLISH_N
+from vllm_grpc_bench.validate import run_m6_2
 
 
 def _build_publish_args(
