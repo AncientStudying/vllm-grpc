@@ -7,7 +7,7 @@ timeout; cohorts probed in parallel via ``asyncio.gather`` +
 ``asyncio.to_thread``.
 
 Cohort-level CSP attribution (FR-007 / R-6) is the closed enum
-``M6_1_2CloudProvider``; per-hop annotation is best-effort (FR-003 +
+``CloudProvider``; per-hop annotation is best-effort (FR-003 +
 round-3 Q1). The probe is methodology-supporting, not measurement-critical
 (FR-005 / FR-005a): probe failures NEVER abort the sweep — they record
 per-cohort error blocks. Two loud-stderr warnings on aggregate failures:
@@ -35,10 +35,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from vllm_grpc_bench.m6_1_2_types import (
-    M6_1_2_COHORTS,
-    M6_1_2CloudProvider,
-    M6_1_2CohortKind,
+from vllm_grpc_bench.types import (
+    COHORTS,
+    CloudProvider,
+    CohortKind,
     M6_1_2NetworkPath,
     M6_1_2NetworkPathError,
     M6_1_2NetworkPathHop,
@@ -54,7 +54,7 @@ _WHOIS_TIMEOUT_S: float = 5.0
 # Mapping: M6.1.2 cohort name → key on the Modal handshake dict whose value
 # is the cohort's endpoint URL. ``default_grpc`` and ``tuned_grpc_multiplexed``
 # share the same gRPC endpoint (different client tuning, not different URL).
-_COHORT_HANDSHAKE_KEY: dict[M6_1_2CohortKind, str] = {
+_COHORT_HANDSHAKE_KEY: dict[CohortKind, str] = {
     "rest_https_edge": "rest_https_edge_url",
     "rest_plain_tcp": "rest_plain_tcp_url",
     "default_grpc": "grpc",
@@ -63,7 +63,7 @@ _COHORT_HANDSHAKE_KEY: dict[M6_1_2CohortKind, str] = {
 
 # Spike #1 finding: the architectural CSP pattern. FR-006 fires when the
 # observed cohort-level cloud_provider differs from this expectation.
-_EXPECTED_COHORT_CSP: dict[M6_1_2CohortKind, M6_1_2CloudProvider] = {
+_EXPECTED_COHORT_CSP: dict[CohortKind, CloudProvider] = {
     "rest_https_edge": "Microsoft Azure",
     "rest_plain_tcp": "AWS",
     "default_grpc": "AWS",
@@ -250,7 +250,7 @@ def _ip_in_prefix(ip: str, prefix: str) -> bool:
         return False
 
 
-def _attribute_aws(ip: str, aws: dict[str, Any]) -> tuple[M6_1_2CloudProvider, str | None] | None:
+def _attribute_aws(ip: str, aws: dict[str, Any]) -> tuple[CloudProvider, str | None] | None:
     for entry in aws.get("prefixes", []):
         prefix = entry.get("ip_prefix")
         if prefix and _ip_in_prefix(ip, prefix):
@@ -262,9 +262,7 @@ def _attribute_aws(ip: str, aws: dict[str, Any]) -> tuple[M6_1_2CloudProvider, s
     return None
 
 
-def _attribute_azure(
-    ip: str, azure: dict[str, Any]
-) -> tuple[M6_1_2CloudProvider, str | None] | None:
+def _attribute_azure(ip: str, azure: dict[str, Any]) -> tuple[CloudProvider, str | None] | None:
     for value in azure.get("values", []):
         props = value.get("properties", {}) or {}
         region = props.get("region") or None
@@ -274,7 +272,7 @@ def _attribute_azure(
     return None
 
 
-def _attribute_gcp(ip: str, gcp: dict[str, Any]) -> tuple[M6_1_2CloudProvider, str | None] | None:
+def _attribute_gcp(ip: str, gcp: dict[str, Any]) -> tuple[CloudProvider, str | None] | None:
     for entry in gcp.get("prefixes", []):
         prefix = entry.get("ipv4Prefix") or entry.get("ipv6Prefix")
         if prefix and _ip_in_prefix(ip, prefix):
@@ -395,7 +393,7 @@ def _whois_lookup(ip: str, timeout: float = _WHOIS_TIMEOUT_S) -> str | None:
     return org
 
 
-_WHOIS_ORG_TO_CSP: dict[str, M6_1_2CloudProvider] = {
+_WHOIS_ORG_TO_CSP: dict[str, CloudProvider] = {
     "amazon": "AWS",
     "amzn": "AWS",
     "aws": "AWS",
@@ -409,7 +407,7 @@ _WHOIS_ORG_TO_CSP: dict[str, M6_1_2CloudProvider] = {
 
 def attribute_cloud_provider(
     ip: str, *, ranges: dict[str, dict[str, Any]] | None = None
-) -> tuple[M6_1_2CloudProvider, str | None]:
+) -> tuple[CloudProvider, str | None]:
     """Resolve ``ip`` → cohort-level ``(cloud_provider, region)``.
 
     Algorithm (FR-007 + ``contracts/network-paths.md``):
@@ -561,11 +559,11 @@ def _resolve_endpoint_ip(host: str, hops: list[M6_1_2NetworkPathHop]) -> str | N
 
 async def run_topology_probe(
     handshake_dict: dict[str, object],
-    cohorts: tuple[M6_1_2CohortKind, ...] = M6_1_2_COHORTS,
+    cohorts: tuple[CohortKind, ...] = COHORTS,
     per_cohort_timeout_seconds: float = _PER_COHORT_TIMEOUT_S,
     *,
     ranges: dict[str, dict[str, Any]] | None = None,
-) -> dict[M6_1_2CohortKind, M6_1_2NetworkPath | M6_1_2NetworkPathError]:
+) -> dict[CohortKind, M6_1_2NetworkPath | M6_1_2NetworkPathError]:
     """Probe each cohort's endpoint in parallel; return per-cohort results.
 
     Per FR-001 + FR-001a + FR-002a:
@@ -580,8 +578,8 @@ async def run_topology_probe(
         ranges = _fetch_csp_ip_ranges()
 
     # Resolve (cohort, host, port) tuples from the handshake dict.
-    targets: list[tuple[M6_1_2CohortKind, str, int]] = []
-    skipped: dict[M6_1_2CohortKind, M6_1_2NetworkPathError] = {}
+    targets: list[tuple[CohortKind, str, int]] = []
+    skipped: dict[CohortKind, M6_1_2NetworkPathError] = {}
     for cohort in cohorts:
         url = handshake_dict.get(_COHORT_HANDSHAKE_KEY[cohort])
         if not url or not isinstance(url, str):
@@ -607,8 +605,8 @@ async def run_topology_probe(
         targets.append((cohort, host, port))
 
     async def _run(
-        cohort: M6_1_2CohortKind, host: str, port: int
-    ) -> tuple[M6_1_2CohortKind, M6_1_2NetworkPath | M6_1_2NetworkPathError]:
+        cohort: CohortKind, host: str, port: int
+    ) -> tuple[CohortKind, M6_1_2NetworkPath | M6_1_2NetworkPathError]:
         result = await asyncio.to_thread(
             _probe_one_cohort,
             host,
@@ -619,7 +617,7 @@ async def run_topology_probe(
         return cohort, result
 
     gathered = await asyncio.gather(*(_run(c, h, p) for (c, h, p) in targets))
-    results: dict[M6_1_2CohortKind, M6_1_2NetworkPath | M6_1_2NetworkPathError] = dict(gathered)
+    results: dict[CohortKind, M6_1_2NetworkPath | M6_1_2NetworkPathError] = dict(gathered)
     results.update(skipped)
     return results
 
@@ -628,7 +626,7 @@ async def run_topology_probe(
 
 
 def emit_probe_warnings(
-    results: dict[M6_1_2CohortKind, M6_1_2NetworkPath | M6_1_2NetworkPathError],
+    results: dict[CohortKind, M6_1_2NetworkPath | M6_1_2NetworkPathError],
 ) -> None:
     """Emit FR-005a (all-failed) and FR-006 (CSP-mismatch) warnings to stderr.
 

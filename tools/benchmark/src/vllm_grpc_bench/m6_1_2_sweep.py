@@ -7,7 +7,7 @@ Sequencing (per R-8 + data-model.md "Cohort iteration semantics"):
    orchestrator takes a stub driver from the caller for harness wiring
    confidence-builder runs.
 2. Topology probe across the 4 cohorts (FR-001 / FR-001a / FR-002a) via
-   :func:`m6_1_2_network_probe.run_topology_probe`. Emits FR-005a /
+   :func:`network_probe.run_topology_probe`. Emits FR-005a /
    FR-006 warnings to stderr.
 3. Cell × cohort iteration with :func:`cohorts_at_concurrency` collapsing
    ``tuned_grpc_multiplexed`` into ``default_grpc`` at c=1 per FR-011.
@@ -31,10 +31,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from vllm_grpc_bench.m6_1_2_network_probe import (
-    emit_probe_warnings,
-    run_topology_probe,
-)
 from vllm_grpc_bench.m6_1_2_reporter import (
     M6_1_2CellMeasurement,
     M6_1_2RunMeta,
@@ -54,6 +50,10 @@ from vllm_grpc_bench.m6_1_2_types import (
 )
 from vllm_grpc_bench.m6_1_types import M6_1_CONCURRENCIES, M6_1Cell
 from vllm_grpc_bench.m6_sweep import RPCResult
+from vllm_grpc_bench.network_probe import (
+    emit_probe_warnings,
+    run_topology_probe,
+)
 
 _ = M6_1_CONCURRENCIES  # documents the c=1/4/8 domain that c is drawn from
 

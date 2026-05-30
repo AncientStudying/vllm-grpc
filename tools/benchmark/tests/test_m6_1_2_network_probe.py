@@ -1,4 +1,4 @@
-"""M6.1.2 — Unit tests for ``m6_1_2_network_probe``.
+"""M6.1.2 — Unit tests for ``network_probe``.
 
 Covers (per ``specs/025-m6-1-2-methodology-discipline/tasks.md`` T006-T009):
 
@@ -20,15 +20,15 @@ import time
 from typing import Any
 
 import pytest
-from vllm_grpc_bench.m6_1_2_network_probe import (
+from vllm_grpc_bench.m6_1_2_types import (
+    M6_1_2NetworkPath,
+    M6_1_2NetworkPathError,
+)
+from vllm_grpc_bench.network_probe import (
     _probe_one_cohort,
     attribute_cloud_provider,
     parse_tcptraceroute_output,
     run_topology_probe,
-)
-from vllm_grpc_bench.m6_1_2_types import (
-    M6_1_2NetworkPath,
-    M6_1_2NetworkPathError,
 )
 
 # --- Canned IP-range fixtures -----------------------------------------------
@@ -106,7 +106,7 @@ def test_attribute_unknown_ip(
 ) -> None:
     # Force the whois fallback to fail so we exercise the final ("unknown", None).
     monkeypatch.setattr(
-        "vllm_grpc_bench.m6_1_2_network_probe._whois_lookup",
+        "vllm_grpc_bench.network_probe._whois_lookup",
         lambda ip, timeout=5.0: None,
     )
     csp, region = attribute_cloud_provider("203.0.113.42", ranges=all_ranges)
@@ -219,7 +219,7 @@ def test_probe_runs_parallel_across_cohorts(
     monkeypatch.setattr(subprocess, "run", _slow_run)
     # Stub the DNS lookup so we don't hit the real resolver.
     monkeypatch.setattr(
-        "vllm_grpc_bench.m6_1_2_network_probe.socket.gethostbyname",
+        "vllm_grpc_bench.network_probe.socket.gethostbyname",
         lambda _host: "127.0.0.1",
     )
 
@@ -298,7 +298,7 @@ def test_whois_follows_arin_referral_to_ripe_for_azure_ip(
     Without following the referral to RIPE, attribution falls through to
     ``unknown`` and FR-006 fires spuriously. The probe MUST follow the
     referral and surface ``Microsoft`` (via RIPE's ``descr:`` field)."""
-    from vllm_grpc_bench.m6_1_2_network_probe import _whois_lookup
+    from vllm_grpc_bench.network_probe import _whois_lookup
 
     calls: list[tuple[str, str]] = []
 
@@ -311,7 +311,7 @@ def test_whois_follows_arin_referral_to_ripe_for_azure_ip(
         return ""
 
     monkeypatch.setattr(
-        "vllm_grpc_bench.m6_1_2_network_probe._query_whois_server",
+        "vllm_grpc_bench.network_probe._query_whois_server",
         _fake_query,
     )
 
@@ -334,7 +334,7 @@ def test_attribute_cloud_provider_resolves_azure_via_referral(
     Regression: the live T037 sweep tripped FR-006 because ``rest_https_edge``
     attributed to ``unknown`` — root cause was the missing referral follow.
     """
-    from vllm_grpc_bench.m6_1_2_network_probe import attribute_cloud_provider
+    from vllm_grpc_bench.network_probe import attribute_cloud_provider
 
     def _fake_query(server: str, ip: str, timeout: float) -> str:
         if server == "whois.arin.net":
@@ -344,7 +344,7 @@ def test_attribute_cloud_provider_resolves_azure_via_referral(
         return ""
 
     monkeypatch.setattr(
-        "vllm_grpc_bench.m6_1_2_network_probe._query_whois_server",
+        "vllm_grpc_bench.network_probe._query_whois_server",
         _fake_query,
     )
 
@@ -363,7 +363,7 @@ def test_whois_arin_only_path_still_works(
 ) -> None:
     """When ARIN returns a non-referral OrgName, no RIPE follow-up fires
     and the ARIN org is returned directly (the AWS path)."""
-    from vllm_grpc_bench.m6_1_2_network_probe import _whois_lookup
+    from vllm_grpc_bench.network_probe import _whois_lookup
 
     arin_aws_response = """\
 NetRange:       54.192.0.0 - 54.193.255.255
@@ -380,7 +380,7 @@ Organization:   Amazon Technologies Inc. (AMAZON-4)
         return ""
 
     monkeypatch.setattr(
-        "vllm_grpc_bench.m6_1_2_network_probe._query_whois_server",
+        "vllm_grpc_bench.network_probe._query_whois_server",
         _fake_query,
     )
 

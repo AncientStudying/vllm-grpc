@@ -26,17 +26,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from vllm_grpc_bench.m6_1_2_types import (
-    M6_1_2NetworkPath,
-    M6_1_2NetworkPathError,
-    M6_1_2NetworkPathHop,
-)
-
-# Cohort/cloud primitives now come from the generic `types` home (aliased to
-# their former names to preserve the `from sweep_types import M6_1_2CohortKind`
-# re-export contract — kept in __all__). The network-probe dataclasses still
-# resolve from `m6_1_2_types`; they are repointed to the `network_probe` home
-# in T014.
 from vllm_grpc_bench.types import (
     COHORTS as M6_1_2_COHORTS,
 )
@@ -48,6 +37,17 @@ from vllm_grpc_bench.types import (
 )
 from vllm_grpc_bench.types import (
     CohortOmissions as M6_1_2CohortOmissions,
+)
+
+# Cohort/cloud primitives and the network-probe dataclasses now come from the
+# generic `types` home (aliased to their former names to preserve the
+# `from sweep_types import M6_1_2CohortKind` re-export contract — kept in
+# __all__). The network-probe dataclasses were repointed off `m6_1_2_types` to
+# the `types` home in T014 (they keep their `M6_1_2` symbol names until T028a).
+from vllm_grpc_bench.types import (
+    M6_1_2NetworkPath,
+    M6_1_2NetworkPathError,
+    M6_1_2NetworkPathHop,
 )
 
 # --- M6.2 axis constants (FR-001 / FR-016) ----------------------------------
@@ -372,7 +372,7 @@ class M6_2SweepArtifact:
 
 
 __all__ = [
-    # Re-exports from m6_1_2_types
+    # Re-exports from the generic `types` home (de-prefixed in T015pre/T014)
     "M6_1_2_COHORTS",
     "M6_1_2CloudProvider",
     "M6_1_2CohortKind",

@@ -42,7 +42,6 @@ from pathlib import Path
 from typing import Any, cast
 
 from vllm_grpc_bench.m6_1_1_types import PerSegmentAggregate
-from vllm_grpc_bench.m6_1_2_network_probe import emit_probe_warnings, run_topology_probe
 from vllm_grpc_bench.m6_1_2_types import (
     M6_1_2_COHORTS,
     M6_1_CELLS,
@@ -82,6 +81,7 @@ from vllm_grpc_bench.m6_1_3_variance import (
 )
 from vllm_grpc_bench.m6_1_types import M6_1_CONCURRENCIES, M6_1Cell
 from vllm_grpc_bench.m6_sweep import RPCResult
+from vllm_grpc_bench.network_probe import emit_probe_warnings, run_topology_probe
 
 _ = M6_1_CONCURRENCIES  # documents the c=1/4/8 domain that c is drawn from
 

@@ -18,12 +18,12 @@ import io
 import re
 from contextlib import redirect_stderr
 
-from vllm_grpc_bench.m6_1_2_network_probe import _stderr_ts, emit_probe_warnings
 from vllm_grpc_bench.m6_1_2_types import (
     M6_1_2NetworkPath,
     M6_1_2NetworkPathError,
     M6_1_2NetworkPathHop,
 )
+from vllm_grpc_bench.network_probe import _stderr_ts, emit_probe_warnings
 
 _TS_PREFIX_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\] ")
 

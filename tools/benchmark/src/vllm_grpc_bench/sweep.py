@@ -521,7 +521,7 @@ class M6_2SweepInputs:
     anchor_dispatcher: AnchorRPCDriver
     is_transient: RetryClassifier
     topology_probe: Callable[[], Awaitable[dict[CohortKind, Any]]] | None = None
-    """FR-009 network-paths probe (m6_1_2_network_probe.run_topology_probe).
+    """FR-009 network-paths probe (network_probe.run_topology_probe).
 
     Fires at sweep start + end (validate sweeps < 8 h); publish sweeps
     additionally fire at every 4 h mark per the same cadence as the anchor

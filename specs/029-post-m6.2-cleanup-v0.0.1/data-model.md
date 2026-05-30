@@ -29,7 +29,7 @@ The "entities" of a refactor are **modules**, **symbols**, **tests**, **CLI flag
 | `m6_2_types.py` | `sweep_types.py` | — (own sweep-domain types home — T015pre; cohort/cloud symbols alias from `types`, network-probe dataclasses → `network_probe` in T014) |
 | `m6_2_prompt_source.py` | `prompts.py` (**merged**) | resolver + corpus loaders folded into the prompt home — T015pre; module deleted, count 88→87 |
 | `m6_1_1_timing.py` | `timing.py` | (= Entity 1 timing home) |
-| `m6_1_2_network_probe.py` | `network_probe.py` | — |
+| `m6_1_2_network_probe.py` | `network_probe.py` | — (T014: repointed at `types` home; the 3 network-probe dataclasses `M6_1_2NetworkPath`/`Hop`/`Error` are **re-exported by the `types` home** facade — defs stay in `m6_1_2_types` until Phase 4, RPCResult pattern — rather than network_probe-owned, to keep the module a cycle-free leaf consumer; resolves the T006 deferral note in favor of data-model Entity 1) |
 | `m6_engine_cost.py` | `engine_cost.py` | single de-prefixed home for cost parsers (imported by `rpc_driver`; not a merge candidate) |
 
 ## Entity 3 — Retained shared infra (repointed at homes)

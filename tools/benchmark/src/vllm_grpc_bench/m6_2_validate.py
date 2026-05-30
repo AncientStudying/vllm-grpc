@@ -1612,15 +1612,15 @@ async def _run_modal_backed(
     * Wraps the driver in :func:`build_modal_block_dispatcher` +
       :func:`build_modal_anchor_dispatcher` to match the sweep's
       ``BlockDispatcher`` + ``AnchorRPCDriver`` Protocols.
-    * Wires the FR-009 topology probe (``m6_1_2_network_probe.run_topology_probe``)
+    * Wires the FR-009 topology probe (``network_probe.run_topology_probe``)
       against the handshake dict at sweep start + end.
     """
     from dataclasses import replace
 
-    from vllm_grpc_bench.m6_1_2_network_probe import run_topology_probe
     from vllm_grpc_bench.m6_1_seq_len import pin_seq_len_at_sweep_start
     from vllm_grpc_bench.m6_2_reporter import write_m6_2_report
     from vllm_grpc_bench.modal_endpoint import ModalDeployError, provide_m6_endpoint
+    from vllm_grpc_bench.network_probe import run_topology_probe
     from vllm_grpc_bench.sweep import M6_2SweepInputs
 
     token_env = str(getattr(args, "m6_2_modal_token_env", "MODAL_BENCH_TOKEN"))
