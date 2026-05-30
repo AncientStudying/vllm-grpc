@@ -25,19 +25,19 @@ from vllm_grpc_bench.sweep import (
     compute_failure_summary_header_fired,
 )
 from vllm_grpc_bench.sweep_types import (
-    M6_2_INTERIOR_CAP_MAX_TOKENS,
-    M6_2_VALIDATE_MAX_TOKENS_AXIS,
-    M6_2AnchorLatencyTrajectory,
-    M6_2MeasurementPoint,
-    M6_2PromptSource,
-    M6_2SweepArtifact,
-    M6_2SweepMode,
+    INTERIOR_CAP_MAX_TOKENS,
+    VALIDATE_MAX_TOKENS_AXIS,
+    AnchorLatencyTrajectory,
+    MeasurementPoint,
+    PromptSource,
+    SweepArtifact,
+    SweepMode,
 )
 from vllm_grpc_bench.types import (
     CELLS,
     CohortKind,
-    M6_1_2NetworkPath,
-    M6_1_2NetworkPathError,
+    TopologyPath,
+    TopologyPathError,
 )
 
 
@@ -439,7 +439,7 @@ def _fmt(value: float | None, *, decimals: int = 2) -> str:
     return f"{value:.{decimals}f}"
 
 
-def compute_implied_output_tokens(point: M6_2MeasurementPoint) -> float | None:
+def compute_implied_output_tokens(point: MeasurementPoint) -> float | None:
     """Back out the per-RPC output-token count implied by the block's
     aggregated wall-clock and segment decomposition.
 
@@ -465,9 +465,9 @@ def compute_implied_output_tokens(point: M6_2MeasurementPoint) -> float | None:
     return max(0.0, implied)
 
 
-def _flatten_measurements(artifact: M6_2SweepArtifact) -> list[M6_2MeasurementPoint]:
+def _flatten_measurements(artifact: SweepArtifact) -> list[MeasurementPoint]:
     """Flatten ``artifact.per_cell`` into a stable, deterministic list."""
-    out: list[M6_2MeasurementPoint] = []
+    out: list[MeasurementPoint] = []
     for cell_id in sorted(artifact.per_cell.keys()):
         per_cohort = artifact.per_cell[cell_id]
         for cohort in sorted(per_cohort.keys()):
@@ -483,12 +483,12 @@ def _iter_cell_ids() -> list[str]:
 
 
 def fill_validate_mode_placeholders(
-    per_cell: dict[str, dict[CohortKind, dict[int, M6_2MeasurementPoint]]],
+    per_cell: dict[str, dict[CohortKind, dict[int, MeasurementPoint]]],
     *,
-    sweep_mode: M6_2SweepMode,
+    sweep_mode: SweepMode,
     block_start_utc: str,
     block_end_utc: str,
-) -> dict[str, dict[CohortKind, dict[int, M6_2MeasurementPoint]]]:
+) -> dict[str, dict[CohortKind, dict[int, MeasurementPoint]]]:
     """Insert ``failed_reason="not_validated"`` placeholders for interior caps
     that were not measured in validate mode (axis = ``{10, 50, 2048}``).
 
@@ -501,23 +501,23 @@ def fill_validate_mode_placeholders(
     """
     if sweep_mode != "validate":
         return per_cell
-    out: dict[str, dict[CohortKind, dict[int, M6_2MeasurementPoint]]] = {
+    out: dict[str, dict[CohortKind, dict[int, MeasurementPoint]]] = {
         cell: {cohort: dict(per_cap) for cohort, per_cap in per_cohort.items()}
         for cell, per_cohort in per_cell.items()
     }
     for cell_id in out:
         cell_type = "embed" if cell_id.startswith("embed") else "chat_stream"
         for cohort, per_cap in out[cell_id].items():
-            for max_tokens in M6_2_INTERIOR_CAP_MAX_TOKENS:
-                if max_tokens in M6_2_VALIDATE_MAX_TOKENS_AXIS:
+            for max_tokens in INTERIOR_CAP_MAX_TOKENS:
+                if max_tokens in VALIDATE_MAX_TOKENS_AXIS:
                     continue
                 if max_tokens in per_cap:
                     continue
                 # Interior caps always use corpus regime per R-9.
-                prompt_source: M6_2PromptSource = (
+                prompt_source: PromptSource = (
                     "corpus_sharegpt_embed" if cell_type == "embed" else "corpus_sharegpt"
                 )
-                per_cap[max_tokens] = M6_2MeasurementPoint(
+                per_cap[max_tokens] = MeasurementPoint(
                     cell_id=cell_id,
                     cohort=cohort,
                     max_tokens=max_tokens,
@@ -544,7 +544,7 @@ def fill_validate_mode_placeholders(
     return out
 
 
-def compute_clock_anomaly_fraction(measurements: Iterable[M6_2MeasurementPoint]) -> float:
+def compute_clock_anomaly_fraction(measurements: Iterable[MeasurementPoint]) -> float:
     """SC-011: fraction of measurement rows with ``clock_anomaly=True`` over
     rows that carried RPC traffic (``n_rpcs > 0``).
 
@@ -560,7 +560,7 @@ def compute_clock_anomaly_fraction(measurements: Iterable[M6_2MeasurementPoint])
 def _has_cohort_csp_mismatch(
     network_paths: dict[
         CohortKind,
-        list[M6_1_2NetworkPath | M6_1_2NetworkPathError],
+        list[TopologyPath | TopologyPathError],
     ],
 ) -> bool:
     """FR-009 / SC-010: fire ``cohort_csp_mismatch`` if any cohort's
@@ -568,7 +568,7 @@ def _has_cohort_csp_mismatch(
     for snapshots in network_paths.values():
         prior: tuple[str, str | None] | None = None
         for entry in snapshots:
-            if isinstance(entry, M6_1_2NetworkPath):
+            if isinstance(entry, TopologyPath):
                 key: tuple[str, str | None] = (entry.cloud_provider, entry.region)
             else:
                 continue
@@ -581,7 +581,7 @@ def _has_cohort_csp_mismatch(
     return False
 
 
-def build_integrity_warnings(artifact: M6_2SweepArtifact) -> list[str]:
+def build_integrity_warnings(artifact: SweepArtifact) -> list[str]:
     """Compose the canonical ``integrity_warnings`` list for the artifact.
 
     Channels fire independently per the rules in
@@ -635,7 +635,7 @@ def _sanitize_for_json(obj: Any) -> Any:
     return obj
 
 
-def render_json(artifact: M6_2SweepArtifact) -> dict[str, Any]:
+def render_json(artifact: SweepArtifact) -> dict[str, Any]:
     """Build the dict ready for ``json.dumps`` per
     ``contracts/artifact-schema.md`` "JSON top-level structure".
     """
@@ -716,7 +716,7 @@ _CHANNEL_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-def _render_leading_integrity_headers(artifact: M6_2SweepArtifact) -> list[str]:
+def _render_leading_integrity_headers(artifact: SweepArtifact) -> list[str]:
     """Render leading callouts for any fired integrity-warning channels.
 
     Each fired channel produces a `> **WARNING (<channel>)**: …` callout
@@ -741,7 +741,7 @@ def _render_leading_integrity_headers(artifact: M6_2SweepArtifact) -> list[str]:
 # --- Markdown rendering: run meta + method/background ----------------------
 
 
-def _render_run_meta(artifact: M6_2SweepArtifact) -> list[str]:
+def _render_run_meta(artifact: SweepArtifact) -> list[str]:
     rm = artifact.run_meta
     lines = [
         "# M6.2 — Token-Budget Characterization",
@@ -787,7 +787,7 @@ def _render_method_background() -> list[str]:
 # --- Section 1: Production latency budget (T023) ----------------------------
 
 
-def _row_status(point: M6_2MeasurementPoint) -> str:
+def _row_status(point: MeasurementPoint) -> str:
     """One-line per-row marker used in the latency budget table."""
     if point.failed_reason == NOT_VALIDATED_MARKER:
         return "`not_validated`"
@@ -797,9 +797,9 @@ def _row_status(point: M6_2MeasurementPoint) -> str:
 
 
 def _render_production_latency_budget(
-    artifact: M6_2SweepArtifact,
+    artifact: SweepArtifact,
     *,
-    sweep_mode: M6_2SweepMode,
+    sweep_mode: SweepMode,
 ) -> list[str]:
     """Section 1 — per-cell × per-cohort × per-max_tokens p50/p95/p99 table.
 
@@ -844,7 +844,7 @@ def _render_production_latency_budget(
 # --- Section 1b: Prompt-driven early-EOS audit ------------------------------
 
 
-def _render_early_eos_audit(artifact: M6_2SweepArtifact) -> list[str]:
+def _render_early_eos_audit(artifact: SweepArtifact) -> list[str]:
     """Section 1b — flag chat_stream cells whose natural-EOS termination
     undershoots the ``max_tokens`` cap by more than
     ``1 - EARLY_EOS_RATIO_THRESHOLD``.
@@ -868,7 +868,7 @@ def _render_early_eos_audit(artifact: M6_2SweepArtifact) -> list[str]:
     Emits nothing when no cells qualify — the section stays silent on the
     happy path to keep the report clean.
     """
-    flagged: list[tuple[M6_2MeasurementPoint, float, float]] = []
+    flagged: list[tuple[MeasurementPoint, float, float]] = []
     for point in _flatten_measurements(artifact):
         if not point.cell_id.startswith("chat_stream"):
             continue
@@ -934,9 +934,9 @@ def _render_early_eos_audit(artifact: M6_2SweepArtifact) -> list[str]:
 
 
 def _render_tpot_curves(
-    artifact: M6_2SweepArtifact,
+    artifact: SweepArtifact,
     *,
-    sweep_mode: M6_2SweepMode,
+    sweep_mode: SweepMode,
 ) -> list[str]:
     """Section 2 — chat_stream-only TPOT vs max_tokens.
 
@@ -972,9 +972,9 @@ def _render_tpot_curves(
 
 
 def _render_engine_cost_decomposition(
-    artifact: M6_2SweepArtifact,
+    artifact: SweepArtifact,
     *,
-    sweep_mode: M6_2SweepMode,
+    sweep_mode: SweepMode,
 ) -> list[str]:
     """Section 3 — segment-share evolution as a function of max_tokens.
 
@@ -1017,9 +1017,9 @@ def _render_engine_cost_decomposition(
 
 
 def _render_protocol_crossover(
-    artifact: M6_2SweepArtifact,
+    artifact: SweepArtifact,
     *,
-    sweep_mode: M6_2SweepMode,
+    sweep_mode: SweepMode,
 ) -> list[str]:
     """Section 4 — per-cell crossover threshold from the symmetric mean-in-CI
     rule (User Story 2). Renders the records produced by
@@ -1057,7 +1057,7 @@ def _render_protocol_crossover(
 # --- Section 5: KV-cache pressure (US3 placeholder) ------------------------
 
 
-def _render_kv_pressure(artifact: M6_2SweepArtifact) -> list[str]:
+def _render_kv_pressure(artifact: SweepArtifact) -> list[str]:
     """Section 5 — KV-cache pressure subsection sourced from the FR-036
     sub-probe (NOT budget-table c=8 rows). US3 (T037 / T038 / T039 / T040)
     populates ``artifact.kv_pressure_observation``; this renderer consumes
@@ -1100,7 +1100,7 @@ def _render_kv_pressure(artifact: M6_2SweepArtifact) -> list[str]:
 # --- Section 6: Null anchor validation (T026) ------------------------------
 
 
-def _render_null_anchor_validation(artifact: M6_2SweepArtifact) -> list[str]:
+def _render_null_anchor_validation(artifact: SweepArtifact) -> list[str]:
     """Section 6 — per-(cell, cohort, max_tokens) drift verdict at the
     null-anchor caps. 22 cross-checkable cells carry `PASS|WARN|FAIL`;
     26 new-baseline cells carry `new_baseline_marker`. The FR-014 sweep-level
@@ -1156,7 +1156,7 @@ def _render_null_anchor_validation(artifact: M6_2SweepArtifact) -> list[str]:
 # --- Section 7: Anchor latency trajectory (T030) ---------------------------
 
 
-def _render_anchor_latency_trajectory(artifact: M6_2SweepArtifact) -> list[str]:
+def _render_anchor_latency_trajectory(artifact: SweepArtifact) -> list[str]:
     """Section 7 — per-cohort intra-sweep anchor-latency trajectory.
 
     Per FR-031: 8-10 snapshots/cohort in publish mode; 2 in validate. Each
@@ -1172,7 +1172,7 @@ def _render_anchor_latency_trajectory(artifact: M6_2SweepArtifact) -> list[str]:
         lines.append("")
         return lines
     for cohort in sorted(artifact.anchor_latency_trajectory.keys()):
-        trajectory: M6_2AnchorLatencyTrajectory = artifact.anchor_latency_trajectory[cohort]
+        trajectory: AnchorLatencyTrajectory = artifact.anchor_latency_trajectory[cohort]
         lines.append(f"### `{cohort}`")
         lines.append("")
         spread = _fmt(trajectory.max_minus_min_wall_p50_ms, decimals=3)
@@ -1197,7 +1197,7 @@ def _render_anchor_latency_trajectory(artifact: M6_2SweepArtifact) -> list[str]:
 # --- Section 8: Failure summary (T027) -------------------------------------
 
 
-def _render_failure_summary(artifact: M6_2SweepArtifact) -> list[str]:
+def _render_failure_summary(artifact: SweepArtifact) -> list[str]:
     """Section 8 — per-reason tally of ``failed_<reason>`` markers across the
     full latency budget table. Always present per FR-029 / SC-014.
 
@@ -1223,7 +1223,7 @@ def _render_failure_summary(artifact: M6_2SweepArtifact) -> list[str]:
     lines.append("")
     # Systemic failure tag — any (cell, max_tokens) tuple with all 4 cohorts
     # failed on the same reason.
-    by_tuple: dict[tuple[str, int], list[M6_2MeasurementPoint]] = {}
+    by_tuple: dict[tuple[str, int], list[MeasurementPoint]] = {}
     for p in measurements:
         if p.failed_reason is None or p.failed_reason == NOT_VALIDATED_MARKER:
             continue
@@ -1249,9 +1249,9 @@ def _render_failure_summary(artifact: M6_2SweepArtifact) -> list[str]:
 
 
 def _render_sweep_wall_clock_timeline(
-    artifact: M6_2SweepArtifact,
+    artifact: SweepArtifact,
     *,
-    sweep_mode: M6_2SweepMode,
+    sweep_mode: SweepMode,
 ) -> list[str]:
     """Section 9 — one row per (cell, max_tokens) tuple with each cohort's
     block start UTC + duration in minutes. Visual verification of the FR-030
@@ -1262,7 +1262,7 @@ def _render_sweep_wall_clock_timeline(
         return []
     lines: list[str] = ["## Sweep wall-clock timeline", ""]
     measurements = _flatten_measurements(artifact)
-    by_tuple: dict[tuple[str, int], list[M6_2MeasurementPoint]] = {}
+    by_tuple: dict[tuple[str, int], list[MeasurementPoint]] = {}
     for p in measurements:
         if p.failed_reason == NOT_VALIDATED_MARKER:
             continue
@@ -1301,7 +1301,7 @@ def _duration_minutes(start_utc: str, end_utc: str) -> float:
 # --- Section: Network paths -------------------------------------------------
 
 
-def _render_network_paths(artifact: M6_2SweepArtifact) -> list[str]:
+def _render_network_paths(artifact: SweepArtifact) -> list[str]:
     """Render the per-cohort network_paths trajectory. The FR-009 /
     SC-010 ``cohort_csp_mismatch`` integrity header lives at the leading
     headers section; this subsection shows the underlying trajectory.
@@ -1315,7 +1315,7 @@ def _render_network_paths(artifact: M6_2SweepArtifact) -> list[str]:
     lines.append("|--------|-----------:|----------------|--------|-------------|--------|")
     for cohort in sorted(artifact.network_paths.keys()):
         for idx, entry in enumerate(artifact.network_paths[cohort]):
-            if isinstance(entry, M6_1_2NetworkPath):
+            if isinstance(entry, TopologyPath):
                 lines.append(
                     f"| `{cohort}` | {idx} | {entry.cloud_provider} | "
                     f"{entry.region or '—'} | `{entry.endpoint_ip}` | ok |"
@@ -1329,7 +1329,7 @@ def _render_network_paths(artifact: M6_2SweepArtifact) -> list[str]:
 # --- Markdown top-level rendering ------------------------------------------
 
 
-def render_markdown(artifact: M6_2SweepArtifact, *, sweep_mode: M6_2SweepMode) -> str:
+def render_markdown(artifact: SweepArtifact, *, sweep_mode: SweepMode) -> str:
     """Render the full M6.2 markdown report.
 
     Section order follows ``contracts/artifact-schema.md``: leading integrity
@@ -1358,11 +1358,11 @@ def render_markdown(artifact: M6_2SweepArtifact, *, sweep_mode: M6_2SweepMode) -
 
 
 def write_m6_2_report(
-    artifact: M6_2SweepArtifact,
+    artifact: SweepArtifact,
     md_path: Path,
     json_path: Path,
     *,
-    sweep_mode: M6_2SweepMode,
+    sweep_mode: SweepMode,
 ) -> None:
     """Write the markdown + JSON pair atomically per FR-015 two-path routing.
 

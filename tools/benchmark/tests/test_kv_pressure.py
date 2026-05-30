@@ -20,8 +20,8 @@ from vllm_grpc_bench.crossover import (
     SubProbeBlockResult,
     compute_kv_pressure_inference,
 )
-from vllm_grpc_bench.sweep_types import M6_2_SUB_PROBE_N
-from vllm_grpc_bench.types import COHORTS as M6_1_2_COHORTS
+from vllm_grpc_bench.sweep_types import SUB_PROBE_N
+from vllm_grpc_bench.types import COHORTS
 
 
 def _row(
@@ -38,7 +38,7 @@ def _row(
         cohort=cohort,  # type: ignore[arg-type]
         cell_type=cell_type,
         max_tokens=max_tokens,
-        n_rpcs=M6_2_SUB_PROBE_N,
+        n_rpcs=SUB_PROBE_N,
         wall_p50_ms=None if failed_reason else wall_p50_ms,
         wall_p95_ms=None if failed_reason else (wall_p50_ms or 0.0) * 1.5,
         failed_reason=failed_reason,
@@ -58,7 +58,7 @@ def _full_sub_probe_set(
     """16-row sub-probe shape (4 cohorts × 2 cell-types × 2 caps)."""
     rows: list[SubProbeBlockResult] = []
     for cell_type in ("chat_stream", "embed"):
-        for cohort in M6_1_2_COHORTS:
+        for cohort in COHORTS:
             rows.append(
                 _row(cohort=cohort, cell_type=cell_type, max_tokens=1024, wall_p50_ms=p50_at_1024)
             )
@@ -78,7 +78,7 @@ def test_emits_eight_records_when_all_blocks_present() -> None:
     types = {obs.cell_type for obs in out}
     assert types == {"chat_stream", "embed"}
     cohorts = {obs.cohort for obs in out}
-    assert cohorts == set(M6_1_2_COHORTS)
+    assert cohorts == set(COHORTS)
 
 
 # --- Ratio rule ------------------------------------------------------------
@@ -119,7 +119,7 @@ def test_oom_at_2048_pins_label_to_not_observable() -> None:
     ratio when the higher-cap block crashed)."""
     rows: list[SubProbeBlockResult] = []
     for cell_type in ("chat_stream", "embed"):
-        for cohort in M6_1_2_COHORTS:
+        for cohort in COHORTS:
             rows.append(
                 _row(cohort=cohort, cell_type=cell_type, max_tokens=1024, wall_p50_ms=100.0)
             )
@@ -152,7 +152,7 @@ def test_oom_at_2048_pins_label_to_not_observable() -> None:
 def test_engine_field_propagates_from_2048_block() -> None:
     rows: list[SubProbeBlockResult] = []
     for cell_type in ("chat_stream", "embed"):
-        for cohort in M6_1_2_COHORTS:
+        for cohort in COHORTS:
             rows.append(
                 _row(cohort=cohort, cell_type=cell_type, max_tokens=1024, wall_p50_ms=100.0)
             )
@@ -184,7 +184,7 @@ def test_engine_field_absent_inference_still_fires() -> None:
 def test_missing_2048_block_emits_not_observable() -> None:
     rows: list[SubProbeBlockResult] = []
     for cell_type in ("chat_stream", "embed"):
-        for cohort in M6_1_2_COHORTS:
+        for cohort in COHORTS:
             rows.append(
                 _row(cohort=cohort, cell_type=cell_type, max_tokens=1024, wall_p50_ms=100.0)
             )
@@ -197,7 +197,7 @@ def test_missing_2048_block_emits_not_observable() -> None:
 def test_failed_1024_block_emits_not_observable() -> None:
     rows: list[SubProbeBlockResult] = []
     for cell_type in ("chat_stream", "embed"):
-        for cohort in M6_1_2_COHORTS:
+        for cohort in COHORTS:
             rows.append(
                 _row(
                     cohort=cohort,
@@ -238,7 +238,7 @@ def test_sub_probe_metadata_fields_populated() -> None:
     rows = _full_sub_probe_set()
     out = compute_kv_pressure_inference(rows)
     for obs in out:
-        assert obs.sub_probe_n_rpcs == M6_2_SUB_PROBE_N
+        assert obs.sub_probe_n_rpcs == SUB_PROBE_N
         assert obs.sub_probe_measurement_regime == "forced_cap_ignore_eos_true"
         expected_source = (
             "corpus_sharegpt" if obs.cell_type == "chat_stream" else "corpus_sharegpt_embed"

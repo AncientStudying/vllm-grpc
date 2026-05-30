@@ -26,9 +26,9 @@ from vllm_grpc_bench.ci import estimate
 
 # --- Cost types (own home — keeps this module a dependency leaf) -------------
 
-M6Path = Literal["embed", "chat_stream"]
-M6CohortKind = Literal["rest_https_edge", "default_grpc", "tuned_grpc_multiplexed"]
-M6_DRIFT_WARNING_PCT: float = 0.10  # FR-014 sub-clause (>10%)
+CellPath = Literal["embed", "chat_stream"]
+EngineCohortKind = Literal["rest_https_edge", "default_grpc", "tuned_grpc_multiplexed"]
+DRIFT_WARNING_PCT: float = 0.10  # FR-014 sub-clause (>10%)
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,7 @@ class EngineCostAggregate:
 
 def parse_grpc_trailing_metadata(
     metadata: Sequence[tuple[str, str]] | Iterable[tuple[str, str]],
-    path: M6Path,
+    path: CellPath,
 ) -> EngineCostSpan | None:
     """Read engine_cost values from gRPC trailing metadata.
 
@@ -87,7 +87,7 @@ def parse_grpc_trailing_metadata(
         return None
 
 
-def parse_rest_response(response_json: Mapping[str, Any], path: M6Path) -> EngineCostSpan | None:
+def parse_rest_response(response_json: Mapping[str, Any], path: CellPath) -> EngineCostSpan | None:
     """Read engine_cost values from REST JSON payload (top-level ``engine_cost``).
 
     For chat_stream, ``response_json`` is the FINAL SSE event's data payload.
@@ -115,7 +115,7 @@ def parse_rest_response(response_json: Mapping[str, Any], path: M6Path) -> Engin
 # --- Drift warning (T012) ----------------------------------------------------
 
 
-def compute_drift_warning(per_cohort_engine_cost_mean_ms: Mapping[M6CohortKind, float]) -> bool:
+def compute_drift_warning(per_cohort_engine_cost_mean_ms: Mapping[EngineCohortKind, float]) -> bool:
     """Return True iff any pair of cohorts disagrees by more than 10%.
 
     Per FR-014 sub-clause: pairwise threshold ``> 0.10 * min(a, b)``.
@@ -130,7 +130,7 @@ def compute_drift_warning(per_cohort_engine_cost_mean_ms: Mapping[M6CohortKind, 
             base = min(a, b)
             if base <= 0:
                 continue
-            if abs(a - b) / base > M6_DRIFT_WARNING_PCT:
+            if abs(a - b) / base > DRIFT_WARNING_PCT:
                 return True
     return False
 
@@ -140,7 +140,7 @@ def compute_drift_warning(per_cohort_engine_cost_mean_ms: Mapping[M6CohortKind, 
 
 def aggregate_engine_cost_per_cell(
     spans: Iterable[EngineCostSpan],
-    path: M6Path,
+    path: CellPath,
 ) -> EngineCostAggregate:
     """Mean + 95% CI half-width per path-discriminated engine-cost field.
 

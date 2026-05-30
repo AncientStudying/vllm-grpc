@@ -103,7 +103,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Per-block sample size (FR-004). No silent default -- the operator MUST "
         "pass --n=<N> for the publish sweep. The pinned production value is n=40 "
-        "(sweep_types.M6_2_PUBLISH_N). Under --validate, hard-pinned to 20.",
+        "(sweep_types.PUBLISH_N). Under --validate, hard-pinned to 20.",
     )
     sweep.add_argument(
         "--modal-region",
@@ -392,10 +392,10 @@ def main() -> None:
         rc = _validate_args(args)
         if rc != 0:
             sys.exit(rc)
-        from vllm_grpc_bench.sweep_types import M6_2SweepMode
+        from vllm_grpc_bench.sweep_types import SweepMode
         from vllm_grpc_bench.validate import run_m6_2
 
-        sweep_mode: M6_2SweepMode = "validate" if getattr(args, "validate", False) else "publish"
+        sweep_mode: SweepMode = "validate" if getattr(args, "validate", False) else "publish"
         sys.exit(run_m6_2(args, sweep_mode=sweep_mode))
 
     if args.subcommand == "compare":

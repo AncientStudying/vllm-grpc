@@ -302,7 +302,7 @@ def _fake_rpc_success() -> Any:
 
 
 class _RecordingDriver:
-    """Test double for an M6_2RPCDriver. Each call appends its
+    """Test double for an RPCDriver. Each call appends its
     (cohort, cell, seed, kwargs) tuple to ``calls`` and returns the
     next ``yield_each`` element (either an RPCResult-shaped object or an
     exception to raise).
@@ -438,7 +438,7 @@ class TestBlockDispatcherRecoveryHappyPath:
 
 class TestBlockDispatcherRecoveryBudget:
     """T074c FR-026 budget enforcement: after
-    ``M6_2_PREEMPTION_RECURRENCE_THRESHOLD`` successful recoveries, the
+    ``PREEMPTION_RECURRENCE_THRESHOLD`` successful recoveries, the
     next detected preemption raises :class:`PreemptionBudgetExhausted`
     so the orchestrator can abort the sweep cleanly."""
 
@@ -505,10 +505,10 @@ class TestBlockDispatcherRecoveryBudget:
         contract; a silent drift would change when the orchestrator
         gives up vs spins forever."""
         from vllm_grpc_bench.validate import (
-            M6_2_PREEMPTION_RECURRENCE_THRESHOLD,
+            PREEMPTION_RECURRENCE_THRESHOLD,
         )
 
-        assert M6_2_PREEMPTION_RECURRENCE_THRESHOLD == 2
+        assert PREEMPTION_RECURRENCE_THRESHOLD == 2
 
     @pytest.mark.asyncio
     async def test_recovery_within_budget_succeeds(self, _fake_rpc_success: Any) -> None:
@@ -921,7 +921,7 @@ class TestAnchorDispatcherRecovery:
 
 class TestArtifactPreemptionEventsField:
     """T074f: the per-dispatcher preemption counters flow into
-    :class:`sweep_types.M6_2RunMeta`'s ``preemption_events`` field via
+    :class:`sweep_types.SweepRunMeta`'s ``preemption_events`` field via
     :func:`build_artifact`. The field is rendered in the markdown
     run_meta block + serialised to the JSON artifact for post-hoc audit.
     """
@@ -932,11 +932,11 @@ class TestArtifactPreemptionEventsField:
         accumulated counter must end up in
         ``artifact.run_meta.preemption_events`` so the JSON consumer can
         confirm the recovery happened."""
-        from vllm_grpc_bench.sweep_types import M6_2RunMeta
+        from vllm_grpc_bench.sweep_types import SweepRunMeta
 
         # Direct constructor exercise — the orchestrator threads the
         # counter into build_artifact via the ``preemption_events`` kwarg.
-        rm = M6_2RunMeta(
+        rm = SweepRunMeta(
             git_sha="abc1234",
             modal_region="eu-west-1",
             base_seed=42,
@@ -1312,7 +1312,7 @@ class TestBlockHasEndpointDeath:
 
 
 # Fix 2 (2026-05-25 publish-sweep autopsy): the dispatcher must trigger a
-# make_driver() refresh after ``M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD``
+# make_driver() refresh after ``ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD``
 # consecutive partial-death blocks, not only on the whole-block predicate.
 
 
@@ -1370,9 +1370,9 @@ class TestSecondaryTriggerConsecutiveDeathBlocks:
     def test_threshold_constant_is_two(self) -> None:
         """Load-bearing for the sweep-abort contract — a silent drift
         would change when secondary recovery fires."""
-        from vllm_grpc_bench.validate import M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD
+        from vllm_grpc_bench.validate import ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD
 
-        assert M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD == 2
+        assert ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD == 2
 
     @pytest.mark.asyncio
     async def test_two_consecutive_partial_death_blocks_trigger_recovery(
@@ -1818,7 +1818,7 @@ class TestAnchorDispatcherSecondaryTrigger:
         """The anchor and block dispatchers default to the same
         threshold constant — operators expect symmetry."""
         from vllm_grpc_bench.validate import (
-            M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD,
+            ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD,
             build_modal_anchor_dispatcher,
             build_modal_block_dispatcher,
         )
@@ -1834,7 +1834,7 @@ class TestAnchorDispatcherSecondaryTrigger:
         ]
         # Threshold = 2 (the constant). One partial-death block must NOT
         # trigger on either dispatcher.
-        assert M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD == 2
+        assert ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD == 2
 
         async def _no_recover() -> Any:
             raise AssertionError("default threshold (2) must not trigger on a single block")

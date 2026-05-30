@@ -23,8 +23,8 @@ from vllm_grpc_bench.sub_probe import (
     run_kv_pressure_sub_probe,
 )
 from vllm_grpc_bench.sweep import BlockDispatchResult
-from vllm_grpc_bench.sweep_types import M6_2_SUB_PROBE_MAX_TOKENS, M6_2_SUB_PROBE_N
-from vllm_grpc_bench.types import COHORTS as M6_1_2_COHORTS
+from vllm_grpc_bench.sweep_types import SUB_PROBE_MAX_TOKENS, SUB_PROBE_N
+from vllm_grpc_bench.types import COHORTS
 
 # --- Stub corpora ----------------------------------------------------------
 
@@ -112,8 +112,8 @@ def test_sub_probe_iterates_16_tuples_cohort_innermost() -> None:
     # (cell_type, max_tokens) tuple.
     idx = 0
     for cell_type in SUB_PROBE_CELL_TYPES:
-        for max_tokens in M6_2_SUB_PROBE_MAX_TOKENS:
-            for cohort in M6_1_2_COHORTS:
+        for max_tokens in SUB_PROBE_MAX_TOKENS:
+            for cohort in COHORTS:
                 assert tuples[idx] == (cell_type, max_tokens, cohort), (
                     f"position {idx} should be {(cell_type, max_tokens, cohort)}"
                 )
@@ -145,7 +145,7 @@ def test_run_sub_probe_emits_16_rows_with_n_20() -> None:
     )
     assert len(rows) == 16
     for row in rows:
-        assert row.n_rpcs == M6_2_SUB_PROBE_N
+        assert row.n_rpcs == SUB_PROBE_N
         assert row.failed_reason is None
         assert row.wall_p50_ms is not None
 
@@ -198,7 +198,7 @@ def test_dispatcher_called_at_each_sub_probe_cap() -> None:
         )
     )
     caps = {call["max_tokens"] for call in dispatcher.calls}
-    assert caps == set(M6_2_SUB_PROBE_MAX_TOKENS)
+    assert caps == set(SUB_PROBE_MAX_TOKENS)
 
 
 def test_dispatcher_called_for_each_cohort() -> None:
@@ -213,7 +213,7 @@ def test_dispatcher_called_for_each_cohort() -> None:
         )
     )
     cohorts = {call["cohort"] for call in dispatcher.calls}
-    assert cohorts == set(M6_1_2_COHORTS)
+    assert cohorts == set(COHORTS)
 
 
 # --- Cell-type distinction --------------------------------------------------

@@ -2,7 +2,7 @@
 
 Exercises ``--m6_2 --m6_2-n=40 --m6_2-skip-deploy`` end-to-end against the
 stub RPC driver. ``n=40`` is the round-3-pinned production value
-(:data:`sweep_types.M6_2_PUBLISH_N`, FR-004 closure 2026-05-24). Asserts the
+(:data:`sweep_types.PUBLISH_N`, FR-004 closure 2026-05-24). Asserts the
 canonical publish-mode artifact shape:
 
 - Full 6-point axis × 4-cohort × 6-cell table (132 rows under the M6.1.2
@@ -17,7 +17,7 @@ canonical publish-mode artifact shape:
   conditionally (the stub data hits none of them).
 - Sub-probe contract: 16 blocks × n=20 × ``ignore_eos=True`` per T042;
   ``run_meta.sub_probe_ran=true``.
-- ``run_meta.n_per_point == M6_2_PUBLISH_N`` (regression guard against
+- ``run_meta.n_per_point == PUBLISH_N`` (regression guard against
   silently drifting the pinned production n).
 """
 
@@ -28,16 +28,16 @@ import json
 from pathlib import Path
 
 from vllm_grpc_bench.reporter import INTEGRITY_CHANNELS, NOT_VALIDATED_MARKER
-from vllm_grpc_bench.sweep_types import M6_2_PUBLISH_N
+from vllm_grpc_bench.sweep_types import PUBLISH_N
 from vllm_grpc_bench.validate import run_m6_2
 
 
 def _build_publish_args(
-    *, md_path: Path, json_path: Path, n: int = M6_2_PUBLISH_N
+    *, md_path: Path, json_path: Path, n: int = PUBLISH_N
 ) -> argparse.Namespace:
     """Construct the ``argparse.Namespace`` shape ``run_m6_2`` expects for
     ``--m6_2 --m6_2-n=<n> --m6_2-skip-deploy`` invocations. Default ``n``
-    matches :data:`sweep_types.M6_2_PUBLISH_N` (40) so the test exercises
+    matches :data:`sweep_types.PUBLISH_N` (40) so the test exercises
     the round-3-pinned production value verbatim."""
     return argparse.Namespace(
         validate=False,
@@ -184,4 +184,4 @@ def test_publish_artifact_run_meta_validate_axis_subset_is_null(tmp_path: Path) 
     payload = json.loads(json_path.read_text())
     assert payload["run_meta"]["validate_axis_subset"] is None
     assert payload["run_meta"]["sweep_mode"] == "publish"
-    assert payload["run_meta"]["n_per_point"] == M6_2_PUBLISH_N
+    assert payload["run_meta"]["n_per_point"] == PUBLISH_N

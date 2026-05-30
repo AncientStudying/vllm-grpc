@@ -79,7 +79,7 @@ class ChannelConfig:
         _validate_options(self.client_options)
 
 
-M1_BASELINE = ChannelConfig(
+BASELINE = ChannelConfig(
     name="m1-baseline",
     axis="baseline",
     description="No explicit channel options; matches M1 wire shape exactly.",
@@ -194,7 +194,7 @@ HTTP2_BDP_PROBE = ChannelConfig(
 # M6.1.1's working 3-cohort pattern.
 
 ALL_PRESETS: tuple[ChannelConfig, ...] = (
-    M1_BASELINE,
+    BASELINE,
     MAX_MSG_16MIB,
     MAX_MSG_UNLIMITED,
     KEEPALIVE_AGGRESSIVE,
@@ -213,7 +213,7 @@ def preset_by_name(name: str) -> ChannelConfig:
 
 def presets_for_axis(axis: Axis) -> tuple[ChannelConfig, ...]:
     """Return baseline + every candidate preset on the given axis."""
-    return (M1_BASELINE,) + tuple(c for c in ALL_PRESETS if c.axis == axis)
+    return (BASELINE,) + tuple(c for c in ALL_PRESETS if c.axis == axis)
 
 
 def _client_kwargs(cfg: ChannelConfig) -> dict[str, Any]:

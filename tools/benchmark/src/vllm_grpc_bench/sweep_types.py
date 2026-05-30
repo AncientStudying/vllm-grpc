@@ -14,11 +14,11 @@ ignore the new fields without parse error.
 
 Round-5 round (clarify) extends the data model with:
 - ``prompt_source`` + ``measurement_regime`` + ``prompt_corpus_idx`` on
-  ``M6_2MeasurementPoint``.
+  ``MeasurementPoint``.
 - ``sub_probe_n_rpcs`` + ``sub_probe_prompt_source`` +
-  ``sub_probe_measurement_regime`` on ``M6_2KVPressureObservation``.
+  ``sub_probe_measurement_regime`` on ``KVPressureObservation``.
 - ``chat_corpus_sha256`` + ``chat_corpus_path`` + ``embed_corpus_sha256`` +
-  ``embed_corpus_path`` + ``sub_probe_ran`` on ``M6_2RunMeta``.
+  ``embed_corpus_path`` + ``sub_probe_ran`` on ``SweepRunMeta``.
 """
 
 from __future__ import annotations
@@ -26,52 +26,43 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from vllm_grpc_bench.types import (
-    COHORTS as M6_1_2_COHORTS,
-)
-from vllm_grpc_bench.types import (
-    CloudProvider as M6_1_2CloudProvider,
-)
-from vllm_grpc_bench.types import (
-    CohortKind as M6_1_2CohortKind,
-)
-from vllm_grpc_bench.types import (
-    CohortOmissions as M6_1_2CohortOmissions,
-)
-
 # Cohort/cloud primitives and the network-probe dataclasses now come from the
-# generic `types` home (aliased to their former names to preserve the
-# `from sweep_types import M6_1_2CohortKind` re-export contract — kept in
-# __all__). The network-probe dataclasses were repointed off `m6_1_2_types` to
-# the `types` home in T014 (they keep their `M6_1_2` symbol names until T028a).
+# generic `types` home and are re-exported here (kept in __all__) to preserve
+# the `from sweep_types import CohortKind` contract. T028a dropped the former
+# `M6_1_2*` aliases — these are now the de-prefixed home names directly
+# (`CohortKind`, `COHORTS`, `TopologyPath`, …).
 from vllm_grpc_bench.types import (
-    M6_1_2NetworkPath,
-    M6_1_2NetworkPathError,
-    M6_1_2NetworkPathHop,
+    COHORTS,
+    CloudProvider,
+    CohortKind,
+    CohortOmissions,
+    TopologyPath,
+    TopologyPathError,
+    TopologyPathHop,
 )
 
 # --- M6.2 axis constants (FR-001 / FR-016) ----------------------------------
 
-M6_2_MAX_TOKENS_AXIS: tuple[int, ...] = (10, 50, 256, 512, 1024, 2048)
+MAX_TOKENS_AXIS: tuple[int, ...] = (10, 50, 256, 512, 1024, 2048)
 """The full 6-point publish-mode axis."""
 
-M6_2_VALIDATE_MAX_TOKENS_AXIS: tuple[int, ...] = (10, 50, 2048)
+VALIDATE_MAX_TOKENS_AXIS: tuple[int, ...] = (10, 50, 2048)
 """The 3-point validate-mode axis subset (round-1 Q2)."""
 
-M6_2_NULL_ANCHOR_MAX_TOKENS: tuple[int, ...] = (10, 50)
+NULL_ANCHOR_MAX_TOKENS: tuple[int, ...] = (10, 50)
 """Caps where null-anchor cross-milestone comparison fires (FR-012 / FR-013)."""
 
-M6_2_INTERIOR_CAP_MAX_TOKENS: tuple[int, ...] = (256, 512, 1024, 2048)
+INTERIOR_CAP_MAX_TOKENS: tuple[int, ...] = (256, 512, 1024, 2048)
 """Caps where the corpus-regime (production-realistic) measurement applies."""
 
-M6_2_SUB_PROBE_MAX_TOKENS: tuple[int, ...] = (1024, 2048)
+SUB_PROBE_MAX_TOKENS: tuple[int, ...] = (1024, 2048)
 """Caps the KV-pressure sub-probe runs at (FR-036 / R-10)."""
 
-M6_2_SUB_PROBE_N: int = 20
+SUB_PROBE_N: int = 20
 """Per-block sample size for the KV-pressure sub-probe (FR-036)."""
 
 
-M6_2_PUBLISH_N: int = 40
+PUBLISH_N: int = 40
 """Per-(cell × cohort × max_tokens) sample size for the publish sweep,
 pinned in clarify round 3 (2026-05-24) against the 2026-05-24 validate
 sweep's measured CI half-widths.
@@ -88,20 +79,20 @@ explicit ``--m6_2-n`` flag — this constant documents the canonical pinned
 value but does NOT supply a default, so an operator cannot launch the
 publish sweep at an unintended n by omission."""
 
-M6_2_KV_PRESSURE_THRESHOLD: float = 2.2
+KV_PRESSURE_THRESHOLD: float = 2.2
 """Wall-clock ratio threshold above which KV-pressure is inferred (FR-017a)."""
 
-M6_2_NULL_ANCHOR_DRIFT_COUNT_THRESHOLD: int = 2
+NULL_ANCHOR_DRIFT_COUNT_THRESHOLD: int = 2
 """Cross-checkable cells that must carry WARN/FAIL before FR-014 sweep-level
 ``null_anchor_drift`` integrity header fires. The 22 cross-checkable cells
 are the chat_stream cells × cohort pairs at ``max_tokens=50`` plus the embed
 cells × cohort pairs at ``max_tokens=10`` (minus M6.1.3's 2 cohort omissions)."""
 
-M6_2_LATENCY_DRIFT_COHORT_COUNT_THRESHOLD: int = 2
+LATENCY_DRIFT_COHORT_COUNT_THRESHOLD: int = 2
 """Cohorts that must fire ``latency_drift_warning`` before SC-016 sweep-level
 ``intra_sweep_latency_drift`` integrity header fires."""
 
-M6_2_FAILURE_SUMMARY_CELL_COUNT_THRESHOLD: int = 3
+FAILURE_SUMMARY_CELL_COUNT_THRESHOLD: int = 3
 """Failed cells (across the table) that trigger FR-029 sweep-level
 ``failure_summary_threshold`` integrity header. The companion rule —
 ``systemic_failure_<reason>`` — fires when any (cell, max_tokens) sees
@@ -110,7 +101,7 @@ all 4 cohorts fail with the same reason (handled inline by the reporter)."""
 
 # --- Sweep-mode metadata (FR-015 + R-7 two-path routing) --------------------
 
-M6_2SweepMode = Literal["publish", "validate"]
+SweepMode = Literal["publish", "validate"]
 """Recorded in ``run_meta.sweep_mode`` so downstream readers can distinguish
 the canonical publish artifact from the wiring-confidence validate sibling.
 ``"publish"`` for ``--m6_2``; ``"validate"`` for ``--m6_2-validate``."""
@@ -118,7 +109,7 @@ the canonical publish artifact from the wiring-confidence validate sibling.
 
 # --- Three-regime prompt-source vocabulary (round-5 FR-034 / FR-035) -------
 
-M6_2PromptSource = Literal[
+PromptSource = Literal[
     "synthetic_seed_derived",
     "corpus_sharegpt",
     "synthetic_random_tensor",
@@ -129,22 +120,22 @@ produced the inputs for a given block. Synthetic regimes apply to null-anchor
 caps ``{10, 50}``; corpus regimes apply to interior caps + sub-probe."""
 
 
-M6_2MeasurementRegime = Literal["natural_eos", "forced_cap_ignore_eos_true"]
+MeasurementRegime = Literal["natural_eos", "forced_cap_ignore_eos_true"]
 """Generation-termination regime. Budget-table rows are always
 ``"natural_eos"``; KV-pressure sub-probe rows are always
 ``"forced_cap_ignore_eos_true"``."""
 
 
-M6_2WallClockInferenceLabel = Literal[
+WallClockInferenceLabel = Literal[
     "kv_pressure_inferred_chat_stream",
     "kv_pressure_inferred_embed",
     "kv_pressure_not_observable",
 ]
 """Per cell-type × cohort KV-pressure inference label, derived from the
-wall-clock-ratio rule with threshold ``M6_2_KV_PRESSURE_THRESHOLD``."""
+wall-clock-ratio rule with threshold ``KV_PRESSURE_THRESHOLD``."""
 
 
-M6_2DriftVerdict = Literal["PASS", "WARN", "FAIL"]
+DriftVerdict = Literal["PASS", "WARN", "FAIL"]
 """Null-anchor cross-milestone verdict (FR-012 / FR-013).
 
 ``PASS``: M6.2 anchor measurement inside M6.1.3 CI half-width.
@@ -156,7 +147,7 @@ M6_2DriftVerdict = Literal["PASS", "WARN", "FAIL"]
 
 
 @dataclass(slots=True, kw_only=True)
-class M6_2MeasurementPoint:
+class MeasurementPoint:
     """A single ``(cell, cohort, max_tokens)`` block measurement.
 
     144 rows in publish mode (6 cells × 4 cohorts × 6 caps); 72 measured + 72
@@ -167,11 +158,11 @@ class M6_2MeasurementPoint:
     Round-5 fields (``prompt_source``, ``measurement_regime``,
     ``prompt_corpus_idx``) record the three-regime prompt-source contract per
     FR-034 / FR-035; ``measurement_regime`` is always ``"natural_eos"`` on
-    budget-table rows (sub-probe rows live in ``M6_2KVPressureObservation``).
+    budget-table rows (sub-probe rows live in ``KVPressureObservation``).
     """
 
     cell_id: str
-    cohort: M6_1_2CohortKind
+    cohort: CohortKind
     max_tokens: int
     n_rpcs: int
     wall_p50_ms: float | None
@@ -189,13 +180,13 @@ class M6_2MeasurementPoint:
     block_end_utc: str
     retry_attempted: bool
     clock_anomaly: bool
-    prompt_source: M6_2PromptSource
-    measurement_regime: M6_2MeasurementRegime
+    prompt_source: PromptSource
+    measurement_regime: MeasurementRegime
     prompt_corpus_idx: int | None
 
 
 @dataclass(slots=True, kw_only=True)
-class M6_2NullAnchor:
+class NullAnchor:
     """Null-anchor verdict for one ``(cell, cohort)`` pair at
     ``max_tokens ∈ {10, 50}``.
 
@@ -207,55 +198,55 @@ class M6_2NullAnchor:
     """
 
     cell_id: str
-    cohort: M6_1_2CohortKind
+    cohort: CohortKind
     max_tokens: int
     m6_2_wall_p50_ms: float | None
     m6_1_3_wall_p50_ms: float | None  # None on new-baseline cells
     m6_1_3_ci_half_width: float | None  # None on new-baseline cells
-    drift_verdict: M6_2DriftVerdict | None  # None on new-baseline cells
+    drift_verdict: DriftVerdict | None  # None on new-baseline cells
     drift_fraction: float | None
     new_baseline_marker: bool
 
 
 @dataclass(slots=True, kw_only=True)
-class M6_2CrossoverThreshold:
+class CrossoverThreshold:
     """Per-cell crossover threshold from the symmetric mean-in-CI rule
     (spec round-1 Q3). ``crossover_max_tokens`` uses the coarse 4-value
     vocabulary ``{10, 50, 2048, survives_to_2048}`` in validate mode and the
     full 6-point axis in publish mode."""
 
     cell_id: str
-    m6_1_3_winner_cohort: M6_1_2CohortKind | None
-    m6_1_3_second_cohort: M6_1_2CohortKind | None
+    m6_1_3_winner_cohort: CohortKind | None
+    m6_1_3_second_cohort: CohortKind | None
     crossover_max_tokens: int | None
     crossover_evidence: str
     m6_1_3_base_verdict: str
 
 
 @dataclass(slots=True, kw_only=True)
-class M6_2KVPressureObservation:
+class KVPressureObservation:
     """Per ``(cohort, cell_type)`` KV-pressure observation derived from the
     sub-probe (NOT the main-sweep budget-table c=8 rows) per round-5 FR-036.
 
     8 records per artifact (4 cohorts × 2 cell-types); derived from 16
     sub-probe blocks (4 cohorts × 2 cell-types × 2 caps in
-    ``M6_2_SUB_PROBE_MAX_TOKENS``).
+    ``SUB_PROBE_MAX_TOKENS``).
     """
 
-    cohort: M6_1_2CohortKind
+    cohort: CohortKind
     cell_type: Literal["chat_stream", "embed"]
     wall_clock_ratio_c8_2048_over_1024: float | None
-    wall_clock_inference_label: M6_2WallClockInferenceLabel
+    wall_clock_inference_label: WallClockInferenceLabel
     kv_cache_used_fraction_peak: float | None
     scheduling_stall_signals: str | None
     oom_observed: bool
-    sub_probe_n_rpcs: int  # always M6_2_SUB_PROBE_N (20)
+    sub_probe_n_rpcs: int  # always SUB_PROBE_N (20)
     sub_probe_prompt_source: Literal["corpus_sharegpt", "corpus_sharegpt_embed"]
     sub_probe_measurement_regime: Literal["forced_cap_ignore_eos_true"]
 
 
 @dataclass(slots=True, kw_only=True)
-class M6_2AnchorLatencySnapshot:
+class AnchorLatencySnapshot:
     """One snapshot in the intra-sweep anchor-latency trajectory (FR-031).
 
     The anchor block uses the SYNTHETIC chat_stream c=1 × max_tokens=10
@@ -271,14 +262,14 @@ class M6_2AnchorLatencySnapshot:
 
 
 @dataclass(slots=True, kw_only=True)
-class M6_2AnchorLatencyTrajectory:
+class AnchorLatencyTrajectory:
     """Per-cohort sequence of intra-sweep anchor snapshots (FR-031).
 
     Publish: ≥ 8 snapshots at 4h cadence + start + end (~40h sweep gives 10).
     Validate: 2 snapshots (start + end; ~2.3h sweep ≪ 4h cadence)."""
 
-    cohort: M6_1_2CohortKind
-    snapshots: list[M6_2AnchorLatencySnapshot]
+    cohort: CohortKind
+    snapshots: list[AnchorLatencySnapshot]
     max_minus_min_wall_p50_ms: float
     latency_drift_warning: bool
     insufficient_post_warmup_snapshots: bool = False
@@ -294,7 +285,7 @@ class M6_2AnchorLatencyTrajectory:
 
 
 @dataclass(slots=True, kw_only=True)
-class M6_2RunMeta:
+class SweepRunMeta:
     """Per-sweep run metadata for the M6.2 artifact. Extends M6.1.3's RunMeta
     schema-wise with M6.2's round-4 controls (iteration discipline, wall-clock
     bounds, Modal spend) and round-5 controls (corpus SHAs, sub-probe flag).
@@ -307,7 +298,7 @@ class M6_2RunMeta:
     dispatch_mode: Literal["concurrent"]  # always "concurrent" per FR-007
     symmetric_prompts_enabled: bool  # always True per FR-008
     schema_version: Literal["m6_1_1.v1"]  # unchanged per FR-011
-    sweep_mode: M6_2SweepMode
+    sweep_mode: SweepMode
     m6_1_3_baseline_artifact_path: str  # default docs/benchmarks/m6_1_3-attribution-closure.json
     iteration_order: Literal["cohort_innermost_block"]  # FR-030
     iteration_discipline_verified: bool  # FR-032 post-hoc machine check
@@ -329,7 +320,7 @@ class M6_2RunMeta:
     # ``0`` is the happy-path value (no Modal preemption mid-sweep);
     # non-zero values indicate the run survived ``preemption_events`` Modal
     # worker restarts via T074's recovery loop. Capped at
-    # ``M6_2_PREEMPTION_RECURRENCE_THRESHOLD`` per dispatcher (the next
+    # ``PREEMPTION_RECURRENCE_THRESHOLD`` per dispatcher (the next
     # recovery aborts the sweep cleanly via ``PreemptionBudgetExhausted``).
     # Backward-compatible default ``0`` preserves the M6.1.3 strict-superset
     # contract — pre-T074 readers ignore the new key cleanly.
@@ -337,7 +328,7 @@ class M6_2RunMeta:
 
 
 @dataclass(slots=True, kw_only=True)
-class M6_2SweepArtifact:
+class SweepArtifact:
     """The top-level M6.2 artifact payload persisted to
     ``docs/benchmarks/m6_2-token-budget.json`` (or ``-validate.json``).
 
@@ -351,60 +342,60 @@ class M6_2SweepArtifact:
     run_id: str
     run_started_at: str
     run_completed_at: str
-    run_meta: M6_2RunMeta
+    run_meta: SweepRunMeta
     # Per-cell × per-cohort × per-max_tokens latency budget table.
-    per_cell: dict[str, dict[M6_1_2CohortKind, dict[int, M6_2MeasurementPoint]]]
+    per_cell: dict[str, dict[CohortKind, dict[int, MeasurementPoint]]]
     # M6.1.3 inheritance — topology probe trajectory.
     network_paths: dict[
-        M6_1_2CohortKind,
-        list[M6_1_2NetworkPath | M6_1_2NetworkPathError],
+        CohortKind,
+        list[TopologyPath | TopologyPathError],
     ]
-    cohort_set: list[M6_1_2CohortKind]
-    cohort_omissions: M6_1_2CohortOmissions | None
+    cohort_set: list[CohortKind]
+    cohort_omissions: CohortOmissions | None
     # M6.2 additive top-level keys.
-    null_anchor_validation: list[M6_2NullAnchor]
+    null_anchor_validation: list[NullAnchor]
     max_tokens_axis: list[int]
-    protocol_crossover: list[M6_2CrossoverThreshold]
-    kv_pressure_observation: list[M6_2KVPressureObservation]
-    anchor_latency_trajectory: dict[M6_1_2CohortKind, M6_2AnchorLatencyTrajectory]
+    protocol_crossover: list[CrossoverThreshold]
+    kv_pressure_observation: list[KVPressureObservation]
+    anchor_latency_trajectory: dict[CohortKind, AnchorLatencyTrajectory]
     failure_summary: dict[str, int] = field(default_factory=dict)
     integrity_warnings: list[str] = field(default_factory=list)
 
 
 __all__ = [
     # Re-exports from the generic `types` home (de-prefixed in T015pre/T014)
-    "M6_1_2_COHORTS",
-    "M6_1_2CloudProvider",
-    "M6_1_2CohortKind",
-    "M6_1_2CohortOmissions",
-    "M6_1_2NetworkPath",
-    "M6_1_2NetworkPathError",
-    "M6_1_2NetworkPathHop",
+    "COHORTS",
+    "CloudProvider",
+    "CohortKind",
+    "CohortOmissions",
+    "TopologyPath",
+    "TopologyPathError",
+    "TopologyPathHop",
     # Axis constants
-    "M6_2_MAX_TOKENS_AXIS",
-    "M6_2_VALIDATE_MAX_TOKENS_AXIS",
-    "M6_2_NULL_ANCHOR_MAX_TOKENS",
-    "M6_2_INTERIOR_CAP_MAX_TOKENS",
-    "M6_2_SUB_PROBE_MAX_TOKENS",
-    "M6_2_SUB_PROBE_N",
-    "M6_2_PUBLISH_N",
-    "M6_2_KV_PRESSURE_THRESHOLD",
-    "M6_2_NULL_ANCHOR_DRIFT_COUNT_THRESHOLD",
-    "M6_2_LATENCY_DRIFT_COHORT_COUNT_THRESHOLD",
-    "M6_2_FAILURE_SUMMARY_CELL_COUNT_THRESHOLD",
+    "MAX_TOKENS_AXIS",
+    "VALIDATE_MAX_TOKENS_AXIS",
+    "NULL_ANCHOR_MAX_TOKENS",
+    "INTERIOR_CAP_MAX_TOKENS",
+    "SUB_PROBE_MAX_TOKENS",
+    "SUB_PROBE_N",
+    "PUBLISH_N",
+    "KV_PRESSURE_THRESHOLD",
+    "NULL_ANCHOR_DRIFT_COUNT_THRESHOLD",
+    "LATENCY_DRIFT_COHORT_COUNT_THRESHOLD",
+    "FAILURE_SUMMARY_CELL_COUNT_THRESHOLD",
     # Literals
-    "M6_2SweepMode",
-    "M6_2PromptSource",
-    "M6_2MeasurementRegime",
-    "M6_2WallClockInferenceLabel",
-    "M6_2DriftVerdict",
+    "SweepMode",
+    "PromptSource",
+    "MeasurementRegime",
+    "WallClockInferenceLabel",
+    "DriftVerdict",
     # Dataclasses
-    "M6_2AnchorLatencySnapshot",
-    "M6_2AnchorLatencyTrajectory",
-    "M6_2CrossoverThreshold",
-    "M6_2KVPressureObservation",
-    "M6_2MeasurementPoint",
-    "M6_2NullAnchor",
-    "M6_2RunMeta",
-    "M6_2SweepArtifact",
+    "AnchorLatencySnapshot",
+    "AnchorLatencyTrajectory",
+    "CrossoverThreshold",
+    "KVPressureObservation",
+    "MeasurementPoint",
+    "NullAnchor",
+    "SweepRunMeta",
+    "SweepArtifact",
 ]

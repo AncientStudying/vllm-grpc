@@ -12,7 +12,7 @@ M6.1.3 published CI. The 48-cell anchor pool splits per FR-012 into:
   carries ``new_baseline_marker = True`` and ``drift_verdict = None``.
 
 The FR-014 sweep-level ``null_anchor_drift`` integrity header fires when
-≥ ``M6_2_NULL_ANCHOR_DRIFT_COUNT_THRESHOLD`` (2 by default) cross-checkable
+≥ ``NULL_ANCHOR_DRIFT_COUNT_THRESHOLD`` (2 by default) cross-checkable
 cells carry ``drift_verdict ∈ {WARN, FAIL}``. New-baseline cells are
 excluded from this count by construction (their verdict is ``None``).
 
@@ -28,9 +28,9 @@ side) from firing on noise.
 from __future__ import annotations
 
 from vllm_grpc_bench.sweep_types import (
-    M6_2_NULL_ANCHOR_DRIFT_COUNT_THRESHOLD,
-    M6_2DriftVerdict,
-    M6_2NullAnchor,
+    NULL_ANCHOR_DRIFT_COUNT_THRESHOLD,
+    DriftVerdict,
+    NullAnchor,
 )
 from vllm_grpc_bench.types import CohortKind
 
@@ -104,7 +104,7 @@ def compute_drift_verdict(
     floor_ms: float = DRIFT_THRESHOLD_FLOOR_MS,
     floor_fraction: float = DRIFT_THRESHOLD_FLOOR_FRACTION,
     warn_multiplier: float = DRIFT_THRESHOLD_WARN_MULTIPLIER,
-) -> M6_2DriftVerdict:
+) -> DriftVerdict:
     """Pooled-CI-with-floor verdict rule (B2 + B4 round-8 amendment).
 
     ``pooled = max(m6_1_3_ci_half_width, m6_2_ci_half_width, floor_ms,
@@ -141,8 +141,8 @@ def make_null_anchor(
     m6_1_3_wall_p50_ms: float,
     m6_1_3_ci_half_width: float,
     m6_2_ci_half_width: float = 0.0,
-) -> M6_2NullAnchor:
-    """Build a cross-checkable :class:`M6_2NullAnchor` (M6.1.3 baseline present).
+) -> NullAnchor:
+    """Build a cross-checkable :class:`NullAnchor` (M6.1.3 baseline present).
 
     ``m6_2_wall_p50_ms=None`` (M6.2 anchor block failed) yields
     ``drift_verdict="FAIL"`` and ``drift_fraction=None``.
@@ -152,7 +152,7 @@ def make_null_anchor(
     matches the threshold-band placement of the verdict.
     """
     if m6_2_wall_p50_ms is None:
-        return M6_2NullAnchor(
+        return NullAnchor(
             cell_id=cell_id,
             cohort=cohort,
             max_tokens=max_tokens,
@@ -175,7 +175,7 @@ def make_null_anchor(
         baseline_p50_ms=m6_1_3_wall_p50_ms,
     )
     drift_fraction = (m6_2_wall_p50_ms - m6_1_3_wall_p50_ms) / pooled if pooled > 0 else 0.0
-    return M6_2NullAnchor(
+    return NullAnchor(
         cell_id=cell_id,
         cohort=cohort,
         max_tokens=max_tokens,
@@ -194,13 +194,13 @@ def make_new_baseline_anchor(
     cohort: CohortKind,
     max_tokens: int,
     m6_2_wall_p50_ms: float | None,
-) -> M6_2NullAnchor:
-    """Build a new-baseline :class:`M6_2NullAnchor` (no M6.1.3 reference).
+) -> NullAnchor:
+    """Build a new-baseline :class:`NullAnchor` (no M6.1.3 reference).
 
     ``new_baseline_marker=True``; ``drift_verdict=None``; the cell is excluded
     from the FR-014 sweep-level header count by construction.
     """
-    return M6_2NullAnchor(
+    return NullAnchor(
         cell_id=cell_id,
         cohort=cohort,
         max_tokens=max_tokens,
@@ -214,9 +214,9 @@ def make_new_baseline_anchor(
 
 
 def compute_null_anchor_drift_header_fired(
-    anchors: list[M6_2NullAnchor],
+    anchors: list[NullAnchor],
     *,
-    threshold: int = M6_2_NULL_ANCHOR_DRIFT_COUNT_THRESHOLD,
+    threshold: int = NULL_ANCHOR_DRIFT_COUNT_THRESHOLD,
 ) -> bool:
     """FR-014 sweep-level ``null_anchor_drift`` integrity header rule.
 

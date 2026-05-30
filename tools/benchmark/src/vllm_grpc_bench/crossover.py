@@ -27,20 +27,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from vllm_grpc_bench.sweep_types import (
-    M6_2_KV_PRESSURE_THRESHOLD,
-    M6_2_MAX_TOKENS_AXIS,
-    M6_2_SUB_PROBE_N,
-    M6_2_VALIDATE_MAX_TOKENS_AXIS,
-    M6_2CrossoverThreshold,
-    M6_2KVPressureObservation,
-    M6_2MeasurementPoint,
-    M6_2SweepMode,
+    KV_PRESSURE_THRESHOLD,
+    MAX_TOKENS_AXIS,
+    SUB_PROBE_N,
+    VALIDATE_MAX_TOKENS_AXIS,
+    CrossoverThreshold,
+    KVPressureObservation,
+    MeasurementPoint,
+    SweepMode,
 )
 from vllm_grpc_bench.types import COHORTS, CohortKind
 
 __all__ = [
     "INCONCLUSIVE_VERDICT_LABELS",
-    "M6_1_3CohortBaseline",
+    "CohortBaseline",
     "SubProbeBlockResult",
     "compute_kv_pressure_inference",
     "compute_per_cell_crossover",
@@ -69,7 +69,7 @@ identified, so crossover detection is undefined per US2 #2. The outer
 
 
 @dataclass(frozen=True, slots=True)
-class M6_1_3CohortBaseline:
+class CohortBaseline:
     """One ``(cell, cohort)`` baseline measurement read from the M6.1.3
     artifact. ``wall_p50_ms`` is the published cohort mean (M6.1.3 doesn't
     publish per-cohort p50; the mean is the closest available proxy);
@@ -90,7 +90,7 @@ def _is_inconclusive_verdict(verdict: str) -> bool:
 
 def identify_winner_and_second(
     cell_id: str,
-    baseline: dict[CohortKind, M6_1_3CohortBaseline],
+    baseline: dict[CohortKind, CohortBaseline],
 ) -> tuple[CohortKind, CohortKind] | None:
     """Find the M6.1.3 winner + second cohort by ascending ``wall_p50_ms``.
 
@@ -106,8 +106,8 @@ def identify_winner_and_second(
 
 
 def symmetric_mean_in_ci(
-    a: M6_2MeasurementPoint,
-    b: M6_2MeasurementPoint,
+    a: MeasurementPoint,
+    b: MeasurementPoint,
 ) -> bool:
     """Spec round-1 Q3 symmetric rule: ``True`` iff EITHER ``a``'s p50 lies
     inside ``b``'s CI band OR ``b``'s p50 lies inside ``a``'s CI band.
@@ -127,12 +127,12 @@ def symmetric_mean_in_ci(
 
 
 def compute_per_cell_crossover(
-    per_cell_axis_rows: dict[str, dict[CohortKind, dict[int, M6_2MeasurementPoint]]],
-    m6_1_3_baseline: dict[str, dict[CohortKind, M6_1_3CohortBaseline]],
+    per_cell_axis_rows: dict[str, dict[CohortKind, dict[int, MeasurementPoint]]],
+    m6_1_3_baseline: dict[str, dict[CohortKind, CohortBaseline]],
     m6_1_3_base_verdicts: dict[str, str],
     *,
-    sweep_mode: M6_2SweepMode,
-) -> list[M6_2CrossoverThreshold]:
+    sweep_mode: SweepMode,
+) -> list[CrossoverThreshold]:
     """Per spec round-1 Q3 + round-5 contract.
 
     For each cell in ``m6_1_3_base_verdicts``:
@@ -151,14 +151,14 @@ def compute_per_cell_crossover(
     Validate mode iterates the 3-point axis subset ``{10, 50, 2048}``; the
     coarse 4-value vocabulary follows naturally from the axis itself.
     """
-    axis = M6_2_VALIDATE_MAX_TOKENS_AXIS if sweep_mode == "validate" else M6_2_MAX_TOKENS_AXIS
+    axis = VALIDATE_MAX_TOKENS_AXIS if sweep_mode == "validate" else MAX_TOKENS_AXIS
     first_axis = axis[0]
-    out: list[M6_2CrossoverThreshold] = []
+    out: list[CrossoverThreshold] = []
 
     for cell_id, base_verdict in m6_1_3_base_verdicts.items():
         if _is_inconclusive_verdict(base_verdict):
             out.append(
-                M6_2CrossoverThreshold(
+                CrossoverThreshold(
                     cell_id=cell_id,
                     m6_1_3_winner_cohort=None,
                     m6_1_3_second_cohort=None,
@@ -175,7 +175,7 @@ def compute_per_cell_crossover(
         winner_second = identify_winner_and_second(cell_id, baseline)
         if winner_second is None:
             out.append(
-                M6_2CrossoverThreshold(
+                CrossoverThreshold(
                     cell_id=cell_id,
                     m6_1_3_winner_cohort=None,
                     m6_1_3_second_cohort=None,
@@ -213,7 +213,7 @@ def compute_per_cell_crossover(
                     f"at max_tokens={max_tokens}"
                 )
             out.append(
-                M6_2CrossoverThreshold(
+                CrossoverThreshold(
                     cell_id=cell_id,
                     m6_1_3_winner_cohort=winner,
                     m6_1_3_second_cohort=second,
@@ -227,7 +227,7 @@ def compute_per_cell_crossover(
 
         if not found_crossover:
             out.append(
-                M6_2CrossoverThreshold(
+                CrossoverThreshold(
                     cell_id=cell_id,
                     m6_1_3_winner_cohort=winner,
                     m6_1_3_second_cohort=second,
@@ -261,7 +261,7 @@ class SubProbeBlockResult:
     cohort: CohortKind
     cell_type: str  # "chat_stream" | "embed"
     max_tokens: int
-    n_rpcs: int  # always M6_2_SUB_PROBE_N (20) per FR-036
+    n_rpcs: int  # always SUB_PROBE_N (20) per FR-036
     wall_p50_ms: float | None
     wall_p95_ms: float | None
     failed_reason: str | None
@@ -282,12 +282,12 @@ def _sub_probe_prompt_source_for(cell_type: str) -> str:
 
 def compute_kv_pressure_inference(
     sub_probe_rows: list[SubProbeBlockResult],
-) -> list[M6_2KVPressureObservation]:
+) -> list[KVPressureObservation]:
     """Per spec round-5 FR-017a + round-3 Q3 (threshold 2.2).
 
     Consumes the sub-probe per-(cohort, cell_type, max_tokens) rows produced
     by :func:`sub_probe.run_kv_pressure_sub_probe`. Emits one
-    :class:`M6_2KVPressureObservation` per (cohort, cell_type) pair — 8 in
+    :class:`KVPressureObservation` per (cohort, cell_type) pair — 8 in
     total (4 cohorts × 2 cell-types).
 
     The wall-clock-ratio ``R = wall_p50_ms(2048) / wall_p50_ms(1024)``:
@@ -310,7 +310,7 @@ def compute_kv_pressure_inference(
         (row.cell_type, row.cohort, row.max_tokens): row for row in sub_probe_rows
     }
 
-    out: list[M6_2KVPressureObservation] = []
+    out: list[KVPressureObservation] = []
     for cell_type in ("chat_stream", "embed"):
         for cohort in COHORTS:
             row_1024 = bucket.get((cell_type, cohort, 1024))
@@ -332,7 +332,7 @@ def compute_kv_pressure_inference(
                 ratio = row_2048.wall_p50_ms / row_1024.wall_p50_ms
                 if oom:
                     label = "kv_pressure_not_observable"
-                elif ratio > M6_2_KV_PRESSURE_THRESHOLD:
+                elif ratio > KV_PRESSURE_THRESHOLD:
                     label = f"kv_pressure_inferred_{cell_type}"
                 else:
                     label = "kv_pressure_not_observable"
@@ -344,7 +344,7 @@ def compute_kv_pressure_inference(
                 stall = row_2048.scheduling_stall_signals
 
             out.append(
-                M6_2KVPressureObservation(
+                KVPressureObservation(
                     cohort=cohort,
                     cell_type=cell_type,
                     wall_clock_ratio_c8_2048_over_1024=ratio,
@@ -352,7 +352,7 @@ def compute_kv_pressure_inference(
                     kv_cache_used_fraction_peak=engine_peak,
                     scheduling_stall_signals=stall,
                     oom_observed=oom,
-                    sub_probe_n_rpcs=M6_2_SUB_PROBE_N,
+                    sub_probe_n_rpcs=SUB_PROBE_N,
                     sub_probe_prompt_source=_sub_probe_prompt_source_for(cell_type),  # type: ignore[arg-type]
                     sub_probe_measurement_regime="forced_cap_ignore_eos_true",
                 )

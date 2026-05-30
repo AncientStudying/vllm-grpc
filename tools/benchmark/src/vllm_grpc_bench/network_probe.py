@@ -1,8 +1,8 @@
 """M6.1.2 — Per-sweep ``tcptraceroute`` topology probe (Story 1 / US1).
 
 Captures per-cohort topology evidence at sweep start (FR-001 / FR-001a /
-FR-002 / FR-002a) and produces a ``dict[cohort, M6_1_2NetworkPath |
-M6_1_2NetworkPathError]`` keyed by cohort name. Per-cohort 30s wall-clock
+FR-002 / FR-002a) and produces a ``dict[cohort, TopologyPath |
+TopologyPathError]`` keyed by cohort name. Per-cohort 30s wall-clock
 timeout; cohorts probed in parallel via ``asyncio.gather`` +
 ``asyncio.to_thread``.
 
@@ -39,9 +39,9 @@ from vllm_grpc_bench.types import (
     COHORTS,
     CloudProvider,
     CohortKind,
-    M6_1_2NetworkPath,
-    M6_1_2NetworkPathError,
-    M6_1_2NetworkPathHop,
+    TopologyPath,
+    TopologyPathError,
+    TopologyPathHop,
 )
 
 # --- Module constants -------------------------------------------------------
@@ -135,7 +135,7 @@ def _parse_url(url: str) -> tuple[str, int | None]:
 # --- Hop parser (T012 / FR-003) ---------------------------------------------
 
 
-def parse_tcptraceroute_output(stdout: str) -> list[M6_1_2NetworkPathHop]:
+def parse_tcptraceroute_output(stdout: str) -> list[TopologyPathHop]:
     """Parse ``tcptraceroute`` stdout into an ordered list of hops.
 
     Format per Michael Toren's ``tcptraceroute(1)``:
@@ -149,7 +149,7 @@ def parse_tcptraceroute_output(stdout: str) -> list[M6_1_2NetworkPathHop]:
     Returns hops in source order. ``cloud_provider`` is left as ``None`` —
     the caller (``run_topology_probe``) populates per-hop annotation.
     """
-    hops: list[M6_1_2NetworkPathHop] = []
+    hops: list[TopologyPathHop] = []
     for raw_line in stdout.splitlines():
         match = _HOP_REGEX.match(raw_line)
         if match is None:
@@ -159,7 +159,7 @@ def parse_tcptraceroute_output(stdout: str) -> list[M6_1_2NetworkPathHop]:
         rtt_raw = match.group("rtt")
         rtt_ms_or_null: float | None = float(rtt_raw) if rtt_raw is not None else None
         hops.append(
-            M6_1_2NetworkPathHop(
+            TopologyPathHop(
                 hop_number=hop_number,
                 ip=ip,
                 rtt_ms_or_null=rtt_ms_or_null,
@@ -465,7 +465,7 @@ def _probe_one_cohort(
     *,
     timeout: float = _PER_COHORT_TIMEOUT_S,
     ranges: dict[str, dict[str, Any]] | None = None,
-) -> M6_1_2NetworkPath | M6_1_2NetworkPathError:
+) -> TopologyPath | TopologyPathError:
     """Run ``tcptraceroute`` against one ``(host, port)`` and parse.
 
     Thread-safe blocking subprocess invocation suitable for
@@ -483,21 +483,21 @@ def _probe_one_cohort(
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return M6_1_2NetworkPathError(
+        return TopologyPathError(
             error="probe_timeout",
             probe_method="tcptraceroute",
             probed_at_utc=probed_at,
             detail=(f"tcptraceroute exceeded {timeout}s wall-clock for {host}:{port}"),
         )
     except FileNotFoundError:
-        return M6_1_2NetworkPathError(
+        return TopologyPathError(
             error="tcptraceroute_unavailable",
             probe_method="tcptraceroute",
             probed_at_utc=probed_at,
             detail="tcptraceroute binary not found on PATH",
         )
     except OSError as exc:
-        return M6_1_2NetworkPathError(
+        return TopologyPathError(
             error="subprocess_error",
             probe_method="tcptraceroute",
             probed_at_utc=probed_at,
@@ -506,7 +506,7 @@ def _probe_one_cohort(
 
     if proc.returncode != 0 and not proc.stdout.strip():
         stderr_line = proc.stderr.strip().splitlines()[0] if proc.stderr.strip() else None
-        return M6_1_2NetworkPathError(
+        return TopologyPathError(
             error="subprocess_error",
             probe_method="tcptraceroute",
             probed_at_utc=probed_at,
@@ -519,7 +519,7 @@ def _probe_one_cohort(
         ranges = _fetch_csp_ip_ranges()
 
     annotated_hops = [
-        M6_1_2NetworkPathHop(
+        TopologyPathHop(
             hop_number=h.hop_number,
             ip=h.ip,
             rtt_ms_or_null=h.rtt_ms_or_null,
@@ -533,7 +533,7 @@ def _probe_one_cohort(
         attribute_cloud_provider(endpoint_ip, ranges=ranges) if endpoint_ip else ("unknown", None)
     )
 
-    return M6_1_2NetworkPath(
+    return TopologyPath(
         endpoint_ip=endpoint_ip or "",
         hops=annotated_hops,
         cloud_provider=cohort_csp,
@@ -543,7 +543,7 @@ def _probe_one_cohort(
     )
 
 
-def _resolve_endpoint_ip(host: str, hops: list[M6_1_2NetworkPathHop]) -> str | None:
+def _resolve_endpoint_ip(host: str, hops: list[TopologyPathHop]) -> str | None:
     """Resolve the cohort endpoint IP, preferring the last hop with an IP."""
     try:
         return socket.gethostbyname(host)
@@ -563,7 +563,7 @@ async def run_topology_probe(
     per_cohort_timeout_seconds: float = _PER_COHORT_TIMEOUT_S,
     *,
     ranges: dict[str, dict[str, Any]] | None = None,
-) -> dict[CohortKind, M6_1_2NetworkPath | M6_1_2NetworkPathError]:
+) -> dict[CohortKind, TopologyPath | TopologyPathError]:
     """Probe each cohort's endpoint in parallel; return per-cohort results.
 
     Per FR-001 + FR-001a + FR-002a:
@@ -571,7 +571,7 @@ async def run_topology_probe(
     - Cohorts probed in parallel via ``asyncio.gather`` + ``asyncio.to_thread``.
     - 30s per-cohort wall-clock timeout.
     - Probe failure NEVER aborts: per-cohort errors recorded as
-      ``M6_1_2NetworkPathError`` entries; warning emission per FR-005a / FR-006
+      ``TopologyPathError`` entries; warning emission per FR-005a / FR-006
       is the caller's responsibility (see :func:`emit_probe_warnings`).
     """
     if ranges is None:
@@ -579,11 +579,11 @@ async def run_topology_probe(
 
     # Resolve (cohort, host, port) tuples from the handshake dict.
     targets: list[tuple[CohortKind, str, int]] = []
-    skipped: dict[CohortKind, M6_1_2NetworkPathError] = {}
+    skipped: dict[CohortKind, TopologyPathError] = {}
     for cohort in cohorts:
         url = handshake_dict.get(_COHORT_HANDSHAKE_KEY[cohort])
         if not url or not isinstance(url, str):
-            skipped[cohort] = M6_1_2NetworkPathError(
+            skipped[cohort] = TopologyPathError(
                 error="subprocess_error",
                 probe_method="tcptraceroute",
                 probed_at_utc=_now_iso_utc(),
@@ -595,7 +595,7 @@ async def run_topology_probe(
             continue
         host, port = _parse_url(url)
         if port is None:
-            skipped[cohort] = M6_1_2NetworkPathError(
+            skipped[cohort] = TopologyPathError(
                 error="parse_error",
                 probe_method="tcptraceroute",
                 probed_at_utc=_now_iso_utc(),
@@ -606,7 +606,7 @@ async def run_topology_probe(
 
     async def _run(
         cohort: CohortKind, host: str, port: int
-    ) -> tuple[CohortKind, M6_1_2NetworkPath | M6_1_2NetworkPathError]:
+    ) -> tuple[CohortKind, TopologyPath | TopologyPathError]:
         result = await asyncio.to_thread(
             _probe_one_cohort,
             host,
@@ -617,7 +617,7 @@ async def run_topology_probe(
         return cohort, result
 
     gathered = await asyncio.gather(*(_run(c, h, p) for (c, h, p) in targets))
-    results: dict[CohortKind, M6_1_2NetworkPath | M6_1_2NetworkPathError] = dict(gathered)
+    results: dict[CohortKind, TopologyPath | TopologyPathError] = dict(gathered)
     results.update(skipped)
     return results
 
@@ -626,7 +626,7 @@ async def run_topology_probe(
 
 
 def emit_probe_warnings(
-    results: dict[CohortKind, M6_1_2NetworkPath | M6_1_2NetworkPathError],
+    results: dict[CohortKind, TopologyPath | TopologyPathError],
 ) -> None:
     """Emit FR-005a (all-failed) and FR-006 (CSP-mismatch) warnings to stderr.
 
@@ -635,7 +635,7 @@ def emit_probe_warnings(
     if not results:
         return
 
-    errors = {c: r for c, r in results.items() if isinstance(r, M6_1_2NetworkPathError)}
+    errors = {c: r for c, r in results.items() if isinstance(r, TopologyPathError)}
     if len(errors) == len(results):
         reason_summary = "/".join(
             f"{len(errors)}/{len(results)}: " + ",".join(sorted({r.error for r in errors.values()}))
@@ -650,7 +650,7 @@ def emit_probe_warnings(
         )
 
     for cohort, result in results.items():
-        if not isinstance(result, M6_1_2NetworkPath):
+        if not isinstance(result, TopologyPath):
             continue
         expected = _EXPECTED_COHORT_CSP.get(cohort)
         if expected is None:

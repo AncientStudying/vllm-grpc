@@ -46,20 +46,20 @@ from vllm_grpc_bench.corpus import (
     CompletionEmbedSample,
     RequestSample,
 )
-from vllm_grpc_bench.crossover import M6_1_3CohortBaseline
+from vllm_grpc_bench.crossover import CohortBaseline
 from vllm_grpc_bench.sweep_types import (
-    M6_2_NULL_ANCHOR_MAX_TOKENS,
-    M6_2_VALIDATE_MAX_TOKENS_AXIS,
-    M6_2NullAnchor,
-    M6_2RunMeta,
-    M6_2SweepArtifact,
-    M6_2SweepMode,
+    NULL_ANCHOR_MAX_TOKENS,
+    VALIDATE_MAX_TOKENS_AXIS,
+    NullAnchor,
+    SweepArtifact,
+    SweepMode,
+    SweepRunMeta,
 )
 from vllm_grpc_bench.types import CELLS, COHORTS, Cell, CohortKind
 
 __all__ = [
-    "M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD",
-    "M6_2_PREEMPTION_RECURRENCE_THRESHOLD",
+    "ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD",
+    "PREEMPTION_RECURRENCE_THRESHOLD",
     "PreemptionBudgetExhausted",
     "PreemptionRecoveryFailed",
     "block_failed_with_endpoint_death",
@@ -108,18 +108,18 @@ def infer_output_path(
     if kind == "json" and explicit_json is not None:
         return str(explicit_json)
 
-    sweep_mode: M6_2SweepMode = "validate" if getattr(args, "validate", False) else "publish"
+    sweep_mode: SweepMode = "validate" if getattr(args, "validate", False) else "publish"
     if sweep_mode == "validate":
         return _VALIDATE_MD if kind == "md" else _VALIDATE_JSON
     return _CANONICAL_MD if kind == "md" else _CANONICAL_JSON
 
 
-def _resolve_axis(sweep_mode: M6_2SweepMode) -> tuple[int, ...]:
+def _resolve_axis(sweep_mode: SweepMode) -> tuple[int, ...]:
     """Validate mode uses the 3-point subset per FR-001 round-1 Q2; publish
     uses the full 6-point axis."""
-    from vllm_grpc_bench.sweep_types import M6_2_MAX_TOKENS_AXIS
+    from vllm_grpc_bench.sweep_types import MAX_TOKENS_AXIS
 
-    return M6_2_VALIDATE_MAX_TOKENS_AXIS if sweep_mode == "validate" else M6_2_MAX_TOKENS_AXIS
+    return VALIDATE_MAX_TOKENS_AXIS if sweep_mode == "validate" else MAX_TOKENS_AXIS
 
 
 # --- Stub dispatcher for --m6_2-skip-deploy / tests ------------------------
@@ -405,7 +405,7 @@ def _cell_from_cell_id(cell_id: str) -> Cell:
 # T074c — Modal-preemption budget enforcement -------------------------------
 
 
-M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD: int = 2
+ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD: int = 2
 """Secondary preemption trigger: when this many *consecutive* blocks each
 report at least one endpoint-death failure, the dispatcher forces a
 ``make_driver()`` refresh even if no individual block tripped the
@@ -421,9 +421,9 @@ URL is stale; one is not (could be a single transport blip).
 """
 
 
-M6_2_PREEMPTION_RECURRENCE_THRESHOLD: int = 2
+PREEMPTION_RECURRENCE_THRESHOLD: int = 2
 """FR-026 inherits the M6.1.3 FR-028 Modal-preemption-recurrence threshold:
-the sweep tolerates up to ``M6_2_PREEMPTION_RECURRENCE_THRESHOLD`` Modal-
+the sweep tolerates up to ``PREEMPTION_RECURRENCE_THRESHOLD`` Modal-
 preemption-recovery cycles before aborting. The 3rd detected preemption
 raises :class:`PreemptionBudgetExhausted` so the sweep exits cleanly
 rather than spinning on a Modal app that keeps getting preempted.
@@ -435,7 +435,7 @@ the whole sweep, not per-cohort or per-cell."""
 
 class PreemptionBudgetExhausted(RuntimeError):
     """Raised by the block dispatcher when Modal preemption recovery has
-    been attempted more than ``M6_2_PREEMPTION_RECURRENCE_THRESHOLD`` times
+    been attempted more than ``PREEMPTION_RECURRENCE_THRESHOLD`` times
     in a single sweep. The orchestrator catches this in
     :func:`_run_modal_backed` and exits with a non-zero return code so the
     operator (or cron-monitor) sees that the sweep abandoned cleanly."""
@@ -541,12 +541,12 @@ async def build_modal_make_driver_callable(
 
 
 def build_modal_block_dispatcher(
-    driver: Any,  # M6_2RPCDriver — `Any` to avoid an import cycle at the type level
+    driver: Any,  # RPCDriver — `Any` to avoid an import cycle at the type level
     *,
     base_seed: int,
-    make_driver: Any = None,  # Callable[[], Awaitable[M6_2RPCDriver]] | None
-    preemption_budget: int = M6_2_PREEMPTION_RECURRENCE_THRESHOLD,
-    consecutive_death_threshold: int = M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD,
+    make_driver: Any = None,  # Callable[[], Awaitable[RPCDriver]] | None
+    preemption_budget: int = PREEMPTION_RECURRENCE_THRESHOLD,
+    consecutive_death_threshold: int = ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD,
 ) -> Any:
     """Build a :class:`BlockDispatcher` that fires N concurrent RPCs via
     :func:`provide_m6_2_rpc_driver`'s driver callable.
@@ -587,7 +587,7 @@ def build_modal_block_dispatcher(
     one endpoint-death failure, the dispatcher counts consecutive
     partial-death blocks. Once that count reaches
     ``consecutive_death_threshold`` (default
-    :data:`M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD` = 2), the
+    :data:`ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD` = 2), the
     dispatcher forces a recovery + retry of the current block. The
     counter resets to zero on any block that finishes without an
     endpoint-death failure or whose primary trigger fires.
@@ -845,13 +845,13 @@ def _classify_dispatcher_exc(exc: BaseException) -> str:
 
 
 def build_modal_anchor_dispatcher(
-    driver: Any,  # M6_2RPCDriver
+    driver: Any,  # RPCDriver
     *,
     anchor_cell: Cell | None = None,
     anchor_max_tokens: int = 10,
-    make_driver: Any = None,  # Callable[[], Awaitable[M6_2RPCDriver]] | None
-    preemption_budget: int = M6_2_PREEMPTION_RECURRENCE_THRESHOLD,
-    consecutive_death_threshold: int = M6_2_ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD,
+    make_driver: Any = None,  # Callable[[], Awaitable[RPCDriver]] | None
+    preemption_budget: int = PREEMPTION_RECURRENCE_THRESHOLD,
+    consecutive_death_threshold: int = ENDPOINT_DEATH_CONSECUTIVE_THRESHOLD,
 ) -> Any:
     """Build an :class:`AnchorRPCDriver` that fires the FR-031 anchor block
     against the real driver.
@@ -1032,13 +1032,13 @@ def build_modal_anchor_dispatcher(
 def load_m6_1_3_baseline(
     baseline_path: str | Path,
 ) -> tuple[
-    dict[str, dict[CohortKind, M6_1_3CohortBaseline]],
+    dict[str, dict[CohortKind, CohortBaseline]],
     dict[str, str],
 ]:
     """Read the M6.1.3 artifact and return ``(per_cell_baseline, base_verdicts)``.
 
     ``per_cell_baseline[cell_id][cohort]`` is a
-    :class:`crossover.M6_1_3CohortBaseline` (wall_p50_ms + CI half-width).
+    :class:`crossover.CohortBaseline` (wall_p50_ms + CI half-width).
     ``base_verdicts[cell_id]`` is the M6.1.3 classifier label.
 
     Source mapping:
@@ -1064,14 +1064,14 @@ def load_m6_1_3_baseline(
     except (OSError, json.JSONDecodeError):
         return {}, {}
 
-    baseline_per_cell: dict[str, dict[CohortKind, M6_1_3CohortBaseline]] = {}
+    baseline_per_cell: dict[str, dict[CohortKind, CohortBaseline]] = {}
     for measurement in data.get("measurements", []):
         cell_id = measurement.get("cell_id")
         cohort = measurement.get("cohort")
         wall_mean = measurement.get("wall_clock_ms_mean")
         if cell_id is None or cohort is None or wall_mean is None:
             continue
-        baseline_per_cell.setdefault(cell_id, {})[cohort] = M6_1_3CohortBaseline(
+        baseline_per_cell.setdefault(cell_id, {})[cohort] = CohortBaseline(
             wall_p50_ms=float(wall_mean),
             wall_p50_ms_ci_half_width=0.0,  # see between_run_variance section
         )
@@ -1091,7 +1091,7 @@ def load_m6_1_3_baseline(
             entry = baseline_per_cell.get(cell_id, {}).get(cohort)
             if entry is None:
                 continue
-            baseline_per_cell[cell_id][cohort] = M6_1_3CohortBaseline(
+            baseline_per_cell[cell_id][cohort] = CohortBaseline(
                 wall_p50_ms=entry.wall_p50_ms,
                 wall_p50_ms_ci_half_width=ci_half,
             )
@@ -1196,15 +1196,15 @@ def _cross_checkable_max_tokens(path: str) -> int:
 
     M6.1.x used ``max_tokens=50`` for ``chat_stream`` cells and ``max_tokens=10``
     for ``embed`` cells (the M6.x synthetic caps). The other axis point in
-    ``M6_2_NULL_ANCHOR_MAX_TOKENS`` is a NEW baseline (no M6.1.x reference).
+    ``NULL_ANCHOR_MAX_TOKENS`` is a NEW baseline (no M6.1.x reference).
     """
     return 50 if path == "chat_stream" else 10
 
 
 def make_null_anchor_validation(
-    measurements: list[Any],  # list[M6_2MeasurementPoint]
-    baseline_per_cell: dict[str, dict[CohortKind, M6_1_3CohortBaseline]],
-) -> list[M6_2NullAnchor]:
+    measurements: list[Any],  # list[MeasurementPoint]
+    baseline_per_cell: dict[str, dict[CohortKind, CohortBaseline]],
+) -> list[NullAnchor]:
     """FR-012 / FR-013 null-anchor assembly across the 48 anchor cells.
 
     Iterates ``CELLS × COHORTS × {10, 50}`` (= 48 cells), pairing
@@ -1225,17 +1225,17 @@ def make_null_anchor_validation(
 
     by_key: dict[tuple[str, CohortKind, int], Any] = {}
     for point in measurements:
-        if point.max_tokens not in M6_2_NULL_ANCHOR_MAX_TOKENS:
+        if point.max_tokens not in NULL_ANCHOR_MAX_TOKENS:
             continue
         by_key[(point.cell_id, point.cohort, point.max_tokens)] = point
 
-    anchors: list[M6_2NullAnchor] = []
+    anchors: list[NullAnchor] = []
     for path, _hidden_size, concurrency in CELLS:
         cell_id = f"{path}_c{concurrency}"
         baseline_max_tokens = _cross_checkable_max_tokens(path)
         cohorts_for_cell = baseline_per_cell.get(cell_id, {})
         for cohort in COHORTS:
-            for max_tokens in M6_2_NULL_ANCHOR_MAX_TOKENS:
+            for max_tokens in NULL_ANCHOR_MAX_TOKENS:
                 point = by_key.get((cell_id, cohort, max_tokens))
                 m6_2_p50: float | None = None
                 if point is not None and point.wall_p50_ms is not None:
@@ -1297,8 +1297,8 @@ def _git_sha() -> str:
 
 def build_artifact(
     *,
-    sweep_mode: M6_2SweepMode,
-    sweep_outputs: object,  # M6_2SweepOutputs (avoid import cycle)
+    sweep_mode: SweepMode,
+    sweep_outputs: object,  # SweepOutputs (avoid import cycle)
     chat_corpus_sha256: str,
     chat_corpus_path: str,
     embed_corpus_sha256: str,
@@ -1313,8 +1313,8 @@ def build_artifact(
     m6_1_3_baseline_path: str = "docs/benchmarks/m6_1_3-attribution-closure.json",
     network_paths: dict[CohortKind, list[Any]] | None = None,
     preemption_events: int = 0,
-) -> M6_2SweepArtifact:
-    """Assemble :class:`M6_2SweepArtifact` from the sweep outputs + ancillary
+) -> SweepArtifact:
+    """Assemble :class:`SweepArtifact` from the sweep outputs + ancillary
     inputs collected by :func:`run_m6_2`.
 
     Sections populated:
@@ -1349,13 +1349,13 @@ def build_artifact(
         build_integrity_warnings,
         fill_validate_mode_placeholders,
     )
-    from vllm_grpc_bench.sweep import M6_2SweepOutputs
-    from vllm_grpc_bench.sweep_types import M6_2_MAX_TOKENS_AXIS
+    from vllm_grpc_bench.sweep import SweepOutputs
+    from vllm_grpc_bench.sweep_types import MAX_TOKENS_AXIS
     from vllm_grpc_bench.types import COHORTS
 
-    if not isinstance(sweep_outputs, M6_2SweepOutputs):
+    if not isinstance(sweep_outputs, SweepOutputs):
         raise TypeError(
-            f"build_artifact() expected M6_2SweepOutputs, got {type(sweep_outputs).__name__}"
+            f"build_artifact() expected SweepOutputs, got {type(sweep_outputs).__name__}"
         )
 
     # Pivot the measurements list into the per_cell shape per artifact-schema.md.
@@ -1418,7 +1418,7 @@ def build_artifact(
     ended = sweep_outputs.wall_clock_end_utc
     total_hours = _hours_between(started, ended)
 
-    run_meta = M6_2RunMeta(
+    run_meta = SweepRunMeta(
         git_sha=_git_sha(),
         modal_region=modal_region,
         base_seed=base_seed,
@@ -1431,9 +1431,7 @@ def build_artifact(
         iteration_order="cohort_innermost_block",
         iteration_discipline_verified=sweep_outputs.iteration_discipline_verified,
         n_per_point=n_per_point,
-        validate_axis_subset=(
-            list(M6_2_VALIDATE_MAX_TOKENS_AXIS) if sweep_mode == "validate" else None
-        ),
+        validate_axis_subset=(list(VALIDATE_MAX_TOKENS_AXIS) if sweep_mode == "validate" else None),
         wall_clock_start_utc=started,
         wall_clock_end_utc=ended,
         total_sweep_hours=total_hours,
@@ -1455,7 +1453,7 @@ def build_artifact(
         else {c: [] for c in COHORTS}
     )
 
-    artifact = M6_2SweepArtifact(
+    artifact = SweepArtifact(
         schema_version="m6_1_1.v1",
         dispatch_mode="concurrent",
         run_id=run_id or f"{started}-{uuid.uuid4().hex[:8]}",
@@ -1468,7 +1466,7 @@ def build_artifact(
         cohort_omissions=None,
         null_anchor_validation=null_anchor_validation,
         max_tokens_axis=list(
-            M6_2_VALIDATE_MAX_TOKENS_AXIS if sweep_mode == "validate" else M6_2_MAX_TOKENS_AXIS
+            VALIDATE_MAX_TOKENS_AXIS if sweep_mode == "validate" else MAX_TOKENS_AXIS
         ),
         protocol_crossover=protocol_crossover,
         kv_pressure_observation=kv_pressure_observation,
@@ -1483,7 +1481,7 @@ def build_artifact(
     return artifact
 
 
-def _tally_failure_summary(artifact: M6_2SweepArtifact) -> dict[str, int]:
+def _tally_failure_summary(artifact: SweepArtifact) -> dict[str, int]:
     """Count ``failed_<reason>`` markers across the table, excluding the
     validate-mode ``not_validated`` placeholders."""
     from vllm_grpc_bench.reporter import NOT_VALIDATED_MARKER
@@ -1512,7 +1510,7 @@ def _hours_between(start_utc: str, end_utc: str) -> float:
 
 async def _drive_main_sweep_and_sub_probe(
     *,
-    inputs: object,  # M6_2SweepInputs
+    inputs: object,  # SweepInputs
     dispatcher: object,
     anchor_dispatcher: object,
     chat_corpus: list[RequestSample],
@@ -1530,15 +1528,15 @@ async def _drive_main_sweep_and_sub_probe(
     """
     from vllm_grpc_bench.sub_probe import run_kv_pressure_sub_probe
     from vllm_grpc_bench.sweep import (
-        M6_2SweepInputs,
+        SweepInputs,
     )
     from vllm_grpc_bench.sweep import (
         run_sweep as _run_sweep,
     )
 
-    if not isinstance(inputs, M6_2SweepInputs):
+    if not isinstance(inputs, SweepInputs):
         raise TypeError(
-            f"_drive_main_sweep_and_sub_probe inputs must be M6_2SweepInputs, "
+            f"_drive_main_sweep_and_sub_probe inputs must be SweepInputs, "
             f"got {type(inputs).__name__}"
         )
 
@@ -1579,7 +1577,7 @@ async def _drive_main_sweep_and_sub_probe(
 async def _run_modal_backed(
     args: argparse.Namespace,
     *,
-    sweep_mode: M6_2SweepMode,
+    sweep_mode: SweepMode,
     n_per_point: int,
     chat_corpus: list[RequestSample],
     embed_corpus: list[CompletionEmbedSample],
@@ -1618,7 +1616,7 @@ async def _run_modal_backed(
     from vllm_grpc_bench.network_probe import run_topology_probe
     from vllm_grpc_bench.reporter import write_m6_2_report
     from vllm_grpc_bench.seq_len import pin_seq_len_at_sweep_start
-    from vllm_grpc_bench.sweep import M6_2SweepInputs
+    from vllm_grpc_bench.sweep import SweepInputs
 
     token_env = str(getattr(args, "modal_token_env", "MODAL_BENCH_TOKEN"))
 
@@ -1679,7 +1677,7 @@ async def _run_modal_backed(
                 }
                 return await run_topology_probe(handshake_dict)
 
-            inputs = M6_2SweepInputs(
+            inputs = SweepInputs(
                 sweep_mode=sweep_mode,
                 n=n_per_point,
                 axis=axis,
@@ -1794,7 +1792,7 @@ def _resolve_resume_state(
     args: argparse.Namespace,
     *,
     json_path: Path,
-    sweep_mode: M6_2SweepMode,
+    sweep_mode: SweepMode,
     n_per_point: int,
     axis: tuple[int, ...],
     base_seed: int,
@@ -1804,14 +1802,14 @@ def _resolve_resume_state(
     embed_corpus_sha256: str,
 ) -> tuple[
     Path | None,  # checkpoint_path
-    list[Any] | None,  # preloaded_measurements (M6_2MeasurementPoint)
+    list[Any] | None,  # preloaded_measurements (MeasurementPoint)
     dict[CohortKind, list[Any]] | None,  # preloaded_anchor_snapshots
     str | None,  # resumed_run_id (Phase-1: propagate from checkpoint header on resume)
     str | None,  # resumed_run_started_at
 ]:
     """Read ``--m6_2-resume`` + ``--m6_2-checkpoint-out`` from ``args``,
     load + validate the checkpoint (if any), and return the tuple the
-    sweep entrypoints thread into :class:`M6_2SweepInputs`.
+    sweep entrypoints thread into :class:`SweepInputs`.
 
     Three cases:
 
@@ -1915,7 +1913,7 @@ def _resolve_resume_state(
     return (checkpoint_path, None, None, run_id, run_started_at)
 
 
-def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
+def run_m6_2(args: argparse.Namespace, *, sweep_mode: SweepMode) -> int:
     """Single entry function for both ``--m6_2`` and ``--m6_2-validate``.
 
     Returns the process exit code per ``contracts/cli.md``. Orchestrates:
@@ -1932,7 +1930,7 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
     from vllm_grpc_bench.prompts import load_chat_corpus, load_embed_corpus
     from vllm_grpc_bench.reporter import write_m6_2_report
     from vllm_grpc_bench.sweep import (
-        M6_2SweepInputs,
+        SweepInputs,
         gate_corpus_shas,
         gate_publish_mode_n,
     )
@@ -2032,7 +2030,7 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
     dispatcher = build_stub_dispatcher()
     anchor_dispatcher = build_stub_anchor_dispatcher()
 
-    inputs = M6_2SweepInputs(
+    inputs = SweepInputs(
         sweep_mode=sweep_mode,
         n=n_per_point,
         axis=axis,

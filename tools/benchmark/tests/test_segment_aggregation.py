@@ -256,7 +256,7 @@ class TestEmptyMetadata:
 
 class TestBuildMeasurementPointIntegration:
     def test_successful_block_populates_segments(self) -> None:
-        """End-to-end: BlockDispatchResult → M6_2MeasurementPoint with
+        """End-to-end: BlockDispatchResult → MeasurementPoint with
         segments populated. This is what `sweep` does in the main loop."""
         result = BlockDispatchResult(
             timings_ms=[100.0, 110.0, 105.0, 95.0, 102.0],
@@ -293,7 +293,7 @@ class TestBuildMeasurementPointIntegration:
 
     def test_failed_block_leaves_segments_none(self) -> None:
         """Failed block (no timings) — segment fields stay None per the
-        existing M6_2MeasurementPoint failed-row convention."""
+        existing MeasurementPoint failed-row convention."""
         result = BlockDispatchResult(
             timings_ms=[],
             failed_reason="grpc_timeout",

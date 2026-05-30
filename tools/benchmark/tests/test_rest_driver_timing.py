@@ -19,7 +19,7 @@ from vllm_grpc_bench.rpc_driver import (
     _drive_rest_chat_stream_m6_2,
     _drive_rest_embed_m6_2,
 )
-from vllm_grpc_bench.types import Cell as M6_1Cell
+from vllm_grpc_bench.types import Cell
 
 
 def _valid_m6_1_1_sub_object() -> dict[str, int]:
@@ -169,7 +169,7 @@ async def test_rest_chat_stream_degrades_to_none_when_timing_absent() -> None:
 @pytest.mark.asyncio
 async def test_rest_embed_populates_m6_1_1_timing_payload() -> None:
     transport = _make_embed_transport(with_timing=True)
-    cell = M6_1Cell(path="embed", hidden_size=4096, concurrency=1)
+    cell = Cell(path="embed", hidden_size=4096, concurrency=1)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         result = await _drive_rest_embed_m6_2(
             client,
@@ -193,7 +193,7 @@ async def test_rest_embed_populates_m6_1_1_timing_payload() -> None:
 @pytest.mark.asyncio
 async def test_rest_embed_degrades_to_none_when_timing_absent() -> None:
     transport = _make_embed_transport(with_timing=False)
-    cell = M6_1Cell(path="embed", hidden_size=4096, concurrency=1)
+    cell = Cell(path="embed", hidden_size=4096, concurrency=1)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         result = await _drive_rest_embed_m6_2(
             client,

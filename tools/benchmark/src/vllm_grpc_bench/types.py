@@ -8,9 +8,10 @@ members live only in the M5.2 tag's history.
 The definitions here were hoisted in-place from the legacy ``m3_types`` /
 ``m6_types`` / ``m6_1_types`` / ``m6_1_2_types`` / ``m6_sweep`` modules at
 Phase 4 (T020); this module no longer imports from any milestone-prefixed
-source. The network-probe dataclasses keep their ``M6_1_2`` symbol names for
-now (dropped in the T028a symbol-rename pass, which also resolves the
-``NetworkPath`` dataclass-vs-transport-literal name clash).
+source. The T028a symbol-rename pass de-prefixed the network-probe dataclasses
+to ``TopologyPath`` / ``TopologyPathHop`` / ``TopologyPathError`` (the
+``Topology`` prefix resolves the clash with the ``NetworkPath`` transport
+literal).
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from vllm_grpc_bench.engine_cost import EngineCostSpan
 # --- Path / concurrency / corpus literals -----------------------------------
 
 Path = Literal["embed", "chat_stream"]
-"""The sweep path universe (formerly ``M6Path`` / ``M6_1Path``)."""
+"""The sweep path universe (formerly ``CellPath`` / ``CellPath``)."""
 
 Path_ = Path
 """Structural alias kept for the M3-era REST records (formerly ``m3_types.Path_``)."""
@@ -92,7 +93,7 @@ def cohorts_at_concurrency(c: int) -> tuple[CohortKind, ...]:
 
 
 @dataclass(frozen=True)
-class M6_1_2NetworkPathHop:
+class TopologyPathHop:
     """One hop in a per-cohort ``tcptraceroute`` path.
 
     ``ip`` and ``rtt_ms_or_null`` are None when the hop was an asterisk
@@ -106,11 +107,11 @@ class M6_1_2NetworkPathHop:
 
 
 @dataclass(frozen=True)
-class M6_1_2NetworkPath:
+class TopologyPath:
     """Per-cohort successful topology-probe result (FR-003 wire shape)."""
 
     endpoint_ip: str
-    hops: list[M6_1_2NetworkPathHop]
+    hops: list[TopologyPathHop]
     cloud_provider: CloudProvider
     region: str | None
     probe_method: Literal["tcptraceroute"]
@@ -118,10 +119,10 @@ class M6_1_2NetworkPath:
 
 
 @dataclass(frozen=True)
-class M6_1_2NetworkPathError:
+class TopologyPathError:
     """Per-cohort failed topology-probe result (FR-005 wire shape).
 
-    Discriminator from ``M6_1_2NetworkPath``: presence of the ``error`` field.
+    Discriminator from ``TopologyPath``: presence of the ``error`` field.
     """
 
     error: Literal[
@@ -383,9 +384,9 @@ __all__ = [
     "CohortKind",
     "CohortOmissions",
     "EndpointTuple",
-    "M6_1_2NetworkPath",
-    "M6_1_2NetworkPathError",
-    "M6_1_2NetworkPathHop",
+    "TopologyPath",
+    "TopologyPathError",
+    "TopologyPathHop",
     "NetworkPath",
     "Path",
     "Path_",

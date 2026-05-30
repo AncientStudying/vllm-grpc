@@ -22,7 +22,7 @@ The contract:
   or merge manually.
 * On ``--m6_2-resume <path>``, the loader returns the pre-populated
   ``measurements`` list + ``anchor_snapshots`` dict. The orchestrator
-  threads them into :class:`M6_2SweepInputs`; the sweep loop skips any
+  threads them into :class:`SweepInputs`; the sweep loop skips any
   ``(cell, cohort, max_tokens)`` block already in the checkpoint and
   continues appending to the same checkpoint file. Per-RPC seed
   allocation is preserved because the dispatcher derives seeds from
@@ -50,11 +50,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from vllm_grpc_bench.sweep_types import (
-    M6_2AnchorLatencySnapshot,
-    M6_2MeasurementPoint,
-    M6_2MeasurementRegime,
-    M6_2PromptSource,
-    M6_2SweepMode,
+    AnchorLatencySnapshot,
+    MeasurementPoint,
+    MeasurementRegime,
+    PromptSource,
+    SweepMode,
 )
 from vllm_grpc_bench.types import COHORTS, CohortKind
 
@@ -91,7 +91,7 @@ class CheckpointHeader:
     schema_version: str  # RESUME_SCHEMA_VERSION at write time
     run_id: str
     run_started_at: str  # ISO-8601 UTC
-    sweep_mode: M6_2SweepMode
+    sweep_mode: SweepMode
     n_per_point: int
     axis: tuple[int, ...]
     base_seed: int
@@ -158,12 +158,12 @@ def write_checkpoint_header(path: Path, header: CheckpointHeader) -> None:
     _write_line_fsynced(path, payload, mode="w")
 
 
-def append_measurement(path: Path, measurement: M6_2MeasurementPoint) -> None:
-    """Append a single ``M6_2MeasurementPoint`` JSON line + fsync.
+def append_measurement(path: Path, measurement: MeasurementPoint) -> None:
+    """Append a single ``MeasurementPoint`` JSON line + fsync.
 
     The serialised payload is ``dataclasses.asdict(measurement)`` plus a
     ``"kind": "measurement"`` discriminator. The loader inverts via
-    ``M6_2MeasurementPoint(**payload)``."""
+    ``MeasurementPoint(**payload)``."""
     payload = {"kind": "measurement", **asdict(measurement)}
     _write_line_fsynced(path, payload, mode="a")
 
@@ -171,7 +171,7 @@ def append_measurement(path: Path, measurement: M6_2MeasurementPoint) -> None:
 def append_anchor(
     path: Path,
     cohort: CohortKind,
-    snapshot: M6_2AnchorLatencySnapshot,
+    snapshot: AnchorLatencySnapshot,
 ) -> None:
     """Append one anchor snapshot JSON line + fsync.
 
@@ -191,16 +191,16 @@ class _LoadedCheckpoint:
     the public surface is the 3-tuple returned form."""
 
     header: CheckpointHeader
-    measurements: list[M6_2MeasurementPoint]
-    anchor_snapshots: dict[CohortKind, list[M6_2AnchorLatencySnapshot]]
+    measurements: list[MeasurementPoint]
+    anchor_snapshots: dict[CohortKind, list[AnchorLatencySnapshot]]
 
 
 def load_checkpoint(
     path: Path,
 ) -> tuple[
     CheckpointHeader,
-    list[M6_2MeasurementPoint],
-    dict[CohortKind, list[M6_2AnchorLatencySnapshot]],
+    list[MeasurementPoint],
+    dict[CohortKind, list[AnchorLatencySnapshot]],
 ]:
     """Read every line of ``path`` and rebuild ``(header, measurements,
     anchor_snapshots)``.
@@ -222,8 +222,8 @@ def load_checkpoint(
         )
 
     header: CheckpointHeader | None = None
-    measurements: list[M6_2MeasurementPoint] = []
-    anchor_snapshots: dict[CohortKind, list[M6_2AnchorLatencySnapshot]] = {}
+    measurements: list[MeasurementPoint] = []
+    anchor_snapshots: dict[CohortKind, list[AnchorLatencySnapshot]] = {}
 
     with open(path, encoding="utf-8") as f:
         for line_no, raw in enumerate(f, start=1):
@@ -274,7 +274,7 @@ def _parse_header(payload: dict[str, Any], *, path: Path, line_no: int) -> Check
             schema_version=str(payload["schema_version"]),
             run_id=str(payload["run_id"]),
             run_started_at=str(payload["run_started_at"]),
-            sweep_mode=cast(M6_2SweepMode, str(payload["sweep_mode"])),
+            sweep_mode=cast(SweepMode, str(payload["sweep_mode"])),
             n_per_point=int(payload["n_per_point"]),
             axis=tuple(int(x) for x in payload["axis"]),
             base_seed=int(payload["base_seed"]),
@@ -291,13 +291,11 @@ def _parse_header(payload: dict[str, Any], *, path: Path, line_no: int) -> Check
         ) from exc
 
 
-def _parse_measurement(
-    payload: dict[str, Any], *, path: Path, line_no: int
-) -> M6_2MeasurementPoint:
-    """Reconstruct an :class:`M6_2MeasurementPoint` from a JSON payload."""
+def _parse_measurement(payload: dict[str, Any], *, path: Path, line_no: int) -> MeasurementPoint:
+    """Reconstruct an :class:`MeasurementPoint` from a JSON payload."""
     fields = {k: v for k, v in payload.items() if k != "kind"}
     try:
-        return M6_2MeasurementPoint(
+        return MeasurementPoint(
             cell_id=str(fields["cell_id"]),
             cohort=cast(CohortKind, str(fields["cohort"])),
             max_tokens=int(fields["max_tokens"]),
@@ -317,8 +315,8 @@ def _parse_measurement(
             block_end_utc=str(fields["block_end_utc"]),
             retry_attempted=bool(fields["retry_attempted"]),
             clock_anomaly=bool(fields["clock_anomaly"]),
-            prompt_source=cast(M6_2PromptSource, str(fields["prompt_source"])),
-            measurement_regime=cast(M6_2MeasurementRegime, str(fields["measurement_regime"])),
+            prompt_source=cast(PromptSource, str(fields["prompt_source"])),
+            measurement_regime=cast(MeasurementRegime, str(fields["measurement_regime"])),
             prompt_corpus_idx=_opt_int(fields.get("prompt_corpus_idx")),
         )
     except (KeyError, TypeError, ValueError) as exc:
@@ -330,11 +328,11 @@ def _parse_measurement(
 
 def _parse_anchor(
     payload: dict[str, Any], *, path: Path, line_no: int
-) -> tuple[CohortKind, M6_2AnchorLatencySnapshot]:
-    """Reconstruct ``(cohort, M6_2AnchorLatencySnapshot)`` from a JSON payload."""
+) -> tuple[CohortKind, AnchorLatencySnapshot]:
+    """Reconstruct ``(cohort, AnchorLatencySnapshot)`` from a JSON payload."""
     try:
         cohort = cast(CohortKind, str(payload["cohort"]))
-        snapshot = M6_2AnchorLatencySnapshot(
+        snapshot = AnchorLatencySnapshot(
             wall_p50_ms=float(payload["wall_p50_ms"]),
             wall_p95_ms=float(payload["wall_p95_ms"]),
             wall_p99_ms=float(payload["wall_p99_ms"]),
@@ -373,7 +371,7 @@ def _opt_str(value: Any) -> str | None:
 def validate_checkpoint_against_current_run(
     header: CheckpointHeader,
     *,
-    sweep_mode: M6_2SweepMode,
+    sweep_mode: SweepMode,
     n_per_point: int,
     axis: tuple[int, ...],
     base_seed: int,
@@ -419,7 +417,7 @@ def validate_checkpoint_against_current_run(
 
 
 def completed_block_keys(
-    measurements: list[M6_2MeasurementPoint],
+    measurements: list[MeasurementPoint],
 ) -> frozenset[tuple[str, CohortKind, int]]:
     """Build the lookup set used by the sweep loop's skip predicate.
 
@@ -430,8 +428,8 @@ def completed_block_keys(
 
 
 def normalised_anchor_snapshots(
-    snapshots: dict[CohortKind, list[M6_2AnchorLatencySnapshot]],
-) -> dict[CohortKind, list[M6_2AnchorLatencySnapshot]]:
+    snapshots: dict[CohortKind, list[AnchorLatencySnapshot]],
+) -> dict[CohortKind, list[AnchorLatencySnapshot]]:
     """Return a copy of ``snapshots`` with every M6.1.2 cohort key
     present (empty list when no snapshot was captured for that cohort).
 

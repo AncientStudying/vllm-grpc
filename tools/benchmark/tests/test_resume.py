@@ -4,7 +4,7 @@ Covers:
 
 * ``CheckpointHeader`` serialisation round-trip (write → load → equal).
 * Measurement + anchor JSONL append round-trip (every field preserved
-  by ``M6_2MeasurementPoint(**payload)`` and ``M6_2AnchorLatencySnapshot(**payload)``).
+  by ``MeasurementPoint(**payload)`` and ``AnchorLatencySnapshot(**payload)``).
 * Integrity gate: ``validate_checkpoint_against_current_run`` rejects
   each of the nine integrity-gated fields with a precise diagnostic and
   composes a multi-field diff message when more than one diverged.
@@ -35,8 +35,8 @@ from vllm_grpc_bench.resume import (
     validate_checkpoint_against_current_run,
     write_checkpoint_header,
 )
-from vllm_grpc_bench.sweep_types import M6_2AnchorLatencySnapshot, M6_2MeasurementPoint
-from vllm_grpc_bench.types import CohortKind as M6_1_2CohortKind
+from vllm_grpc_bench.sweep_types import AnchorLatencySnapshot, MeasurementPoint
+from vllm_grpc_bench.types import CohortKind
 
 # --- Helpers ---------------------------------------------------------------
 
@@ -62,12 +62,12 @@ def _sample_header(**overrides: Any) -> CheckpointHeader:
 
 def _sample_measurement(
     cell_id: str = "embed_c1",
-    cohort: M6_1_2CohortKind = "default_grpc",
+    cohort: CohortKind = "default_grpc",
     max_tokens: int = 10,
     *,
     failed: bool = False,
-) -> M6_2MeasurementPoint:
-    return M6_2MeasurementPoint(
+) -> MeasurementPoint:
+    return MeasurementPoint(
         cell_id=cell_id,
         cohort=cohort,
         max_tokens=max_tokens,
@@ -97,8 +97,8 @@ def _sample_snapshot(
     *,
     wall_p50_ms: float = 65.0,
     sweep_hour_mark: float = 0.0,
-) -> M6_2AnchorLatencySnapshot:
-    return M6_2AnchorLatencySnapshot(
+) -> AnchorLatencySnapshot:
+    return AnchorLatencySnapshot(
         wall_p50_ms=wall_p50_ms,
         wall_p95_ms=wall_p50_ms + 1.0,
         wall_p99_ms=wall_p50_ms + 1.5,
@@ -174,7 +174,7 @@ class TestMeasurementRoundTrip:
     def test_multiple_measurements_preserve_order(self, tmp_path: Path) -> None:
         path = tmp_path / "cp.jsonl"
         write_checkpoint_header(path, _sample_header())
-        cohorts: list[M6_1_2CohortKind] = ["default_grpc", "rest_https_edge", "rest_plain_tcp"]
+        cohorts: list[CohortKind] = ["default_grpc", "rest_https_edge", "rest_plain_tcp"]
         for i, cohort in enumerate(cohorts):
             append_measurement(path, _sample_measurement(cohort=cohort, max_tokens=10 + i))
         _, measurements, _ = load_checkpoint(path)
@@ -196,7 +196,7 @@ class TestAnchorRoundTrip:
         path = tmp_path / "cp.jsonl"
         write_checkpoint_header(path, _sample_header())
         # Two snapshots per cohort across two anchor blocks at different hour marks.
-        cohorts: list[M6_1_2CohortKind] = [
+        cohorts: list[CohortKind] = [
             "default_grpc",
             "rest_https_edge",
             "rest_plain_tcp",
@@ -458,13 +458,13 @@ class _CapturingDispatcher:
     measurements (calls only happen for blocks NOT in the checkpoint)."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[str, M6_1_2CohortKind, int]] = []
+        self.calls: list[tuple[str, CohortKind, int]] = []
 
     async def __call__(
         self,
         *,
         cell_id: str,
-        cohort: M6_1_2CohortKind,
+        cohort: CohortKind,
         max_tokens: int,
         n: int,
         block_inputs: Any,
@@ -488,7 +488,7 @@ class _StubAnchorDispatcher:
     async def __call__(
         self,
         *,
-        cohort: M6_1_2CohortKind,
+        cohort: CohortKind,
         n: int,
         base_seed: int,
         seed_offset: int,
@@ -507,7 +507,7 @@ class TestSweepLoopResume:
         max_tokens), the sweep loop must NOT call the dispatcher for
         that block. Pre-loaded measurements stay in the output list and
         are joined by the freshly-dispatched ones."""
-        from vllm_grpc_bench.sweep import M6_2SweepInputs, run_sweep
+        from vllm_grpc_bench.sweep import SweepInputs, run_sweep
 
         # Pre-load only the first three blocks of the validate axis.
         preloaded = [
@@ -518,7 +518,7 @@ class TestSweepLoopResume:
         dispatcher = _CapturingDispatcher()
         anchor = _StubAnchorDispatcher()
 
-        inputs = M6_2SweepInputs(
+        inputs = SweepInputs(
             sweep_mode="validate",
             n=20,
             axis=(10, 50, 2048),
@@ -547,10 +547,10 @@ class TestSweepLoopResume:
         """Sanity check: with ``preloaded_measurements=None``, the
         dispatcher fires for every block in the axis. Used as the
         reference for the skip-count assertion below."""
-        from vllm_grpc_bench.sweep import M6_2SweepInputs, run_sweep
+        from vllm_grpc_bench.sweep import SweepInputs, run_sweep
 
         dispatcher = _CapturingDispatcher()
-        inputs = M6_2SweepInputs(
+        inputs = SweepInputs(
             sweep_mode="validate",
             n=20,
             axis=(10, 50, 2048),
@@ -572,10 +572,10 @@ class TestSweepLoopResume:
         """30 pre-loaded measurements + 66 total expected blocks → the
         dispatcher fires exactly 36 times. Mirrors the production
         recover-mid-sweep behaviour."""
-        from vllm_grpc_bench.sweep import M6_2SweepInputs, run_sweep
+        from vllm_grpc_bench.sweep import SweepInputs, run_sweep
 
         dispatcher_total = _CapturingDispatcher()
-        inputs_total = M6_2SweepInputs(
+        inputs_total = SweepInputs(
             sweep_mode="validate",
             n=20,
             axis=(10, 50, 2048),
@@ -595,7 +595,7 @@ class TestSweepLoopResume:
             for cell, coh, mt in dispatcher_total.calls[:30]
         ]
         dispatcher_resume = _CapturingDispatcher()
-        inputs_resume = M6_2SweepInputs(
+        inputs_resume = SweepInputs(
             sweep_mode="validate",
             n=20,
             axis=(10, 50, 2048),
@@ -618,7 +618,7 @@ class TestSweepLoopResume:
         """The t=0 anchor must NOT re-fire when the checkpoint already
         carries snapshots — those snapshots belong to the prior run's
         t=0 capture; re-firing would corrupt the trajectory."""
-        from vllm_grpc_bench.sweep import M6_2SweepInputs, run_sweep
+        from vllm_grpc_bench.sweep import SweepInputs, run_sweep
 
         calls: list[tuple[str, int]] = []
 
@@ -626,7 +626,7 @@ class TestSweepLoopResume:
             async def __call__(
                 self,
                 *,
-                cohort: M6_1_2CohortKind,
+                cohort: CohortKind,
                 n: int,
                 base_seed: int,
                 seed_offset: int,
@@ -634,13 +634,13 @@ class TestSweepLoopResume:
                 calls.append((cohort, seed_offset))
                 return [50.0] * n
 
-        preloaded_anchors: dict[M6_1_2CohortKind, list[M6_2AnchorLatencySnapshot]] = {
+        preloaded_anchors: dict[CohortKind, list[AnchorLatencySnapshot]] = {
             "default_grpc": [_sample_snapshot()],
             "rest_https_edge": [_sample_snapshot()],
             "rest_plain_tcp": [_sample_snapshot()],
             "tuned_grpc_multiplexed": [_sample_snapshot()],
         }
-        inputs = M6_2SweepInputs(
+        inputs = SweepInputs(
             sweep_mode="validate",
             n=20,
             axis=(10, 50, 2048),
@@ -662,11 +662,11 @@ class TestSweepLoopResume:
     async def test_checkpoint_path_writes_jsonl_sidecar(self, tmp_path: Path) -> None:
         """Every dispatched block must append a JSON line to the
         sidecar. The on-disk count matches in-memory ``measurements``."""
-        from vllm_grpc_bench.sweep import M6_2SweepInputs, run_sweep
+        from vllm_grpc_bench.sweep import SweepInputs, run_sweep
 
         cp_path = tmp_path / "cp.jsonl"
         write_checkpoint_header(cp_path, _sample_header(sweep_mode="validate", n_per_point=20))
-        inputs = M6_2SweepInputs(
+        inputs = SweepInputs(
             sweep_mode="validate",
             n=20,
             axis=(10, 50, 2048),
@@ -702,7 +702,7 @@ class TestSweepLoopResume:
         observed during the freshly-resumed-from-30 run, and comparing
         it to indices [30, 31, ..., 65] from the clean reference run.
         """
-        from vllm_grpc_bench.sweep import M6_2SweepInputs, run_sweep
+        from vllm_grpc_bench.sweep import SweepInputs, run_sweep
 
         # Reference run: capture per-call iter_idx (= len(measurements)
         # at dispatch time). The dispatcher receives the block index
@@ -710,7 +710,7 @@ class TestSweepLoopResume:
         # iter_idx directly, we use call ORDER as a proxy: call N has
         # iter_idx = N.
         ref = _CapturingDispatcher()
-        ref_inputs = M6_2SweepInputs(
+        ref_inputs = SweepInputs(
             sweep_mode="validate",
             n=20,
             axis=(10, 50, 2048),
@@ -733,7 +733,7 @@ class TestSweepLoopResume:
             for cell, coh, mt in ref_calls[:30]
         ]
         resumed = _CapturingDispatcher()
-        resumed_inputs = M6_2SweepInputs(
+        resumed_inputs = SweepInputs(
             sweep_mode="validate",
             n=20,
             axis=(10, 50, 2048),
@@ -753,10 +753,10 @@ class TestSweepLoopResume:
     async def test_wall_clock_start_utc_override_preserves_original_start(
         self, tmp_path: Path
     ) -> None:
-        from vllm_grpc_bench.sweep import M6_2SweepInputs, run_sweep
+        from vllm_grpc_bench.sweep import SweepInputs, run_sweep
 
         original_start = "2026-05-24T21:28:31Z"
-        inputs = M6_2SweepInputs(
+        inputs = SweepInputs(
             sweep_mode="validate",
             n=20,
             axis=(10, 50, 2048),

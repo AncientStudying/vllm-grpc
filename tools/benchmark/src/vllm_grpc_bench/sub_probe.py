@@ -5,13 +5,13 @@ alongside or after the main 144-point sweep. Per FR-036:
 
 - 16 blocks total: 4 cohorts × 2 cell-types ``{chat_stream, embed}`` × 2 caps
   ``{1024, 2048}``.
-- Each block dispatches ``n=M6_2_SUB_PROBE_N`` (20) RPCs at
+- Each block dispatches ``n=SUB_PROBE_N`` (20) RPCs at
   ``ignore_eos=True`` so the engine runs to the forced cap on every RPC.
 - Each block uses the **corpus regime** (ShareGPT for chat, Qwen3-8B
   prompt-embeddings for embed) via :func:`prompts.resolve_block_inputs`
   with ``ignore_eos_override=True``.
 - Sub-probe rows are emitted to :class:`crossover.SubProbeBlockResult`
-  (NOT :class:`sweep_types.M6_2MeasurementPoint`) — they DO NOT pollute the
+  (NOT :class:`sweep_types.MeasurementPoint`) — they DO NOT pollute the
   latency budget table. Only the c=8 cell type matters for FR-017a's
   wall-clock-ratio inference; the sub-probe runs at the conventional ``c=8``
   cell ids (``chat_stream_c8`` + ``embed_c8``).
@@ -34,8 +34,8 @@ from vllm_grpc_bench.crossover import SubProbeBlockResult
 from vllm_grpc_bench.prompts import resolve_block_inputs
 from vllm_grpc_bench.sweep import BlockDispatcher, RetryClassifier
 from vllm_grpc_bench.sweep_types import (
-    M6_2_SUB_PROBE_MAX_TOKENS,
-    M6_2_SUB_PROBE_N,
+    SUB_PROBE_MAX_TOKENS,
+    SUB_PROBE_N,
 )
 from vllm_grpc_bench.types import COHORTS, CohortKind
 
@@ -74,7 +74,7 @@ def iter_sub_probe_tuples() -> list[tuple[str, int, CohortKind]]:
     """
     out: list[tuple[str, int, CohortKind]] = []
     for cell_type in SUB_PROBE_CELL_TYPES:
-        for max_tokens in M6_2_SUB_PROBE_MAX_TOKENS:
+        for max_tokens in SUB_PROBE_MAX_TOKENS:
             for cohort in COHORTS:
                 out.append((cell_type, max_tokens, cohort))
     return out
@@ -101,7 +101,7 @@ async def run_kv_pressure_sub_probe(
     base_seed: int,
     chat_corpus: list[RequestSample],
     embed_corpus: list[CompletionEmbedSample],
-    n: int = M6_2_SUB_PROBE_N,
+    n: int = SUB_PROBE_N,
     now_iso_utc: Callable[[], str] = _now_iso_utc,
 ) -> list[SubProbeBlockResult]:
     """Drive the 16-block sub-probe loop per FR-036.

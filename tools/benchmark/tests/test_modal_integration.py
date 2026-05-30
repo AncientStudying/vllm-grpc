@@ -36,9 +36,7 @@ import httpx
 import pytest
 from vllm_grpc_bench.prompts import ResolvedBlockInputs
 from vllm_grpc_bench.sweep import BlockDispatchResult
-from vllm_grpc_bench.types import COHORTS as M6_1_2_COHORTS
-from vllm_grpc_bench.types import Cell as M6_1Cell
-from vllm_grpc_bench.types import CohortKind as M6_1_2CohortKind
+from vllm_grpc_bench.types import COHORTS, Cell, CohortKind
 from vllm_grpc_bench.validate import (
     build_modal_anchor_dispatcher,
     build_modal_block_dispatcher,
@@ -89,8 +87,8 @@ def _make_fake_driver(
     counter = {"n": 0}
 
     async def _driver(
-        cohort: M6_1_2CohortKind,
-        cell: M6_1Cell,
+        cohort: CohortKind,
+        cell: Cell,
         seed: int,
         *,
         max_tokens: int,
@@ -267,8 +265,8 @@ class TestModalBlockDispatcher:
         lock = asyncio.Lock()
 
         async def _delay_driver(
-            cohort: M6_1_2CohortKind,
-            cell: M6_1Cell,
+            cohort: CohortKind,
+            cell: Cell,
             seed: int,
             *,
             max_tokens: int,
@@ -342,8 +340,8 @@ class TestModalAnchorDispatcher:
         lock = asyncio.Lock()
 
         async def _delay_driver(
-            cohort: M6_1_2CohortKind,
-            cell: M6_1Cell,
+            cohort: CohortKind,
+            cell: Cell,
             seed: int,
             *,
             max_tokens: int,
@@ -443,17 +441,17 @@ class TestArtifactPathIntegration:
 
     def test_make_null_anchor_validation_emits_48_anchors(self, tmp_path: Any) -> None:
         # Build a stub measurement list: 48 anchors (6 cells × 4 cohorts × 2 caps).
-        from vllm_grpc_bench.sweep_types import M6_2MeasurementPoint
-        from vllm_grpc_bench.types import CELLS as M6_1_CELLS
+        from vllm_grpc_bench.sweep_types import MeasurementPoint
+        from vllm_grpc_bench.types import CELLS
         from vllm_grpc_bench.validate import load_m6_1_3_baseline
 
-        measurements: list[M6_2MeasurementPoint] = []
-        for path, _hidden_size, concurrency in M6_1_CELLS:
+        measurements: list[MeasurementPoint] = []
+        for path, _hidden_size, concurrency in CELLS:
             cell_id = f"{path}_c{concurrency}"
-            for cohort in M6_1_2_COHORTS:
+            for cohort in COHORTS:
                 for max_tokens in (10, 50):
                     measurements.append(
-                        M6_2MeasurementPoint(
+                        MeasurementPoint(
                             cell_id=cell_id,
                             cohort=cohort,
                             max_tokens=max_tokens,

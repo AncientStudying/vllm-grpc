@@ -64,11 +64,11 @@ from vllm_grpc_bench.prompts import (
     resolve_block_inputs,
 )
 from vllm_grpc_bench.sweep_types import (
-    M6_2_FAILURE_SUMMARY_CELL_COUNT_THRESHOLD,
-    M6_2_MAX_TOKENS_AXIS,
-    M6_2AnchorLatencySnapshot,
-    M6_2MeasurementPoint,
-    M6_2SweepMode,
+    FAILURE_SUMMARY_CELL_COUNT_THRESHOLD,
+    MAX_TOKENS_AXIS,
+    AnchorLatencySnapshot,
+    MeasurementPoint,
+    SweepMode,
 )
 from vllm_grpc_bench.types import (
     CELLS,
@@ -76,14 +76,14 @@ from vllm_grpc_bench.types import (
     CohortKind,
     cohorts_at_concurrency,
 )
-from vllm_grpc_bench.types import Path as M6_1Path  # aliased: avoids pathlib.Path collision
+from vllm_grpc_bench.types import Path as CellPath  # aliased: avoids pathlib.Path collision
 
 __all__ = [
     "ANCHOR_CADENCE_HOURS",
     "BlockDispatchResult",
     "BlockDispatcher",
-    "M6_2SweepInputs",
-    "M6_2SweepOutputs",
+    "SweepInputs",
+    "SweepOutputs",
     "RetryClassifier",
     "START_GUARD_HOURS",
     "compute_failure_summary_header_fired",
@@ -123,12 +123,12 @@ the start branch caused every tuple-end check that landed in the first
 # --- Pure iteration helpers (FR-030 / FR-032) -------------------------------
 
 
-def _cell_id_of(path: M6_1Path, concurrency: int) -> str:
+def _cell_id_of(path: CellPath, concurrency: int) -> str:
     return f"{path}_c{concurrency}"
 
 
 def iter_main_sweep_tuples(
-    axis: tuple[int, ...] = M6_2_MAX_TOKENS_AXIS,
+    axis: tuple[int, ...] = MAX_TOKENS_AXIS,
 ) -> list[tuple[str, int, int]]:
     """Outer × middle iteration sequence over ``(cell_id, concurrency, max_tokens)``.
 
@@ -143,7 +143,7 @@ def iter_main_sweep_tuples(
 
 
 def iter_block_dispatch_order(
-    axis: tuple[int, ...] = M6_2_MAX_TOKENS_AXIS,
+    axis: tuple[int, ...] = MAX_TOKENS_AXIS,
 ) -> list[tuple[str, int, CohortKind]]:
     """Full per-block dispatch sequence as ``(cell_id, max_tokens, cohort)``.
 
@@ -157,7 +157,7 @@ def iter_block_dispatch_order(
     return out
 
 
-def verify_iteration_discipline(points: Iterable[M6_2MeasurementPoint]) -> bool:
+def verify_iteration_discipline(points: Iterable[MeasurementPoint]) -> bool:
     """FR-032 post-hoc machine check: ``True`` iff every ``(cell, max_tokens)``
     tuple's cohort blocks form a contiguous, non-interleaved time window.
 
@@ -418,7 +418,7 @@ def _classify_exception(exc: BaseException) -> str:
 
 def should_run_anchor_at(
     sweep_hour_mark: float,
-    sweep_mode: M6_2SweepMode,
+    sweep_mode: SweepMode,
     *,
     total_sweep_hours: float | None = None,
     cadence_hours: float = ANCHOR_CADENCE_HOURS,
@@ -462,9 +462,9 @@ def should_run_anchor_at(
 
 
 def compute_failure_summary_header_fired(
-    points: Iterable[M6_2MeasurementPoint],
+    points: Iterable[MeasurementPoint],
     *,
-    cell_threshold: int = M6_2_FAILURE_SUMMARY_CELL_COUNT_THRESHOLD,
+    cell_threshold: int = FAILURE_SUMMARY_CELL_COUNT_THRESHOLD,
 ) -> bool:
     """FR-029 sweep-level ``failure_summary_threshold`` integrity header
     rule: fire if either
@@ -476,7 +476,7 @@ def compute_failure_summary_header_fired(
     failed = [p for p in points_list if p.failed_reason is not None]
     if len(failed) >= cell_threshold:
         return True
-    tuple_groups: dict[tuple[str, int], list[M6_2MeasurementPoint]] = {}
+    tuple_groups: dict[tuple[str, int], list[MeasurementPoint]] = {}
     for p in points_list:
         tuple_groups.setdefault((p.cell_id, p.max_tokens), []).append(p)
     for blocks in tuple_groups.values():
@@ -489,7 +489,7 @@ def compute_failure_summary_header_fired(
 
 
 @dataclass(slots=True, kw_only=True)
-class M6_2SweepInputs:
+class SweepInputs:
     """Sweep inputs assembled by ``validate.run_m6_2(...)`` and handed
     to :func:`run_sweep`.
 
@@ -511,7 +511,7 @@ class M6_2SweepInputs:
       already-completed ``(cell, cohort, max_tokens)`` block.
     """
 
-    sweep_mode: M6_2SweepMode
+    sweep_mode: SweepMode
     n: int
     axis: tuple[int, ...]
     base_seed: int
@@ -530,12 +530,12 @@ class M6_2SweepInputs:
     """Phase-1 resume: when set, every block + anchor result is appended
     to a JSONL sidecar at this path for crash-safe resume. ``None``
     disables checkpointing entirely (backward-compatible default)."""
-    preloaded_measurements: list[M6_2MeasurementPoint] | None = None
+    preloaded_measurements: list[MeasurementPoint] | None = None
     """Phase-1 resume: pre-populated measurements from a prior partial
     run. The main loop seeds its ``measurements`` list with these before
     iterating, and skips any ``(cell, cohort, max_tokens)`` block already
     present. ``None`` = no resume; start fresh."""
-    preloaded_anchor_snapshots: dict[CohortKind, list[M6_2AnchorLatencySnapshot]] | None = None
+    preloaded_anchor_snapshots: dict[CohortKind, list[AnchorLatencySnapshot]] | None = None
     """Phase-1 resume: pre-populated anchor snapshots from a prior
     partial run. ``None`` = no resume; start fresh."""
     wall_clock_start_utc_override: str | None = None
@@ -549,30 +549,30 @@ class M6_2SweepInputs:
 
 
 @dataclass(slots=True, kw_only=True)
-class M6_2SweepOutputs:
+class SweepOutputs:
     """Sweep outputs handed back to ``validate.run_m6_2(...)`` which
     then ships them to the reporter.
 
-    The orchestrator emits the per-block ``M6_2MeasurementPoint`` rows + the
+    The orchestrator emits the per-block ``MeasurementPoint`` rows + the
     per-cohort anchor snapshots + the per-cohort topology-probe trajectory;
     the reporter (T022-T030) renders these into the full markdown + JSON.
     """
 
-    measurements: list[M6_2MeasurementPoint]
-    anchor_snapshots: dict[CohortKind, list[M6_2AnchorLatencySnapshot]]
+    measurements: list[MeasurementPoint]
+    anchor_snapshots: dict[CohortKind, list[AnchorLatencySnapshot]]
     iteration_discipline_verified: bool
     wall_clock_start_utc: str
     wall_clock_end_utc: str
     network_paths: dict[CohortKind, list[Any]] | None = None
 
 
-def gate_publish_mode_n(args_m6_2_n: int | None, sweep_mode: M6_2SweepMode) -> int:
+def gate_publish_mode_n(args_m6_2_n: int | None, sweep_mode: SweepMode) -> int:
     """FR-004 explicit-n gate.
 
     Publish mode REFUSES to start when ``args.m6_2_n is None`` — the
     operator MUST pass ``--m6_2-n=<N>`` to make the sample-size choice
     explicit at the command line (no silent default). The canonical
-    round-3-pinned production value is :data:`sweep_types.M6_2_PUBLISH_N`
+    round-3-pinned production value is :data:`sweep_types.PUBLISH_N`
     (currently ``40``, pinned 2026-05-24 against the validate-sweep
     measured CI half-widths). Validate mode coerces to the hard-pinned
     ``n=20`` per FR-001 round-1 Q2. Returns the resolved ``n``.
@@ -582,7 +582,7 @@ def gate_publish_mode_n(args_m6_2_n: int | None, sweep_mode: M6_2SweepMode) -> i
             raise ValueError(
                 "FR-004 explicit-n gate: --m6_2 cannot start without an explicit "
                 "--m6_2-n value. The round-3-pinned production value is n=40 "
-                "(see sweep_types.M6_2_PUBLISH_N). Pass --m6_2-n=40 to launch the "
+                "(see sweep_types.PUBLISH_N). Pass --m6_2-n=40 to launch the "
                 "canonical publish sweep, or pass a different n to override."
             )
         return args_m6_2_n
@@ -619,7 +619,7 @@ def gate_corpus_shas(
     )
 
 
-async def run_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
+async def run_sweep(inputs: SweepInputs) -> SweepOutputs:
     """Drive the M6.2 sweep iteration end-to-end.
 
     Iteration: FR-030 cohort-innermost over ``CELLS × axis × cohorts``.
@@ -629,7 +629,7 @@ async def run_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
 
     This is the foundational orchestrator; US3's sub-probe (T039) wires into
     the same iteration sequence after the main loop. US1's reporter (T022)
-    consumes the returned :class:`M6_2SweepOutputs` to render the artifact.
+    consumes the returned :class:`SweepOutputs` to render the artifact.
     """
     sweep_start_utc = inputs.wall_clock_start_utc_override or _now_iso_utc()
     sweep_start_perf = asyncio.get_event_loop().time()
@@ -640,8 +640,8 @@ async def run_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
     # already finished; iter_idx (= len(measurements)) stays consistent
     # because the dispatcher derives per-RPC seeds from base_seed + iter_idx
     # and the iteration order is deterministic.
-    measurements: list[M6_2MeasurementPoint] = list(inputs.preloaded_measurements or [])
-    anchor_snapshots: dict[CohortKind, list[M6_2AnchorLatencySnapshot]] = (
+    measurements: list[MeasurementPoint] = list(inputs.preloaded_measurements or [])
+    anchor_snapshots: dict[CohortKind, list[AnchorLatencySnapshot]] = (
         {cohort: list(snaps) for cohort, snaps in (inputs.preloaded_anchor_snapshots or {}).items()}
         if inputs.preloaded_anchor_snapshots is not None
         else {}
@@ -854,7 +854,7 @@ async def run_sweep(inputs: M6_2SweepInputs) -> M6_2SweepOutputs:
         utc=sweep_end_utc,
     )
 
-    return M6_2SweepOutputs(
+    return SweepOutputs(
         measurements=measurements,
         anchor_snapshots=anchor_snapshots,
         iteration_discipline_verified=verify_iteration_discipline(measurements),
@@ -1079,8 +1079,8 @@ def _build_measurement_point(
     block_end_utc: str,
     retry_attempted: bool,
     block_inputs: ResolvedBlockInputs,
-) -> M6_2MeasurementPoint:
-    """Build a per-block :class:`M6_2MeasurementPoint` from a dispatch result.
+) -> MeasurementPoint:
+    """Build a per-block :class:`MeasurementPoint` from a dispatch result.
 
     On successful blocks the per-RPC payloads (from
     `BlockDispatchResult.per_rpc_metadata`) are aggregated via
@@ -1091,7 +1091,7 @@ def _build_measurement_point(
     mean and counted toward the row's `clock_anomaly` flag.
     """
     if result.failed_reason is not None or not result.timings_ms:
-        return M6_2MeasurementPoint(
+        return MeasurementPoint(
             cell_id=cell_id,
             cohort=cohort,
             max_tokens=max_tokens,
@@ -1121,7 +1121,7 @@ def _build_measurement_point(
         cell_id=cell_id,
         cohort=cohort,
     )
-    return M6_2MeasurementPoint(
+    return MeasurementPoint(
         cell_id=cell_id,
         cohort=cohort,
         max_tokens=max_tokens,
@@ -1161,7 +1161,7 @@ def _percentile(sorted_samples: list[float], p: float) -> float:
 
 async def _capture_anchor_block(
     *,
-    snapshots_by_cohort: dict[CohortKind, list[M6_2AnchorLatencySnapshot]],
+    snapshots_by_cohort: dict[CohortKind, list[AnchorLatencySnapshot]],
     rpc_driver: AnchorRPCDriver,
     base_seed: int,
     sweep_hour_mark: float,

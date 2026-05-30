@@ -9,15 +9,15 @@ from __future__ import annotations
 
 from vllm_grpc_bench.crossover import (
     INCONCLUSIVE_VERDICT_LABELS,
-    M6_1_3CohortBaseline,
+    CohortBaseline,
     compute_per_cell_crossover,
     identify_winner_and_second,
     symmetric_mean_in_ci,
 )
 from vllm_grpc_bench.sweep_types import (
-    M6_2_MAX_TOKENS_AXIS,
-    M6_2_VALIDATE_MAX_TOKENS_AXIS,
-    M6_2MeasurementPoint,
+    MAX_TOKENS_AXIS,
+    VALIDATE_MAX_TOKENS_AXIS,
+    MeasurementPoint,
 )
 
 
@@ -28,8 +28,8 @@ def _point(
     max_tokens: int,
     wall_p50_ms: float,
     ci_half: float = 1.0,
-) -> M6_2MeasurementPoint:
-    return M6_2MeasurementPoint(
+) -> MeasurementPoint:
+    return MeasurementPoint(
         cell_id=cell_id,
         cohort=cohort,  # type: ignore[arg-type]
         max_tokens=max_tokens,
@@ -103,7 +103,7 @@ def test_symmetric_rule_does_not_fire_when_neither_mean_in_other_ci() -> None:
 
 def test_symmetric_rule_returns_false_on_block_failure() -> None:
     a = _point(cell_id="x", cohort="default_grpc", max_tokens=10, wall_p50_ms=50.0, ci_half=1.0)
-    a_failed = M6_2MeasurementPoint(
+    a_failed = MeasurementPoint(
         cell_id="x",
         cohort="default_grpc",  # type: ignore[arg-type]
         max_tokens=10,
@@ -136,9 +136,9 @@ def test_symmetric_rule_returns_false_on_block_failure() -> None:
 
 def test_winner_second_identified_by_lowest_p50() -> None:
     baseline = {
-        "default_grpc": M6_1_3CohortBaseline(wall_p50_ms=50.0, wall_p50_ms_ci_half_width=1.0),
-        "rest_https_edge": M6_1_3CohortBaseline(wall_p50_ms=60.0, wall_p50_ms_ci_half_width=1.0),
-        "rest_plain_tcp": M6_1_3CohortBaseline(wall_p50_ms=70.0, wall_p50_ms_ci_half_width=1.0),
+        "default_grpc": CohortBaseline(wall_p50_ms=50.0, wall_p50_ms_ci_half_width=1.0),
+        "rest_https_edge": CohortBaseline(wall_p50_ms=60.0, wall_p50_ms_ci_half_width=1.0),
+        "rest_plain_tcp": CohortBaseline(wall_p50_ms=70.0, wall_p50_ms_ci_half_width=1.0),
     }
     result = identify_winner_and_second("chat_stream_c1", baseline)  # type: ignore[arg-type]
     assert result == ("default_grpc", "rest_https_edge")
@@ -146,7 +146,7 @@ def test_winner_second_identified_by_lowest_p50() -> None:
 
 def test_winner_second_returns_none_when_only_one_cohort() -> None:
     baseline = {
-        "default_grpc": M6_1_3CohortBaseline(wall_p50_ms=50.0, wall_p50_ms_ci_half_width=1.0),
+        "default_grpc": CohortBaseline(wall_p50_ms=50.0, wall_p50_ms_ci_half_width=1.0),
     }
     result = identify_winner_and_second("chat_stream_c1", baseline)  # type: ignore[arg-type]
     assert result is None
@@ -162,7 +162,7 @@ def _make_axis_rows(
     second: str,
     winner_per_cap: dict[int, tuple[float, float]],
     second_per_cap: dict[int, tuple[float, float]],
-) -> dict[str, dict[str, dict[int, M6_2MeasurementPoint]]]:
+) -> dict[str, dict[str, dict[int, MeasurementPoint]]]:
     """Build a per_cell axis-rows dict for one cell with two cohorts."""
     return {
         cell_id: {
@@ -195,13 +195,13 @@ def test_inconclusive_base_verdict_emits_none_with_us2_q2_evidence() -> None:
         cell_id="chat_stream_c1",
         winner="default_grpc",
         second="rest_https_edge",
-        winner_per_cap={cap: (50.0, 1.0) for cap in M6_2_MAX_TOKENS_AXIS},
-        second_per_cap={cap: (60.0, 1.0) for cap in M6_2_MAX_TOKENS_AXIS},
+        winner_per_cap={cap: (50.0, 1.0) for cap in MAX_TOKENS_AXIS},
+        second_per_cap={cap: (60.0, 1.0) for cap in MAX_TOKENS_AXIS},
     )
     baseline = {
         "chat_stream_c1": {
-            "default_grpc": M6_1_3CohortBaseline(50.0, 1.0),
-            "rest_https_edge": M6_1_3CohortBaseline(60.0, 1.0),
+            "default_grpc": CohortBaseline(50.0, 1.0),
+            "rest_https_edge": CohortBaseline(60.0, 1.0),
         }
     }
     verdicts = {"chat_stream_c1": "inconclusive"}
@@ -220,13 +220,13 @@ def test_inconclusive_high_variance_wrapper_also_short_circuits() -> None:
         cell_id="chat_stream_c1",
         winner="default_grpc",
         second="rest_https_edge",
-        winner_per_cap={cap: (50.0, 1.0) for cap in M6_2_MAX_TOKENS_AXIS},
-        second_per_cap={cap: (60.0, 1.0) for cap in M6_2_MAX_TOKENS_AXIS},
+        winner_per_cap={cap: (50.0, 1.0) for cap in MAX_TOKENS_AXIS},
+        second_per_cap={cap: (60.0, 1.0) for cap in MAX_TOKENS_AXIS},
     )
     baseline = {
         "chat_stream_c1": {
-            "default_grpc": M6_1_3CohortBaseline(50.0, 1.0),
-            "rest_https_edge": M6_1_3CohortBaseline(60.0, 1.0),
+            "default_grpc": CohortBaseline(50.0, 1.0),
+            "rest_https_edge": CohortBaseline(60.0, 1.0),
         }
     }
     verdicts = {"chat_stream_c1": "inconclusive_high_variance(channel_dependent_batching)"}
@@ -262,8 +262,8 @@ def test_crossover_detected_at_interior_cap() -> None:
     )
     baseline = {
         "chat_stream_c4": {
-            "default_grpc": M6_1_3CohortBaseline(50.0, 1.0),
-            "rest_https_edge": M6_1_3CohortBaseline(80.0, 1.0),
+            "default_grpc": CohortBaseline(50.0, 1.0),
+            "rest_https_edge": CohortBaseline(80.0, 1.0),
         }
     }
     verdicts = {"chat_stream_c4": "channel_dependent_batching"}
@@ -283,14 +283,14 @@ def test_crossover_at_first_axis_point_emits_us2_q3_evidence() -> None:
         winner="default_grpc",
         second="rest_https_edge",
         winner_per_cap={
-            cap: (50.0, 10.0) for cap in M6_2_MAX_TOKENS_AXIS
+            cap: (50.0, 10.0) for cap in MAX_TOKENS_AXIS
         },  # wide CI → overlap from start
-        second_per_cap={cap: (55.0, 10.0) for cap in M6_2_MAX_TOKENS_AXIS},
+        second_per_cap={cap: (55.0, 10.0) for cap in MAX_TOKENS_AXIS},
     )
     baseline = {
         "chat_stream_c4": {
-            "default_grpc": M6_1_3CohortBaseline(50.0, 1.0),
-            "rest_https_edge": M6_1_3CohortBaseline(55.0, 1.0),
+            "default_grpc": CohortBaseline(50.0, 1.0),
+            "rest_https_edge": CohortBaseline(55.0, 1.0),
         }
     }
     verdicts = {"chat_stream_c4": "channel_dependent_batching"}
@@ -304,13 +304,13 @@ def test_crossover_never_fires_emits_survives_evidence() -> None:
         cell_id="chat_stream_c4",
         winner="default_grpc",
         second="rest_https_edge",
-        winner_per_cap={cap: (50.0, 1.0) for cap in M6_2_MAX_TOKENS_AXIS},
-        second_per_cap={cap: (200.0, 1.0) for cap in M6_2_MAX_TOKENS_AXIS},
+        winner_per_cap={cap: (50.0, 1.0) for cap in MAX_TOKENS_AXIS},
+        second_per_cap={cap: (200.0, 1.0) for cap in MAX_TOKENS_AXIS},
     )
     baseline = {
         "chat_stream_c4": {
-            "default_grpc": M6_1_3CohortBaseline(50.0, 1.0),
-            "rest_https_edge": M6_1_3CohortBaseline(200.0, 1.0),
+            "default_grpc": CohortBaseline(50.0, 1.0),
+            "rest_https_edge": CohortBaseline(200.0, 1.0),
         }
     }
     verdicts = {"chat_stream_c4": "channel_dependent_batching"}
@@ -329,7 +329,7 @@ def test_validate_mode_uses_coarse_axis() -> None:
         cell_id="chat_stream_c4",
         winner="default_grpc",
         second="rest_https_edge",
-        winner_per_cap={cap: (50.0, 1.0) for cap in M6_2_VALIDATE_MAX_TOKENS_AXIS},
+        winner_per_cap={cap: (50.0, 1.0) for cap in VALIDATE_MAX_TOKENS_AXIS},
         second_per_cap={
             10: (80.0, 1.0),
             50: (90.0, 1.0),
@@ -347,8 +347,8 @@ def test_validate_mode_uses_coarse_axis() -> None:
     )
     baseline = {
         "chat_stream_c4": {
-            "default_grpc": M6_1_3CohortBaseline(50.0, 1.0),
-            "rest_https_edge": M6_1_3CohortBaseline(80.0, 1.0),
+            "default_grpc": CohortBaseline(50.0, 1.0),
+            "rest_https_edge": CohortBaseline(80.0, 1.0),
         }
     }
     verdicts = {"chat_stream_c4": "channel_dependent_batching"}
@@ -377,8 +377,8 @@ def test_validate_mode_interior_caps_invisible() -> None:
     )
     baseline = {
         "chat_stream_c4": {
-            "default_grpc": M6_1_3CohortBaseline(50.0, 1.0),
-            "rest_https_edge": M6_1_3CohortBaseline(200.0, 1.0),
+            "default_grpc": CohortBaseline(50.0, 1.0),
+            "rest_https_edge": CohortBaseline(200.0, 1.0),
         }
     }
     verdicts = {"chat_stream_c4": "channel_dependent_batching"}
@@ -392,12 +392,12 @@ def test_baseline_with_fewer_than_two_cohorts_emits_skip_evidence() -> None:
         cell_id="chat_stream_c1",
         winner="default_grpc",
         second="rest_https_edge",
-        winner_per_cap={cap: (50.0, 1.0) for cap in M6_2_MAX_TOKENS_AXIS},
-        second_per_cap={cap: (60.0, 1.0) for cap in M6_2_MAX_TOKENS_AXIS},
+        winner_per_cap={cap: (50.0, 1.0) for cap in MAX_TOKENS_AXIS},
+        second_per_cap={cap: (60.0, 1.0) for cap in MAX_TOKENS_AXIS},
     )
     baseline = {
         "chat_stream_c1": {
-            "default_grpc": M6_1_3CohortBaseline(50.0, 1.0),
+            "default_grpc": CohortBaseline(50.0, 1.0),
         }
     }
     verdicts = {"chat_stream_c1": "channel_dependent_batching"}

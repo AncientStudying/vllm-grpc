@@ -5,7 +5,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
-from vllm_grpc_bench.channel_config import M1_BASELINE
+from vllm_grpc_bench.channel_config import BASELINE
 from vllm_grpc_bench.mock_engine import MockEngine, MockEngineConfig
 from vllm_grpc_bench.types import BenchmarkCell
 
@@ -34,14 +34,14 @@ class TestEmbeddingShape:
         cell = BenchmarkCell(
             path="embed",
             hidden_size=1536,
-            channel_config=M1_BASELINE,
+            channel_config=BASELINE,
             corpus_subset="m1_embed",
         )
         assert cell.off_canonical is True
         canonical = BenchmarkCell(
             path="embed",
             hidden_size=4096,
-            channel_config=M1_BASELINE,
+            channel_config=BASELINE,
             corpus_subset="m1_embed",
         )
         assert canonical.off_canonical is False

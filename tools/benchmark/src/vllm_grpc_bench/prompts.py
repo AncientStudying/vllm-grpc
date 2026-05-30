@@ -43,10 +43,10 @@ from vllm_grpc_bench.corpus import (
     verify_corpus_sha,
 )
 from vllm_grpc_bench.sweep_types import (
-    M6_2_INTERIOR_CAP_MAX_TOKENS,
-    M6_2_NULL_ANCHOR_MAX_TOKENS,
-    M6_2_SUB_PROBE_MAX_TOKENS,
-    M6_2PromptSource,
+    INTERIOR_CAP_MAX_TOKENS,
+    NULL_ANCHOR_MAX_TOKENS,
+    SUB_PROBE_MAX_TOKENS,
+    PromptSource,
 )
 from vllm_grpc_bench.symmetric_prompts import assign_symmetric_prompt
 
@@ -88,7 +88,7 @@ class ResolvedBlockInputs(TypedDict, total=False):
 
     prompt_text: str
     embed_tensor_bytes: bytes
-    prompt_source: M6_2PromptSource
+    prompt_source: PromptSource
     prompt_corpus_idx: int | None
     ignore_eos: bool
     max_tokens: int
@@ -170,11 +170,11 @@ def _cell_type_of(cell_id: str) -> str:
 
 def _regime_of(max_tokens: int) -> str:
     """Map ``max_tokens`` to one of the three M6.2 regimes."""
-    if max_tokens in M6_2_NULL_ANCHOR_MAX_TOKENS:
+    if max_tokens in NULL_ANCHOR_MAX_TOKENS:
         return "null_anchor"
-    if max_tokens in M6_2_INTERIOR_CAP_MAX_TOKENS:
+    if max_tokens in INTERIOR_CAP_MAX_TOKENS:
         return "interior_cap"
-    if max_tokens in M6_2_SUB_PROBE_MAX_TOKENS:
+    if max_tokens in SUB_PROBE_MAX_TOKENS:
         # Sub-probe regime is dispatched explicitly via ignore_eos_override=True
         # by the sub-probe orchestrator; the main-sweep at the same caps uses
         # the interior-cap (corpus, natural-EOS) regime.

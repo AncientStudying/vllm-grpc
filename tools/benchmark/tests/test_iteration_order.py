@@ -10,9 +10,9 @@ from vllm_grpc_bench.sweep import (
     verify_iteration_discipline,
 )
 from vllm_grpc_bench.sweep_types import (
-    M6_2_MAX_TOKENS_AXIS,
-    M6_2_VALIDATE_MAX_TOKENS_AXIS,
-    M6_2MeasurementPoint,
+    MAX_TOKENS_AXIS,
+    VALIDATE_MAX_TOKENS_AXIS,
+    MeasurementPoint,
 )
 
 
@@ -22,8 +22,8 @@ def _make_point(
     cohort: str,
     max_tokens: int,
     block_start_utc: str,
-) -> M6_2MeasurementPoint:
-    return M6_2MeasurementPoint(
+) -> MeasurementPoint:
+    return MeasurementPoint(
         cell_id=cell_id,
         cohort=cohort,  # type: ignore[arg-type]
         max_tokens=max_tokens,
@@ -51,21 +51,21 @@ def _make_point(
 
 class TestIterationOrder:
     def test_publish_axis_outer_middle(self) -> None:
-        tuples = iter_main_sweep_tuples(M6_2_MAX_TOKENS_AXIS)
+        tuples = iter_main_sweep_tuples(MAX_TOKENS_AXIS)
         # 6 cells × 6 axis points = 36 outer-middle tuples.
         assert len(tuples) == 36
         # First cell processed at all axis points, then second cell, etc.
         first_cell = tuples[0][0]
-        for i in range(len(M6_2_MAX_TOKENS_AXIS)):
+        for i in range(len(MAX_TOKENS_AXIS)):
             assert tuples[i][0] == first_cell
 
     def test_validate_axis_subset_uses_3_points(self) -> None:
-        tuples = iter_main_sweep_tuples(M6_2_VALIDATE_MAX_TOKENS_AXIS)
+        tuples = iter_main_sweep_tuples(VALIDATE_MAX_TOKENS_AXIS)
         # 6 cells × 3 axis points = 18 tuples.
         assert len(tuples) == 18
 
     def test_dispatch_order_is_cohort_innermost(self) -> None:
-        order = iter_block_dispatch_order(M6_2_MAX_TOKENS_AXIS)
+        order = iter_block_dispatch_order(MAX_TOKENS_AXIS)
         # For each (cell, max_tokens) tuple, all cohorts dispatch contiguously.
         seen_tuples: set[tuple[str, int]] = set()
         current_tuple: tuple[str, int] | None = None
@@ -84,8 +84,8 @@ class TestIterationOrder:
         # 2 c=1 cells × 3 cohorts + 4 c=4/c=8 cells × 4 cohorts = 6 + 16 = 22
         # cohort assignments per axis point. 6 axis points → 132 blocks.
         # Validate axis (3 points) → 66 blocks.
-        publish_order = iter_block_dispatch_order(M6_2_MAX_TOKENS_AXIS)
-        validate_order = iter_block_dispatch_order(M6_2_VALIDATE_MAX_TOKENS_AXIS)
+        publish_order = iter_block_dispatch_order(MAX_TOKENS_AXIS)
+        validate_order = iter_block_dispatch_order(VALIDATE_MAX_TOKENS_AXIS)
         assert len(publish_order) == 132
         assert len(validate_order) == 66
 
@@ -96,7 +96,7 @@ class TestIterationDisciplineMachineCheck:
         # block_start_utc timestamps.
         points = []
         for i, (cell, max_tokens, cohort) in enumerate(
-            iter_block_dispatch_order(M6_2_VALIDATE_MAX_TOKENS_AXIS)
+            iter_block_dispatch_order(VALIDATE_MAX_TOKENS_AXIS)
         ):
             points.append(
                 _make_point(
@@ -147,7 +147,7 @@ class TestIterationDisciplineMachineCheck:
         # + block_end_utc fields. Test that the orchestrator's measurement
         # builder respects this (we re-build points and assert non-empty).
         for i, (cell, max_tokens, cohort) in enumerate(
-            iter_block_dispatch_order(M6_2_VALIDATE_MAX_TOKENS_AXIS)
+            iter_block_dispatch_order(VALIDATE_MAX_TOKENS_AXIS)
         ):
             point = _make_point(
                 cell_id=cell,

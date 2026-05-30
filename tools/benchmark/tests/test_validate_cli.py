@@ -187,7 +187,7 @@ def test_validate_artifact_carries_method_background_pointer(tmp_path: Path) -> 
 
 
 def test_validate_artifact_kv_pressure_observation_has_8_records(tmp_path: Path) -> None:
-    """T043 / US3: 4 cohorts × 2 cell-types = 8 :class:`M6_2KVPressureObservation`
+    """T043 / US3: 4 cohorts × 2 cell-types = 8 :class:`KVPressureObservation`
     records populated from the sub-probe per FR-036."""
     md_path = tmp_path / "m6_2-token-budget-validate.md"
     json_path = tmp_path / "m6_2-token-budget-validate.json"

@@ -4,7 +4,7 @@ Per FR-028 copy-then-refactor: mirrors :mod:`m6_1_rpc_driver`'s M6.1.2 driver
 shape (``provide_m6_1_2_rpc_driver``) but adds the four M6.2 kwargs that the
 M6.1.x driver surface cannot thread:
 
-* ``max_tokens`` — outer-axis cap (one of ``M6_2_MAX_TOKENS_AXIS``).
+* ``max_tokens`` — outer-axis cap (one of ``MAX_TOKENS_AXIS``).
 * ``ignore_eos`` — ``True`` only in KV-pressure sub-probe blocks (FR-036).
 * ``prompt`` — corpus-derived chat prompt for interior-cap + sub-probe regimes
   (FR-034). ``None`` falls back to the synthetic seed-derived prompt.
@@ -42,7 +42,7 @@ import httpx
 from vllm_grpc.v1 import chat_pb2, completions_pb2
 
 from vllm_grpc_bench.channel_config import (
-    M1_BASELINE,
+    BASELINE,
     MAX_MSG_16MIB,
     ChannelConfig,
     _client_kwargs,
@@ -57,7 +57,7 @@ from vllm_grpc_bench.rtt_probe import measure_rtt
 from vllm_grpc_bench.types import Cell, CohortKind, RPCResult, RTTRecord
 
 __all__ = [
-    "M6_2RPCDriver",
+    "RPCDriver",
     "provide_m6_2_rpc_driver",
 ]
 
@@ -272,7 +272,7 @@ async def _rest_rtt_probe(
 _DEFAULT_RTT_PROBE_N: int = 32
 
 
-M6_2RPCDriver = Callable[
+RPCDriver = Callable[
     [CohortKind, Cell, int],
     Awaitable[RPCResult],
 ]
@@ -645,7 +645,7 @@ async def provide_m6_2_rpc_driver(
     rest_https_edge_base = _normalize_rest_url_for_httpx(endpoints.rest_https_edge_url)
     rest_plain_tcp_base = _normalize_rest_url_for_httpx(endpoints.rest_plain_tcp_url)
 
-    default_channel = _open_grpc_channel(endpoints.grpc_url, M1_BASELINE)
+    default_channel = _open_grpc_channel(endpoints.grpc_url, BASELINE)
     tuned_channel = _open_grpc_channel(endpoints.grpc_url, MAX_MSG_16MIB)
     rest_client = httpx.AsyncClient(
         http2=False,

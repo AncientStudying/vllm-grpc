@@ -67,7 +67,7 @@ class TestDefaultInheritance:
 
 
 class TestExplicitNGate:
-    """FR-004: publish-mode `n` is pinned at n=40 (sweep_types.M6_2_PUBLISH_N),
+    """FR-004: publish-mode `n` is pinned at n=40 (sweep_types.PUBLISH_N),
     but the CLI gate STILL requires an explicit `--n` — no silent default."""
 
     def test_publish_default_n_is_none(self) -> None:
@@ -75,9 +75,9 @@ class TestExplicitNGate:
         assert args.n is None, "no silent default — operator MUST pass --n"
 
     def test_publish_n_constant_is_40(self) -> None:
-        from vllm_grpc_bench.sweep_types import M6_2_PUBLISH_N
+        from vllm_grpc_bench.sweep_types import PUBLISH_N
 
-        assert M6_2_PUBLISH_N == 40
+        assert PUBLISH_N == 40
 
     def test_run_publish_without_n_raises_explicit_n_error(self) -> None:
         from vllm_grpc_bench.sweep import gate_publish_mode_n
