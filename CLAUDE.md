@@ -1,7 +1,7 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/028-post-m6.2-cleanup-v0.0.0/plan.md
+at specs/029-post-m6.2-cleanup-v0.0.1/plan.md
 <!-- SPECKIT END -->
 
 ## Codebase navigation
