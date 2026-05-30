@@ -21,7 +21,7 @@ from vllm_grpc_bench.m6_2_crossover import (
     SubProbeBlockResult,
     compute_kv_pressure_inference,
 )
-from vllm_grpc_bench.m6_2_types import M6_2_SUB_PROBE_N
+from vllm_grpc_bench.sweep_types import M6_2_SUB_PROBE_N
 
 
 def _row(

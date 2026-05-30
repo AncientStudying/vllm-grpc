@@ -38,7 +38,7 @@ from vllm_grpc_bench.m6_2_null_anchor import (
     DRIFT_THRESHOLD_FLOOR_MS,
     pooled_ci_half_width,
 )
-from vllm_grpc_bench.m6_2_types import (
+from vllm_grpc_bench.sweep_types import (
     M6_2_LATENCY_DRIFT_COHORT_COUNT_THRESHOLD,
     M6_2AnchorLatencySnapshot,
     M6_2AnchorLatencyTrajectory,

@@ -2,7 +2,7 @@
 
 Exercises ``--m6_2 --m6_2-n=40 --m6_2-skip-deploy`` end-to-end against the
 stub RPC driver. ``n=40`` is the round-3-pinned production value
-(:data:`m6_2_types.M6_2_PUBLISH_N`, FR-004 closure 2026-05-24). Asserts the
+(:data:`sweep_types.M6_2_PUBLISH_N`, FR-004 closure 2026-05-24). Asserts the
 canonical publish-mode artifact shape:
 
 - Full 6-point axis × 4-cohort × 6-cell table (132 rows under the M6.1.2
@@ -28,8 +28,8 @@ import json
 from pathlib import Path
 
 from vllm_grpc_bench.m6_2_reporter import INTEGRITY_CHANNELS, NOT_VALIDATED_MARKER
-from vllm_grpc_bench.m6_2_types import M6_2_PUBLISH_N
 from vllm_grpc_bench.m6_2_validate import run_m6_2
+from vllm_grpc_bench.sweep_types import M6_2_PUBLISH_N
 
 
 def _build_publish_args(
@@ -37,7 +37,7 @@ def _build_publish_args(
 ) -> argparse.Namespace:
     """Construct the ``argparse.Namespace`` shape ``run_m6_2`` expects for
     ``--m6_2 --m6_2-n=<n> --m6_2-skip-deploy`` invocations. Default ``n``
-    matches :data:`m6_2_types.M6_2_PUBLISH_N` (40) so the test exercises
+    matches :data:`sweep_types.M6_2_PUBLISH_N` (40) so the test exercises
     the round-3-pinned production value verbatim."""
     return argparse.Namespace(
         m6_2=True,

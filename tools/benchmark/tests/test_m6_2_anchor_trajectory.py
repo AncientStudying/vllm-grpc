@@ -11,8 +11,8 @@ from vllm_grpc_bench.m6_2_anchor_trajectory import (
     compute_insufficient_snapshots_header_fired,
     compute_intra_sweep_drift_header_fired,
 )
-from vllm_grpc_bench.m6_2_types import M6_2AnchorLatencySnapshot, M6_2AnchorLatencyTrajectory
 from vllm_grpc_bench.sweep import should_run_anchor_at
+from vllm_grpc_bench.sweep_types import M6_2AnchorLatencySnapshot, M6_2AnchorLatencyTrajectory
 
 
 def _stub_rpc_driver(
@@ -213,7 +213,7 @@ class TestSC016SweepLevelHeader:
 
 
 def _make_trajectory(cohort: str, *, drift: bool) -> M6_2AnchorLatencyTrajectory:
-    from vllm_grpc_bench.m6_2_types import M6_2AnchorLatencyTrajectory
+    from vllm_grpc_bench.sweep_types import M6_2AnchorLatencyTrajectory
 
     return M6_2AnchorLatencyTrajectory(
         cohort=cohort,  # type: ignore[arg-type]

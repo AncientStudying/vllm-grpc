@@ -49,7 +49,7 @@ from vllm_grpc_bench.corpus import (
 from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
 from vllm_grpc_bench.m6_1_types import M6_1_CELLS, M6_1Cell
 from vllm_grpc_bench.m6_2_crossover import M6_1_3CohortBaseline
-from vllm_grpc_bench.m6_2_types import (
+from vllm_grpc_bench.sweep_types import (
     M6_2_NULL_ANCHOR_MAX_TOKENS,
     M6_2_VALIDATE_MAX_TOKENS_AXIS,
     M6_2NullAnchor,
@@ -118,7 +118,7 @@ def infer_output_path(
 def _resolve_axis(sweep_mode: M6_2SweepMode) -> tuple[int, ...]:
     """Validate mode uses the 3-point subset per FR-001 round-1 Q2; publish
     uses the full 6-point axis."""
-    from vllm_grpc_bench.m6_2_types import M6_2_MAX_TOKENS_AXIS
+    from vllm_grpc_bench.sweep_types import M6_2_MAX_TOKENS_AXIS
 
     return M6_2_VALIDATE_MAX_TOKENS_AXIS if sweep_mode == "validate" else M6_2_MAX_TOKENS_AXIS
 
@@ -1350,11 +1350,11 @@ def build_artifact(
         build_integrity_warnings,
         fill_validate_mode_placeholders,
     )
-    from vllm_grpc_bench.m6_2_types import (
+    from vllm_grpc_bench.sweep import M6_2SweepOutputs
+    from vllm_grpc_bench.sweep_types import (
         M6_1_2_COHORTS,
         M6_2_MAX_TOKENS_AXIS,
     )
-    from vllm_grpc_bench.sweep import M6_2SweepOutputs
 
     if not isinstance(sweep_outputs, M6_2SweepOutputs):
         raise TypeError(

@@ -28,7 +28,7 @@ side) from firing on noise.
 from __future__ import annotations
 
 from vllm_grpc_bench.m6_1_2_types import M6_1_2CohortKind
-from vllm_grpc_bench.m6_2_types import (
+from vllm_grpc_bench.sweep_types import (
     M6_2_NULL_ANCHOR_DRIFT_COUNT_THRESHOLD,
     M6_2DriftVerdict,
     M6_2NullAnchor,

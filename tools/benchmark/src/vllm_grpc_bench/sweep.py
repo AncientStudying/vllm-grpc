@@ -63,7 +63,7 @@ from vllm_grpc_bench.m6_2_prompt_source import (
     load_embed_corpus_manifest,
     resolve_block_inputs,
 )
-from vllm_grpc_bench.m6_2_types import (
+from vllm_grpc_bench.sweep_types import (
     M6_2_FAILURE_SUMMARY_CELL_COUNT_THRESHOLD,
     M6_2_MAX_TOKENS_AXIS,
     M6_2AnchorLatencySnapshot,
@@ -574,7 +574,7 @@ def gate_publish_mode_n(args_m6_2_n: int | None, sweep_mode: M6_2SweepMode) -> i
     Publish mode REFUSES to start when ``args.m6_2_n is None`` — the
     operator MUST pass ``--m6_2-n=<N>`` to make the sample-size choice
     explicit at the command line (no silent default). The canonical
-    round-3-pinned production value is :data:`m6_2_types.M6_2_PUBLISH_N`
+    round-3-pinned production value is :data:`sweep_types.M6_2_PUBLISH_N`
     (currently ``40``, pinned 2026-05-24 against the validate-sweep
     measured CI half-widths). Validate mode coerces to the hard-pinned
     ``n=20`` per FR-001 round-1 Q2. Returns the resolved ``n``.
@@ -584,7 +584,7 @@ def gate_publish_mode_n(args_m6_2_n: int | None, sweep_mode: M6_2SweepMode) -> i
             raise ValueError(
                 "FR-004 explicit-n gate: --m6_2 cannot start without an explicit "
                 "--m6_2-n value. The round-3-pinned production value is n=40 "
-                "(see m6_2_types.M6_2_PUBLISH_N). Pass --m6_2-n=40 to launch the "
+                "(see sweep_types.M6_2_PUBLISH_N). Pass --m6_2-n=40 to launch the "
                 "canonical publish sweep, or pass a different n to override."
             )
         return args_m6_2_n

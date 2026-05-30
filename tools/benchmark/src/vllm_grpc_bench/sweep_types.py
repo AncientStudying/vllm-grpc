@@ -26,16 +26,28 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-# Re-export M6.1.3 inheritance primitives for downstream call sites that want
-# `from m6_2_types import M6_1_2CohortKind` without threading the import.
 from vllm_grpc_bench.m6_1_2_types import (
-    M6_1_2_COHORTS,
-    M6_1_2CloudProvider,
-    M6_1_2CohortKind,
-    M6_1_2CohortOmissions,
     M6_1_2NetworkPath,
     M6_1_2NetworkPathError,
     M6_1_2NetworkPathHop,
+)
+
+# Cohort/cloud primitives now come from the generic `types` home (aliased to
+# their former names to preserve the `from sweep_types import M6_1_2CohortKind`
+# re-export contract — kept in __all__). The network-probe dataclasses still
+# resolve from `m6_1_2_types`; they are repointed to the `network_probe` home
+# in T014.
+from vllm_grpc_bench.types import (
+    COHORTS as M6_1_2_COHORTS,
+)
+from vllm_grpc_bench.types import (
+    CloudProvider as M6_1_2CloudProvider,
+)
+from vllm_grpc_bench.types import (
+    CohortKind as M6_1_2CohortKind,
+)
+from vllm_grpc_bench.types import (
+    CohortOmissions as M6_1_2CohortOmissions,
 )
 
 # --- M6.2 axis constants (FR-001 / FR-016) ----------------------------------

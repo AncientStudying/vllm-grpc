@@ -921,7 +921,7 @@ class TestAnchorDispatcherRecovery:
 
 class TestArtifactPreemptionEventsField:
     """T074f: the per-dispatcher preemption counters flow into
-    :class:`m6_2_types.M6_2RunMeta`'s ``preemption_events`` field via
+    :class:`sweep_types.M6_2RunMeta`'s ``preemption_events`` field via
     :func:`build_artifact`. The field is rendered in the markdown
     run_meta block + serialised to the JSON artifact for post-hoc audit.
     """
@@ -932,7 +932,7 @@ class TestArtifactPreemptionEventsField:
         accumulated counter must end up in
         ``artifact.run_meta.preemption_events`` so the JSON consumer can
         confirm the recovery happened."""
-        from vllm_grpc_bench.m6_2_types import M6_2RunMeta
+        from vllm_grpc_bench.sweep_types import M6_2RunMeta
 
         # Direct constructor exercise — the orchestrator threads the
         # counter into build_artifact via the ``preemption_events`` kwarg.

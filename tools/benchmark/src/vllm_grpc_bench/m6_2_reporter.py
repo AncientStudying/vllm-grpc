@@ -49,7 +49,10 @@ from vllm_grpc_bench.m6_2_anchor_trajectory import (
 from vllm_grpc_bench.m6_2_null_anchor import (
     compute_null_anchor_drift_header_fired,
 )
-from vllm_grpc_bench.m6_2_types import (
+from vllm_grpc_bench.sweep import (
+    compute_failure_summary_header_fired,
+)
+from vllm_grpc_bench.sweep_types import (
     M6_2_INTERIOR_CAP_MAX_TOKENS,
     M6_2_VALIDATE_MAX_TOKENS_AXIS,
     M6_2AnchorLatencyTrajectory,
@@ -57,9 +60,6 @@ from vllm_grpc_bench.m6_2_types import (
     M6_2PromptSource,
     M6_2SweepArtifact,
     M6_2SweepMode,
-)
-from vllm_grpc_bench.sweep import (
-    compute_failure_summary_header_fired,
 )
 
 __all__ = [

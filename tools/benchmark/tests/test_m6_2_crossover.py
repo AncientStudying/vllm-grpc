@@ -14,7 +14,7 @@ from vllm_grpc_bench.m6_2_crossover import (
     identify_winner_and_second,
     symmetric_mean_in_ci,
 )
-from vllm_grpc_bench.m6_2_types import (
+from vllm_grpc_bench.sweep_types import (
     M6_2_MAX_TOKENS_AXIS,
     M6_2_VALIDATE_MAX_TOKENS_AXIS,
     M6_2MeasurementPoint,

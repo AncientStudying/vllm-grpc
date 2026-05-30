@@ -11,7 +11,7 @@ alongside or after the main 144-point sweep. Per FR-036:
   prompt-embeddings for embed) via :func:`m6_2_prompt_source.resolve_block_inputs`
   with ``ignore_eos_override=True``.
 - Sub-probe rows are emitted to :class:`m6_2_crossover.SubProbeBlockResult`
-  (NOT :class:`m6_2_types.M6_2MeasurementPoint`) — they DO NOT pollute the
+  (NOT :class:`sweep_types.M6_2MeasurementPoint`) — they DO NOT pollute the
   latency budget table. Only the c=8 cell type matters for FR-017a's
   wall-clock-ratio inference; the sub-probe runs at the conventional ``c=8``
   cell ids (``chat_stream_c8`` + ``embed_c8``).
@@ -33,11 +33,11 @@ from vllm_grpc_bench.corpus import (
 from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
 from vllm_grpc_bench.m6_2_crossover import SubProbeBlockResult
 from vllm_grpc_bench.m6_2_prompt_source import resolve_block_inputs
-from vllm_grpc_bench.m6_2_types import (
+from vllm_grpc_bench.sweep import BlockDispatcher, RetryClassifier
+from vllm_grpc_bench.sweep_types import (
     M6_2_SUB_PROBE_MAX_TOKENS,
     M6_2_SUB_PROBE_N,
 )
-from vllm_grpc_bench.sweep import BlockDispatcher, RetryClassifier
 
 __all__ = [
     "SUB_PROBE_CELL_IDS",

@@ -23,8 +23,8 @@ from vllm_grpc_bench.m6_2_sub_probe import (
     iter_sub_probe_tuples,
     run_kv_pressure_sub_probe,
 )
-from vllm_grpc_bench.m6_2_types import M6_2_SUB_PROBE_MAX_TOKENS, M6_2_SUB_PROBE_N
 from vllm_grpc_bench.sweep import BlockDispatchResult
+from vllm_grpc_bench.sweep_types import M6_2_SUB_PROBE_MAX_TOKENS, M6_2_SUB_PROBE_N
 
 # --- Stub corpora ----------------------------------------------------------
 

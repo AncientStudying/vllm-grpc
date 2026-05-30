@@ -443,8 +443,8 @@ class TestArtifactPathIntegration:
     def test_make_null_anchor_validation_emits_48_anchors(self, tmp_path: Any) -> None:
         # Build a stub measurement list: 48 anchors (6 cells × 4 cohorts × 2 caps).
         from vllm_grpc_bench.m6_1_types import M6_1_CELLS
-        from vllm_grpc_bench.m6_2_types import M6_2MeasurementPoint
         from vllm_grpc_bench.m6_2_validate import load_m6_1_3_baseline
+        from vllm_grpc_bench.sweep_types import M6_2MeasurementPoint
 
         measurements: list[M6_2MeasurementPoint] = []
         for path, _hidden_size, concurrency in M6_1_CELLS:

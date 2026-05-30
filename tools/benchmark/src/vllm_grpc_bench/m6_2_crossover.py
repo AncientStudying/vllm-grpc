@@ -27,7 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
-from vllm_grpc_bench.m6_2_types import (
+from vllm_grpc_bench.sweep_types import (
     M6_2_KV_PRESSURE_THRESHOLD,
     M6_2_MAX_TOKENS_AXIS,
     M6_2_SUB_PROBE_N,

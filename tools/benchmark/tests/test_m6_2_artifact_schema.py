@@ -39,7 +39,7 @@ from vllm_grpc_bench.m6_2_reporter import (
     render_markdown,
     write_m6_2_report,
 )
-from vllm_grpc_bench.m6_2_types import (
+from vllm_grpc_bench.sweep_types import (
     M6_2_MAX_TOKENS_AXIS,
     M6_2_VALIDATE_MAX_TOKENS_AXIS,
     M6_2AnchorLatencySnapshot,

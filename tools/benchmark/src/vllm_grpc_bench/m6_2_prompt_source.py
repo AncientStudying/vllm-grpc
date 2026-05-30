@@ -34,13 +34,13 @@ from vllm_grpc_bench.corpus import (
     load_corpus,
     verify_corpus_sha,
 )
-from vllm_grpc_bench.m6_2_types import (
+from vllm_grpc_bench.m6_rpc_driver import _build_chat_prompt
+from vllm_grpc_bench.sweep_types import (
     M6_2_INTERIOR_CAP_MAX_TOKENS,
     M6_2_NULL_ANCHOR_MAX_TOKENS,
     M6_2_SUB_PROBE_MAX_TOKENS,
     M6_2PromptSource,
 )
-from vllm_grpc_bench.m6_rpc_driver import _build_chat_prompt
 from vllm_grpc_bench.symmetric_prompts import assign_symmetric_prompt
 
 __all__ = [

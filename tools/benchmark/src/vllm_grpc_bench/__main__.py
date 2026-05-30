@@ -787,7 +787,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--m6_2",
         action="store_true",
         help="M6.2 publish sweep: 6-point max_tokens axis × 4-cohort × 6-cell matrix at the "
-        "round-3-pinned n=40 (m6_2_types.M6_2_PUBLISH_N). Produces "
+        "round-3-pinned n=40 (sweep_types.M6_2_PUBLISH_N). Produces "
         "docs/benchmarks/m6_2-token-budget.{md,json}. REFUSES to start if --m6_2-n is unset "
         "(FR-004 explicit-n gate). Mutually exclusive with all prior mode flags. "
         "See specs/027-m6-2-token-budget/contracts/cli.md.",
@@ -806,7 +806,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="M6.2: per-block sample size (FR-004). No silent default — the operator MUST "
         "pass --m6_2-n=<N> on the command line. The round-3-pinned production value is "
-        "n=40 (m6_2_types.M6_2_PUBLISH_N). Under --m6_2-validate, hard-pinned to 20; "
+        "n=40 (sweep_types.M6_2_PUBLISH_N). Under --m6_2-validate, hard-pinned to 20; "
         "passing --m6_2-n=<X != 20> with --m6_2-validate raises an error.",
     )
     parser.add_argument(

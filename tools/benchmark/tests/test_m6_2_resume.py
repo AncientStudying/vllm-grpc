@@ -36,7 +36,7 @@ from vllm_grpc_bench.m6_2_resume import (
     validate_checkpoint_against_current_run,
     write_checkpoint_header,
 )
-from vllm_grpc_bench.m6_2_types import M6_2AnchorLatencySnapshot, M6_2MeasurementPoint
+from vllm_grpc_bench.sweep_types import M6_2AnchorLatencySnapshot, M6_2MeasurementPoint
 
 # --- Helpers ---------------------------------------------------------------
 

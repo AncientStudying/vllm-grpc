@@ -48,7 +48,7 @@ class TestDefaultInheritance:
 
 class TestExplicitNGate:
     """FR-004 round-3 closure (2026-05-24): publish-mode `n` is pinned at
-    `n=40` (`m6_2_types.M6_2_PUBLISH_N`), but the CLI gate STILL requires
+    `n=40` (`sweep_types.M6_2_PUBLISH_N`), but the CLI gate STILL requires
     an explicit `--m6_2-n` flag — no silent default — so an operator
     cannot launch the publish sweep at the wrong n by omission."""
 
@@ -60,7 +60,7 @@ class TestExplicitNGate:
         """Round-3 closure regression guard: pinning n=40 is load-bearing
         for FR-021 cost cap + FR-023 wall-clock cap. A silent drift would
         invalidate both."""
-        from vllm_grpc_bench.m6_2_types import M6_2_PUBLISH_N
+        from vllm_grpc_bench.sweep_types import M6_2_PUBLISH_N
 
         assert M6_2_PUBLISH_N == 40
 

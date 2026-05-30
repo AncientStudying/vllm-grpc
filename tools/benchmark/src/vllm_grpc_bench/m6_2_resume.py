@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
-from vllm_grpc_bench.m6_2_types import (
+from vllm_grpc_bench.sweep_types import (
     M6_2AnchorLatencySnapshot,
     M6_2MeasurementPoint,
     M6_2MeasurementRegime,
