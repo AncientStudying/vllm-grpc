@@ -19,9 +19,9 @@ description: "Task list for v0.0.1 — Bench-harness refactor"
 
 **Purpose**: Capture the pre-refactor baseline and confirm the recovery net.
 
-- [ ] T001 Confirm branch `chore/post-m6.2-cleanup-v0.0.1` is checked out and capture the green pre-refactor baseline: `cd tools/benchmark && make lint typecheck test` — record pass count for no-regression comparison (SC-005).
-- [ ] T002 Verify the recovery net: `git tag | grep -c '^milestone/'` returns 16, and `git show milestone/m5.2-transport-tuning:tools/benchmark/src/vllm_grpc_bench/m5_2_sweep.py | head` returns content (FR-014, precondition for all deletions).
-- [ ] T003 Snapshot starting counts for SC-002: record `ls $SRC/*.py | wc -l` (=84) and `ls $TST/*.py | wc -l` (=137).
+- [X] T001 Confirm branch `chore/post-m6.2-cleanup-v0.0.1` is checked out and capture the green pre-refactor baseline. **DONE 2026-05-29**: `ruff check` clean; `mypy --strict tools/benchmark/src` → 84 files, no issues; `pytest tools/benchmark/tests` → **1457 passed, 2 skipped**. Baseline for SC-005 no-regression.
+- [X] T002 Verify the recovery net. **DONE 2026-05-29**: `git tag | grep -c '^milestone/'` → 16; `git show milestone/m5.2-transport-tuning:tools/benchmark/src/vllm_grpc_bench/m5_2_sweep.py` returns content.
+- [X] T003 Snapshot starting counts for SC-002. **DONE 2026-05-29**: 84 src modules, 137 test files.
 
 **Checkpoint**: Baseline green, recovery net confirmed.
 
