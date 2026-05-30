@@ -67,7 +67,7 @@ max_tokens=10 anchor block sees on first invocation."""
 def _snapshot_ci_half_width(snapshots: list[M6_2AnchorLatencySnapshot]) -> float:
     """95% normal-approximation CI half-width (1.96 × stderr) over the
     trajectory's ``wall_p50_ms`` samples. Mirrors
-    :func:`m6_2_sweep._ci_half_width_95`. Returns 0.0 when ``n < 2``."""
+    :func:`sweep._ci_half_width_95`. Returns 0.0 when ``n < 2``."""
     if len(snapshots) < 2:
         return 0.0
     p50s = [s.wall_p50_ms for s in snapshots]

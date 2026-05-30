@@ -11,8 +11,8 @@ from vllm_grpc_bench.m6_2_anchor_trajectory import (
     compute_insufficient_snapshots_header_fired,
     compute_intra_sweep_drift_header_fired,
 )
-from vllm_grpc_bench.m6_2_sweep import should_run_anchor_at
 from vllm_grpc_bench.m6_2_types import M6_2AnchorLatencySnapshot, M6_2AnchorLatencyTrajectory
+from vllm_grpc_bench.sweep import should_run_anchor_at
 
 
 def _stub_rpc_driver(
@@ -263,7 +263,7 @@ class TestT073StartGuardRegression:
     def test_start_guard_constant_is_tight(self) -> None:
         """``START_GUARD_HOURS`` MUST be tight enough that a tuple-end check
         landing in the first few minutes does not re-fire the anchor."""
-        from vllm_grpc_bench.m6_2_sweep import START_GUARD_HOURS
+        from vllm_grpc_bench.sweep import START_GUARD_HOURS
 
         assert START_GUARD_HOURS < 0.05, (
             "start guard must be tighter than the 4-h-cadence epsilon, or the T073 bug regresses"

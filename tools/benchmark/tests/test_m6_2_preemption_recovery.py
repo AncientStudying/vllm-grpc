@@ -1650,7 +1650,7 @@ class TestSecondaryTriggerConsecutiveDeathBlocks:
         to distinguish primary vs. secondary triggers for post-hoc
         debugging. The event carries ``trigger=consecutive_endpoint_death``
         when the secondary path fires."""
-        from vllm_grpc_bench import m6_2_sweep
+        from vllm_grpc_bench import sweep
         from vllm_grpc_bench.m6_2_validate import build_modal_block_dispatcher
 
         events: list[tuple[str, dict[str, Any]]] = []
@@ -1658,7 +1658,7 @@ class TestSecondaryTriggerConsecutiveDeathBlocks:
         def _capture(event: str, **kwargs: Any) -> None:
             events.append((event, kwargs))
 
-        monkeypatch.setattr(m6_2_sweep, "_progress", _capture)
+        monkeypatch.setattr(sweep, "_progress", _capture)
 
         partial_death_block: list[Any] = [
             _dead_endpoint_rpc_result(),

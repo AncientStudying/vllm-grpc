@@ -246,7 +246,7 @@ def compute_per_cell_crossover(
 class SubProbeBlockResult:
     """One sub-probe block's per-block summary.
 
-    Mirrors the shape :class:`m6_2_sweep.BlockDispatchResult` produces but is
+    Mirrors the shape :class:`sweep.BlockDispatchResult` produces but is
     aggregated into the percentile statistics the KV-pressure inference
     consumes. ``cell_type`` is ``"chat_stream"`` or ``"embed"``; ``cohort``
     + ``max_tokens`` identify the block; ``wall_p50_ms`` is the per-block

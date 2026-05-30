@@ -10,7 +10,7 @@ Covers:
   composes a multi-field diff message when more than one diverged.
 * Robustness: truncated tail line dropped, missing header rejected,
   schema_version drift rejected, file-not-found rejected.
-* Sweep integration: ``run_m6_2_sweep`` with pre-loaded measurements
+* Sweep integration: ``run_sweep`` with pre-loaded measurements
   emits ``BLOCK_SKIPPED`` for completed (cell, cohort, max_tokens)
   tuples and appends only the missing rows; pre-loaded anchor snapshots
   suppress the t=0 anchor; ``checkpoint_path`` produces an on-disk
@@ -469,7 +469,7 @@ class _CapturingDispatcher:
         n: int,
         block_inputs: Any,
     ) -> Any:
-        from vllm_grpc_bench.m6_2_sweep import BlockDispatchResult
+        from vllm_grpc_bench.sweep import BlockDispatchResult
 
         self.calls.append((cell_id, cohort, max_tokens))
         return BlockDispatchResult(
@@ -507,7 +507,7 @@ class TestSweepLoopResume:
         max_tokens), the sweep loop must NOT call the dispatcher for
         that block. Pre-loaded measurements stay in the output list and
         are joined by the freshly-dispatched ones."""
-        from vllm_grpc_bench.m6_2_sweep import M6_2SweepInputs, run_m6_2_sweep
+        from vllm_grpc_bench.sweep import M6_2SweepInputs, run_sweep
 
         # Pre-load only the first three blocks of the validate axis.
         preloaded = [
@@ -531,7 +531,7 @@ class TestSweepLoopResume:
             topology_probe=None,
             preloaded_measurements=preloaded,
         )
-        outputs = await run_m6_2_sweep(inputs)
+        outputs = await run_sweep(inputs)
 
         # Pre-loaded measurements are still in the output, unchanged.
         for pre in preloaded:
@@ -547,7 +547,7 @@ class TestSweepLoopResume:
         """Sanity check: with ``preloaded_measurements=None``, the
         dispatcher fires for every block in the axis. Used as the
         reference for the skip-count assertion below."""
-        from vllm_grpc_bench.m6_2_sweep import M6_2SweepInputs, run_m6_2_sweep
+        from vllm_grpc_bench.sweep import M6_2SweepInputs, run_sweep
 
         dispatcher = _CapturingDispatcher()
         inputs = M6_2SweepInputs(
@@ -562,7 +562,7 @@ class TestSweepLoopResume:
             is_transient=_is_transient_stub,
             topology_probe=None,
         )
-        outputs = await run_m6_2_sweep(inputs)
+        outputs = await run_sweep(inputs)
         # Validate axis: 6 cells × variable cohorts × 3 caps = 66 blocks.
         assert len(dispatcher.calls) == 66
         assert len(outputs.measurements) == 66
@@ -572,7 +572,7 @@ class TestSweepLoopResume:
         """30 pre-loaded measurements + 66 total expected blocks → the
         dispatcher fires exactly 36 times. Mirrors the production
         recover-mid-sweep behaviour."""
-        from vllm_grpc_bench.m6_2_sweep import M6_2SweepInputs, run_m6_2_sweep
+        from vllm_grpc_bench.sweep import M6_2SweepInputs, run_sweep
 
         dispatcher_total = _CapturingDispatcher()
         inputs_total = M6_2SweepInputs(
@@ -587,7 +587,7 @@ class TestSweepLoopResume:
             is_transient=_is_transient_stub,
             topology_probe=None,
         )
-        await run_m6_2_sweep(inputs_total)
+        await run_sweep(inputs_total)
         # Take the first 30 blocks from a clean run and use them as the
         # checkpoint for a second invocation.
         preloaded = [
@@ -608,7 +608,7 @@ class TestSweepLoopResume:
             topology_probe=None,
             preloaded_measurements=preloaded,
         )
-        outputs = await run_m6_2_sweep(inputs_resume)
+        outputs = await run_sweep(inputs_resume)
         assert len(dispatcher_resume.calls) == 66 - 30
         # Total measurements = pre-loaded + dispatched.
         assert len(outputs.measurements) == 66
@@ -618,7 +618,7 @@ class TestSweepLoopResume:
         """The t=0 anchor must NOT re-fire when the checkpoint already
         carries snapshots — those snapshots belong to the prior run's
         t=0 capture; re-firing would corrupt the trajectory."""
-        from vllm_grpc_bench.m6_2_sweep import M6_2SweepInputs, run_m6_2_sweep
+        from vllm_grpc_bench.sweep import M6_2SweepInputs, run_sweep
 
         calls: list[tuple[str, int]] = []
 
@@ -653,7 +653,7 @@ class TestSweepLoopResume:
             topology_probe=None,
             preloaded_anchor_snapshots=preloaded_anchors,
         )
-        outputs = await run_m6_2_sweep(inputs)
+        outputs = await run_sweep(inputs)
         # Every pre-loaded anchor must still be in the output.
         for cohort, snaps in preloaded_anchors.items():
             assert outputs.anchor_snapshots[cohort][: len(snaps)] == snaps
@@ -662,7 +662,7 @@ class TestSweepLoopResume:
     async def test_checkpoint_path_writes_jsonl_sidecar(self, tmp_path: Path) -> None:
         """Every dispatched block must append a JSON line to the
         sidecar. The on-disk count matches in-memory ``measurements``."""
-        from vllm_grpc_bench.m6_2_sweep import M6_2SweepInputs, run_m6_2_sweep
+        from vllm_grpc_bench.sweep import M6_2SweepInputs, run_sweep
 
         cp_path = tmp_path / "cp.jsonl"
         write_checkpoint_header(cp_path, _sample_header(sweep_mode="validate", n_per_point=20))
@@ -679,7 +679,7 @@ class TestSweepLoopResume:
             topology_probe=None,
             checkpoint_path=cp_path,
         )
-        outputs = await run_m6_2_sweep(inputs)
+        outputs = await run_sweep(inputs)
         text = cp_path.read_text()
         # 1 header + len(measurements) + at least one anchor block (start)
         # × 4 cohorts = at least 1 + 66 + 4 = 71 lines.
@@ -702,7 +702,7 @@ class TestSweepLoopResume:
         observed during the freshly-resumed-from-30 run, and comparing
         it to indices [30, 31, ..., 65] from the clean reference run.
         """
-        from vllm_grpc_bench.m6_2_sweep import M6_2SweepInputs, run_m6_2_sweep
+        from vllm_grpc_bench.sweep import M6_2SweepInputs, run_sweep
 
         # Reference run: capture per-call iter_idx (= len(measurements)
         # at dispatch time). The dispatcher receives the block index
@@ -722,7 +722,7 @@ class TestSweepLoopResume:
             is_transient=_is_transient_stub,
             topology_probe=None,
         )
-        await run_m6_2_sweep(ref_inputs)
+        await run_sweep(ref_inputs)
         ref_calls = list(ref.calls)
 
         # Resumed run: take first 30 ref calls as pre-loaded
@@ -746,14 +746,14 @@ class TestSweepLoopResume:
             topology_probe=None,
             preloaded_measurements=preloaded,
         )
-        await run_m6_2_sweep(resumed_inputs)
+        await run_sweep(resumed_inputs)
         assert resumed.calls == ref_calls[30:]
 
     @pytest.mark.asyncio
     async def test_wall_clock_start_utc_override_preserves_original_start(
         self, tmp_path: Path
     ) -> None:
-        from vllm_grpc_bench.m6_2_sweep import M6_2SweepInputs, run_m6_2_sweep
+        from vllm_grpc_bench.sweep import M6_2SweepInputs, run_sweep
 
         original_start = "2026-05-24T21:28:31Z"
         inputs = M6_2SweepInputs(
@@ -769,7 +769,7 @@ class TestSweepLoopResume:
             topology_probe=None,
             wall_clock_start_utc_override=original_start,
         )
-        outputs = await run_m6_2_sweep(inputs)
+        outputs = await run_sweep(inputs)
         # The orchestrator records the override as wall_clock_start_utc
         # in the outputs (downstream build_artifact uses it for run_meta).
         assert outputs.wall_clock_start_utc == original_start

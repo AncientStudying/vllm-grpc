@@ -33,11 +33,11 @@ from vllm_grpc_bench.corpus import (
 from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
 from vllm_grpc_bench.m6_2_crossover import SubProbeBlockResult
 from vllm_grpc_bench.m6_2_prompt_source import resolve_block_inputs
-from vllm_grpc_bench.m6_2_sweep import BlockDispatcher, RetryClassifier
 from vllm_grpc_bench.m6_2_types import (
     M6_2_SUB_PROBE_MAX_TOKENS,
     M6_2_SUB_PROBE_N,
 )
+from vllm_grpc_bench.sweep import BlockDispatcher, RetryClassifier
 
 __all__ = [
     "SUB_PROBE_CELL_IDS",
@@ -116,7 +116,7 @@ async def run_kv_pressure_sub_probe(
     ``ignore_eos_override=True`` so the prompt-source resolver returns the
     corpus regime + ``ignore_eos=True`` flag the wire builder will translate.
     """
-    from vllm_grpc_bench.m6_2_sweep import run_block_with_retry
+    from vllm_grpc_bench.sweep import run_block_with_retry
 
     out: list[SubProbeBlockResult] = []
     for iter_idx, (cell_type, max_tokens, cohort) in enumerate(iter_sub_probe_tuples()):

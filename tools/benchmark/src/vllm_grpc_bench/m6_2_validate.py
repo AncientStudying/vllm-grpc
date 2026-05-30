@@ -140,7 +140,7 @@ def build_stub_dispatcher() -> object:
     compute non-degenerate percentiles. Returns an object whose
     ``__call__`` matches the :class:`BlockDispatcher` Protocol.
     """
-    from vllm_grpc_bench.m6_2_sweep import BlockDispatchResult
+    from vllm_grpc_bench.sweep import BlockDispatchResult
 
     class _StubDispatcher:
         async def __call__(
@@ -600,7 +600,7 @@ def build_modal_block_dispatcher(
         dispatcher.preemption_budget  # int — configured cap
     """
     from vllm_grpc_bench.m6_2_prompt_source import ResolvedBlockInputs
-    from vllm_grpc_bench.m6_2_sweep import BlockDispatchResult, _progress
+    from vllm_grpc_bench.sweep import BlockDispatchResult, _progress
 
     # Mutable holder so the recovery loop can swap in a refreshed driver
     # without disturbing the closure semantics of the inner ``_one_rpc``.
@@ -888,7 +888,7 @@ def build_modal_anchor_dispatcher(
         anchor_dispatcher.preemption_budget  # int constant
     """
     from vllm_grpc_bench.m6_1_types import M6_1Cell as _M6_1Cell
-    from vllm_grpc_bench.m6_2_sweep import _progress
+    from vllm_grpc_bench.sweep import _progress
 
     cell = anchor_cell or _M6_1Cell(path="chat_stream", hidden_size=4096, concurrency=1)
     state = SimpleNamespace(driver=driver, preemption_events=0, consecutive_death_blocks=0)
@@ -1249,7 +1249,7 @@ def make_null_anchor_validation(
                     if point is not None:
                         # M6.2's per-block CI half-width is computed by the
                         # per-segment aggregator (see ``_aggregate_block_metrics``
-                        # in m6_2_sweep). Thread it into the pooled-CI rule so
+                        # in sweep). Thread it into the pooled-CI rule so
                         # cells whose own variance is larger than the M6.1.3
                         # baseline CI don't trip on noise. ``None`` for cells
                         # whose CI couldn't be computed (n<2) → 0.0 → floor.
@@ -1350,11 +1350,11 @@ def build_artifact(
         build_integrity_warnings,
         fill_validate_mode_placeholders,
     )
-    from vllm_grpc_bench.m6_2_sweep import M6_2SweepOutputs
     from vllm_grpc_bench.m6_2_types import (
         M6_1_2_COHORTS,
         M6_2_MAX_TOKENS_AXIS,
     )
+    from vllm_grpc_bench.sweep import M6_2SweepOutputs
 
     if not isinstance(sweep_outputs, M6_2SweepOutputs):
         raise TypeError(
@@ -1532,11 +1532,11 @@ async def _drive_main_sweep_and_sub_probe(
     test paths preserve their existing behavior.
     """
     from vllm_grpc_bench.m6_2_sub_probe import run_kv_pressure_sub_probe
-    from vllm_grpc_bench.m6_2_sweep import (
+    from vllm_grpc_bench.sweep import (
         M6_2SweepInputs,
     )
-    from vllm_grpc_bench.m6_2_sweep import (
-        run_m6_2_sweep as _run_m6_2_sweep,
+    from vllm_grpc_bench.sweep import (
+        run_sweep as _run_sweep,
     )
 
     if not isinstance(inputs, M6_2SweepInputs):
@@ -1547,9 +1547,9 @@ async def _drive_main_sweep_and_sub_probe(
 
     import time as _time
 
-    from vllm_grpc_bench.m6_2_sweep import _progress as _sweep_progress
+    from vllm_grpc_bench.sweep import _progress as _sweep_progress
 
-    sweep_outputs = await _run_m6_2_sweep(inputs)
+    sweep_outputs = await _run_sweep(inputs)
     _sweep_progress(
         "SUBPROBE_START",
         blocks=16,
@@ -1620,8 +1620,8 @@ async def _run_modal_backed(
     from vllm_grpc_bench.m6_1_2_network_probe import run_topology_probe
     from vllm_grpc_bench.m6_1_seq_len import pin_seq_len_at_sweep_start
     from vllm_grpc_bench.m6_2_reporter import write_m6_2_report
-    from vllm_grpc_bench.m6_2_sweep import M6_2SweepInputs
     from vllm_grpc_bench.modal_endpoint import ModalDeployError, provide_m6_endpoint
+    from vllm_grpc_bench.sweep import M6_2SweepInputs
 
     token_env = str(getattr(args, "m6_2_modal_token_env", "MODAL_BENCH_TOKEN"))
 
@@ -1887,7 +1887,7 @@ def _resolve_resume_state(
     else:
         checkpoint_path = Path(checkpoint_out)
 
-    from vllm_grpc_bench.m6_2_sweep import _now_iso_utc
+    from vllm_grpc_bench.sweep import _now_iso_utc
 
     run_started_at = _now_iso_utc()
     run_id = f"{run_started_at}-{uuid.uuid4().hex[:8]}"
@@ -1927,14 +1927,14 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
     * SC-018 corpus SHA validation gate at sweep start.
     * Dispatcher selection (stub vs Modal-backed) based on
       ``--m6_2-skip-deploy``.
-    * Sweep execution via :func:`m6_2_sweep.run_m6_2_sweep`.
+    * Sweep execution via :func:`sweep.run_sweep`.
     * Artifact assembly via :func:`build_artifact`.
     * Reporter write via :func:`m6_2_reporter.write_m6_2_report`.
     """
     from vllm_grpc_bench.corpus import CorpusDriftError
     from vllm_grpc_bench.m6_2_prompt_source import load_chat_corpus, load_embed_corpus
     from vllm_grpc_bench.m6_2_reporter import write_m6_2_report
-    from vllm_grpc_bench.m6_2_sweep import (
+    from vllm_grpc_bench.sweep import (
         M6_2SweepInputs,
         gate_corpus_shas,
         gate_publish_mode_n,

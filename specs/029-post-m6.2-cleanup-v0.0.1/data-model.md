@@ -17,7 +17,8 @@ The "entities" of a refactor are **modules**, **symbols**, **tests**, **CLI flag
 
 | From (legacy name) | To (generic name) | Absorbs |
 |---|---|---|
-| `m6_2_sweep.py` | `sweep.py` | `m6_1_seq_len.pin_seq_len_at_sweep_start` |
+| `m6_2_sweep.py` | `sweep.py` | — (seq_len NOT absorbed: `m6_2_sweep` never called `pin_seq_len_at_sweep_start`; see `seq_len.py` row — corrected during T011) |
+| `m6_1_seq_len.py` | `seq_len.py` | — (own cohesive home; live caller is `validate.py`, not `sweep.py`) |
 | `m6_2_rpc_driver.py` | `rpc_driver.py` | live helpers of `m6_rpc_driver`, `m6_1_rpc_driver` |
 | `m6_2_validate.py` | `validate.py` | — (canonical-path constants preserved, Entity 5) |
 | `m6_2_resume.py` | `resume.py` | — |

@@ -2,7 +2,7 @@
 between `BlockDispatchResult.per_rpc_metadata` and the M6.2 per-cell row's
 `seg_*_ms` / `tpot_ms` / `wall_p50_ms_ci_half_width` fields).
 
-Before this aggregator landed, `m6_2_sweep._build_measurement_point`
+Before this aggregator landed, `sweep._build_measurement_point`
 hardcoded all derived fields to `None`, which prevented any cross-cohort
 ingress/egress bisection on a real Modal sweep. These tests pin the
 aggregator's contract so a regression couldn't ship the same scaffolding
@@ -12,7 +12,7 @@ gap silently again.
 from __future__ import annotations
 
 import pytest
-from vllm_grpc_bench.m6_2_sweep import (
+from vllm_grpc_bench.sweep import (
     BlockDispatchResult,
     _aggregate_block_metrics,
     _AggregatedRPCMetrics,
@@ -257,7 +257,7 @@ class TestEmptyMetadata:
 class TestBuildMeasurementPointIntegration:
     def test_successful_block_populates_segments(self) -> None:
         """End-to-end: BlockDispatchResult → M6_2MeasurementPoint with
-        segments populated. This is what `m6_2_sweep` does in the main loop."""
+        segments populated. This is what `sweep` does in the main loop."""
         result = BlockDispatchResult(
             timings_ms=[100.0, 110.0, 105.0, 95.0, 102.0],
             failed_reason=None,

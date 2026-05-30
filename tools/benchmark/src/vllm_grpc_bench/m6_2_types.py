@@ -71,7 +71,7 @@ under the FR-014 / SC-004 pooled-CI WARN bar, while keeping the publish
 sweep at ~13 h wall-clock and ~$20 Modal spend at the bottom of the
 spec's provisional ``$20–$40`` envelope.
 
-The CLI gate (:func:`m6_2_sweep.gate_publish_mode_n`) still REQUIRES an
+The CLI gate (:func:`sweep.gate_publish_mode_n`) still REQUIRES an
 explicit ``--m6_2-n`` flag — this constant documents the canonical pinned
 value but does NOT supply a default, so an operator cannot launch the
 publish sweep at an unintended n by omission."""

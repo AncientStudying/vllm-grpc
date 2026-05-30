@@ -1,6 +1,6 @@
 """M6.2 — Token-Budget Characterization: artifact writer.
 
-Renders the ``M6_2SweepArtifact`` produced by :func:`m6_2_sweep.run_m6_2_sweep`
+Renders the ``M6_2SweepArtifact`` produced by :func:`sweep.run_sweep`
 into the FR-015 publish / validate sibling artifact pair (Markdown + JSON).
 Mirrors :mod:`m6_1_3_reporter`'s structure (FR-028 copy-then-refactor) and adds:
 
@@ -49,9 +49,6 @@ from vllm_grpc_bench.m6_2_anchor_trajectory import (
 from vllm_grpc_bench.m6_2_null_anchor import (
     compute_null_anchor_drift_header_fired,
 )
-from vllm_grpc_bench.m6_2_sweep import (
-    compute_failure_summary_header_fired,
-)
 from vllm_grpc_bench.m6_2_types import (
     M6_2_INTERIOR_CAP_MAX_TOKENS,
     M6_2_VALIDATE_MAX_TOKENS_AXIS,
@@ -60,6 +57,9 @@ from vllm_grpc_bench.m6_2_types import (
     M6_2PromptSource,
     M6_2SweepArtifact,
     M6_2SweepMode,
+)
+from vllm_grpc_bench.sweep import (
+    compute_failure_summary_header_fired,
 )
 
 __all__ = [
@@ -550,7 +550,7 @@ def _render_early_eos_audit(artifact: M6_2SweepArtifact) -> list[str]:
     ``1 - EARLY_EOS_RATIO_THRESHOLD``.
 
     Why this exists: with ``iteration_order="cohort_innermost_block"`` and a
-    per-block ``iter_idx = len(measurements)`` (m6_2_sweep.py), adjacent
+    per-block ``iter_idx = len(measurements)`` (sweep.py), adjacent
     cohort blocks for the same ``(cell, max_tokens)`` draw *consecutive*
     corpus indices via cohort-blind ``assign_symmetric_prompt``. At large
     ``max_tokens`` a "short" / stub prompt that hits natural EOS early
@@ -595,7 +595,7 @@ def _render_early_eos_audit(artifact: M6_2SweepArtifact) -> list[str]:
         f"(threshold `EARLY_EOS_RATIO_THRESHOLD = {EARLY_EOS_RATIO_THRESHOLD}`, "
         f"minimum cap `EARLY_EOS_AUDIT_MIN_MAX_TOKENS = "
         f"{EARLY_EOS_AUDIT_MIN_MAX_TOKENS}`). Each cell draws a single "
-        f"corpus prompt per block (see `m6_2_sweep.py:546` + "
+        f"corpus prompt per block (see `sweep.py:546` + "
         f"`assign_symmetric_prompt`); adjacent cohort blocks for the same "
         f"`(cell, max_tokens)` draw *different* prompts, so per-cohort "
         f"`wall_p50_ms` at high `max_tokens` in `natural_eos` regime "

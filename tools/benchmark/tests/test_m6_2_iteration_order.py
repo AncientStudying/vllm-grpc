@@ -4,15 +4,15 @@ machine check.
 
 from __future__ import annotations
 
-from vllm_grpc_bench.m6_2_sweep import (
-    iter_block_dispatch_order,
-    iter_main_sweep_tuples,
-    verify_iteration_discipline,
-)
 from vllm_grpc_bench.m6_2_types import (
     M6_2_MAX_TOKENS_AXIS,
     M6_2_VALIDATE_MAX_TOKENS_AXIS,
     M6_2MeasurementPoint,
+)
+from vllm_grpc_bench.sweep import (
+    iter_block_dispatch_order,
+    iter_main_sweep_tuples,
+    verify_iteration_discipline,
 )
 
 

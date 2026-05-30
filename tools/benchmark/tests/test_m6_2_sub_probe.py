@@ -23,8 +23,8 @@ from vllm_grpc_bench.m6_2_sub_probe import (
     iter_sub_probe_tuples,
     run_kv_pressure_sub_probe,
 )
-from vllm_grpc_bench.m6_2_sweep import BlockDispatchResult
 from vllm_grpc_bench.m6_2_types import M6_2_SUB_PROBE_MAX_TOKENS, M6_2_SUB_PROBE_N
+from vllm_grpc_bench.sweep import BlockDispatchResult
 
 # --- Stub corpora ----------------------------------------------------------
 
@@ -270,7 +270,7 @@ class _TransientOnceDispatcher:
 def test_in_window_retry_once_succeeds_on_second_attempt() -> None:
     """FR-033: transient first attempt → retry once within the same time
     window. The sub-probe inherits the main-sweep retry policy via
-    :func:`m6_2_sweep.run_block_with_retry`."""
+    :func:`sweep.run_block_with_retry`."""
     dispatcher = _TransientOnceDispatcher()
     rows = asyncio.run(
         run_kv_pressure_sub_probe(

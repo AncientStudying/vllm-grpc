@@ -65,7 +65,7 @@ class TestExplicitNGate:
         assert M6_2_PUBLISH_N == 40
 
     def test_run_publish_without_n_raises_explicit_n_error(self) -> None:
-        from vllm_grpc_bench.m6_2_sweep import gate_publish_mode_n
+        from vllm_grpc_bench.sweep import gate_publish_mode_n
 
         with pytest.raises(ValueError, match="FR-004 explicit-n gate"):
             gate_publish_mode_n(None, "publish")
@@ -74,7 +74,7 @@ class TestExplicitNGate:
         """The canonical n=40 launches cleanly; other n values are
         accepted (operator override) but the canonical value is
         documented in the gate error message."""
-        from vllm_grpc_bench.m6_2_sweep import gate_publish_mode_n
+        from vllm_grpc_bench.sweep import gate_publish_mode_n
 
         assert gate_publish_mode_n(40, "publish") == 40
         assert gate_publish_mode_n(60, "publish") == 60
