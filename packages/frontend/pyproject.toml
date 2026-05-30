@@ -2,11 +2,37 @@
 name = "vllm-grpc-frontend"
 version = "0.1.0"
 requires-python = ">=3.12"
-description = "gRPC frontend server for vllm-grpc"
-dependencies = [
-    "grpcio>=1.65",
-    "vllm-grpc-gen",
+description = "gRPC frontend server exposing vLLM's V1 engine over protobuf/gRPC"
+readme = "README.md"
+license = "MIT"
+keywords = ["vllm", "grpc", "llm", "inference", "server"]
+authors = [{ name = "AncientStudying", email = "bsansom@gmail.com" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+dependencies = [
+    "grpcio>=1.80",
+    "vllm-grpc-gen~=0.1.0",
+]
+
+# vLLM is an opt-in extra, NOT a default dependency (FR-005/FR-005a): the base
+# install stays vLLM-free so it succeeds on platforms without a vLLM wheel; the
+# engine surfaces missing vLLM only at runtime. The frontend uses vLLM's V1
+# `AsyncLLM` API, so the floor is >=0.20.
+[project.optional-dependencies]
+engine = ["vllm>=0.20"]
+
+[project.urls]
+Homepage = "https://github.com/AncientStudying/vllm-grpc"
+Repository = "https://github.com/AncientStudying/vllm-grpc"
+Issues = "https://github.com/AncientStudying/vllm-grpc/issues"
+Changelog = "https://github.com/AncientStudying/vllm-grpc/blob/main/CHANGELOG.md"
+
+[project.scripts]
+vllm-grpc-frontend = "vllm_grpc_frontend.main:main"
 
 [tool.uv.sources]
 vllm-grpc-gen = { workspace = true }

@@ -99,3 +99,33 @@ Planned phases in this project follow a spec-kit cycle before any code is writte
 Artifacts are written to `specs/NNN-feature-name/`. If you are contributing a planned change that spans multiple files, start with `/speckit-specify` and open the spec for review before implementation.
 
 See the [README](README.md#spec-kit) for more detail.
+
+---
+
+## Releasing to PyPI
+
+The four packages (`vllm-grpc-gen`, `vllm-grpc-proxy`, `vllm-grpc-frontend`,
+`vllm-grpc-client`) are versioned and released **in lockstep**. The publish
+pipeline is `.github/workflows/release.yml` (tag-triggered, Trusted Publishing /
+OIDC — no API token in the repo).
+
+1. **Bump the version in all four packages** to the new release, e.g. `0.1.0`:
+   edit `version = "X.Y.Z"` in each `packages/*/pyproject.toml`. Keep them
+   identical — versions are static literals (no VCS-derived versioning). Run
+   `uv lock` and commit the updated `uv.lock`.
+2. **Update release history**: add a `CHANGELOG.md` entry for the version and a
+   matching `docs/RELEASES.md` note. Open a PR and merge once CI is green.
+3. **Tag and push** the release on `main`: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+   The `v*` tag triggers the pipeline: it builds all four distributions
+   (`gen` first) and publishes them to **TestPyPI**.
+4. **Approve the real-index publish**: the `publish-pypi` job is gated behind the
+   protected `pypi-release` GitHub Environment. Review the TestPyPI artifacts,
+   then approve the deployment to publish to **PyPI**.
+5. **Draft release notes** on GitHub for the tag, summarising the CHANGELOG entry.
+
+**Version already on the index?** PyPI/TestPyPI versions are immutable. If a run
+fails partway, bump the version (all four, in lockstep) and push a new tag; for
+TestPyPI dry-runs you can append a `.devN` suffix so the index accepts the
+re-upload. One-time operator prerequisites: configure the Trusted Publisher for
+each package on both indexes and create the `pypi-release` environment with
+required reviewers.

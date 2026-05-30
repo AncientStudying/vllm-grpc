@@ -2,11 +2,27 @@
 name = "vllm-grpc-client"
 version = "0.1.0"
 requires-python = ">=3.12"
-description = "Async gRPC client for the vllm-grpc frontend"
-dependencies = [
-    "grpcio>=1.65",
-    "vllm-grpc-gen",
+description = "Lean async gRPC client for the vllm-grpc frontend"
+readme = "README.md"
+license = "MIT"
+keywords = ["vllm", "grpc", "llm", "inference", "client"]
+authors = [{ name = "AncientStudying", email = "bsansom@gmail.com" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+dependencies = [
+    "grpcio>=1.80",
+    "vllm-grpc-gen~=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/AncientStudying/vllm-grpc"
+Repository = "https://github.com/AncientStudying/vllm-grpc"
+Issues = "https://github.com/AncientStudying/vllm-grpc/issues"
+Changelog = "https://github.com/AncientStudying/vllm-grpc/blob/main/CHANGELOG.md"
 
 [tool.uv.sources]
 vllm-grpc-gen = { workspace = true }

@@ -70,6 +70,31 @@ Each demo reads an environment variable for the endpoint:
 
 ---
 
+## Install (PyPI)
+
+The four packages publish to PyPI independently. Pick the one for your role —
+the shared `vllm-grpc-gen` stubs package installs transitively, so you never
+install it directly.
+
+| Role | Install | What you get |
+|------|---------|--------------|
+| **SDK consumer** | `pip install vllm-grpc-client` | Lean async gRPC client; no web-server deps |
+| **Proxy operator** | `pip install vllm-grpc-proxy` | REST→gRPC proxy + `vllm-grpc-proxy` console script |
+| **Frontend operator** | `pip install vllm-grpc-frontend` | gRPC server + `vllm-grpc-frontend` console script |
+
+**Frontend + vLLM engine.** `pip install vllm-grpc-frontend` does **not** pull
+vLLM, so it installs on any platform. The frontend drives vLLM's **V1 `AsyncLLM`**
+API, which needs `vllm>=0.20`. Get it via the opt-in extra:
+
+```bash
+pip install "vllm-grpc-frontend[engine]"     # pulls vllm>=0.20
+```
+
+…or install vLLM yourself for your platform (e.g. macOS uses `vllm-metal`). A
+missing engine surfaces only at runtime, never as an install failure.
+
+---
+
 ## Benchmark Headlines
 
 The structural, topology-immune wins from M1 (Modal A10G, vLLM 0.20.0, `Qwen/Qwen3-0.6B`): gRPC-direct cuts chat completion response bytes by **89%** (611 B → 65 B) and embed request bytes by **25%** (raw float32 vs base64 JSON). Latency results vary by deployment topology — same-fabric (M5.1) vs managed-edge-provider (M5.2) findings apply to different audiences. **As of M6.1.2 the topology is captured machine-readably in every sweep artifact** under the `network_paths` top-level key, so verdict reads no longer depend on a static assumption about which CSP a cohort lands in (a 9-hour spike → validation-sweep drift on 2026-05-17 demonstrated why per-sweep evidence is necessary). See [`ANALYSIS.md`](ANALYSIS.md) for the per-milestone narrative + topology guide and [`contracts/instrumentation.md`](contracts/instrumentation.md) for the artifact-schema reference.
@@ -93,7 +118,7 @@ The bytes-axis wins from M1 (chat response −89%, embed request −25%) are top
 
 ## Roadmap
 
-Milestone-by-milestone findings live in [`ANALYSIS.md`](ANALYSIS.md); per-milestone benchmark reports under [`docs/benchmarks/`](docs/benchmarks/) are the source-data record.
+Milestone-by-milestone findings live in [`ANALYSIS.md`](ANALYSIS.md); per-milestone benchmark reports under [`docs/benchmarks/`](docs/benchmarks/) are the source-data record. The milestone IDs (M1, M5.1, M5.2, …) and shorthand (TTFT, TPOT, KV, CSP, cohort, cell, `c=N`) used below are defined once in the [ANALYSIS.md glossary](ANALYSIS.md#glossary).
 
 - **M1** — Three access paths benchmarked on Modal A10G; 89% chat / 25% embed wire-size wins. [`ANALYSIS.md § M1`](ANALYSIS.md#m1--foundation).
 - **M2** — Cross-repo ground-truth research practice formalised (vLLM + grpcio). [`ANALYSIS.md § M2`](ANALYSIS.md#m2--cross-repo-ground-truth-research).
