@@ -98,7 +98,6 @@ def test_grpc_chat_request_built_from_corpus_sample_carries_per_sample_fields() 
     """When a corpus sample is provided to ``_send_chat_rpc``, the gRPC
     request payload's max_tokens, temperature, seed come from the sample
     — not from a hardcoded default."""
-    from vllm_grpc_bench.m5_1_grpc_cohort import _send_chat_rpc  # noqa: F401  (import as guard)
 
     sample = RequestSample(
         id="corpus-x",

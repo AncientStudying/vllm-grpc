@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from vllm_grpc_bench.m6_1_2_types import M6_1_2CohortKind
 from vllm_grpc_bench.resume import (
     RESUME_SCHEMA_VERSION,
     CheckpointHeader,
@@ -37,6 +36,7 @@ from vllm_grpc_bench.resume import (
     write_checkpoint_header,
 )
 from vllm_grpc_bench.sweep_types import M6_2AnchorLatencySnapshot, M6_2MeasurementPoint
+from vllm_grpc_bench.types import CohortKind as M6_1_2CohortKind
 
 # --- Helpers ---------------------------------------------------------------
 

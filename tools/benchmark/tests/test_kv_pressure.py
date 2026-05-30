@@ -20,8 +20,8 @@ from vllm_grpc_bench.crossover import (
     SubProbeBlockResult,
     compute_kv_pressure_inference,
 )
-from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS
 from vllm_grpc_bench.sweep_types import M6_2_SUB_PROBE_N
+from vllm_grpc_bench.types import COHORTS as M6_1_2_COHORTS
 
 
 def _row(

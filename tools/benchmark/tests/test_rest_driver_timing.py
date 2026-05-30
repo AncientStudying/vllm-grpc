@@ -15,11 +15,11 @@ import json
 
 import httpx
 import pytest
-from vllm_grpc_bench.m6_1_types import M6_1Cell
 from vllm_grpc_bench.rpc_driver import (
     _drive_rest_chat_stream_m6_2,
     _drive_rest_embed_m6_2,
 )
+from vllm_grpc_bench.types import Cell as M6_1Cell
 
 
 def _valid_m6_1_1_sub_object() -> dict[str, int]:

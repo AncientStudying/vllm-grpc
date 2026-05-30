@@ -16,7 +16,6 @@ from vllm_grpc_bench.corpus import (
     CompletionEmbedSample,
     RequestSample,
 )
-from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS
 from vllm_grpc_bench.sub_probe import (
     SUB_PROBE_CELL_IDS,
     SUB_PROBE_CELL_TYPES,
@@ -25,6 +24,7 @@ from vllm_grpc_bench.sub_probe import (
 )
 from vllm_grpc_bench.sweep import BlockDispatchResult
 from vllm_grpc_bench.sweep_types import M6_2_SUB_PROBE_MAX_TOKENS, M6_2_SUB_PROBE_N
+from vllm_grpc_bench.types import COHORTS as M6_1_2_COHORTS
 
 # --- Stub corpora ----------------------------------------------------------
 

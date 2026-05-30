@@ -23,8 +23,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2NetworkPath
-from vllm_grpc_bench.m6_1_types import M6_1_CELLS
 from vllm_grpc_bench.reporter import (
     EARLY_EOS_AUDIT_MIN_MAX_TOKENS,
     EARLY_EOS_RATIO_THRESHOLD,
@@ -50,6 +48,9 @@ from vllm_grpc_bench.sweep_types import (
     M6_2SweepArtifact,
     M6_2SweepMode,
 )
+from vllm_grpc_bench.types import CELLS as M6_1_CELLS
+from vllm_grpc_bench.types import COHORTS as M6_1_2_COHORTS
+from vllm_grpc_bench.types import M6_1_2NetworkPath
 
 
 def _measurement(

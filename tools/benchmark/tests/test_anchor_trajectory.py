@@ -10,9 +10,10 @@ from vllm_grpc_bench.anchor_trajectory import (
     compute_insufficient_snapshots_header_fired,
     compute_intra_sweep_drift_header_fired,
 )
-from vllm_grpc_bench.m6_1_2_types import M6_1_2_COHORTS, M6_1_2CohortKind
 from vllm_grpc_bench.sweep import should_run_anchor_at
 from vllm_grpc_bench.sweep_types import M6_2AnchorLatencySnapshot, M6_2AnchorLatencyTrajectory
+from vllm_grpc_bench.types import COHORTS as M6_1_2_COHORTS
+from vllm_grpc_bench.types import CohortKind as M6_1_2CohortKind
 
 
 def _stub_rpc_driver(

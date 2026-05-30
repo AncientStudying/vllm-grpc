@@ -100,7 +100,7 @@ class TestValidityGating:
     """FR-004: callers gate verdict emission based on the measured median."""
 
     def _record(self, median_ms: float) -> object:
-        from vllm_grpc_bench.m3_types import RTTRecord
+        from vllm_grpc_bench.types import RTTRecord
 
         # samples is the median repeated; the probe's percentile math is
         # exercised elsewhere — here we only care about the gating helpers.

@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 from vllm_grpc_bench.channel_config import M1_BASELINE
-from vllm_grpc_bench.m3_types import BenchmarkCell
 from vllm_grpc_bench.mock_engine import MockEngine, MockEngineConfig
+from vllm_grpc_bench.types import BenchmarkCell
 
 
 class TestEmbeddingShape:
