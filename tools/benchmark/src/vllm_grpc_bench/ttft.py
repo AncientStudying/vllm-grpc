@@ -9,7 +9,7 @@ come from the same code path. M3's helper continues to delegate here.
 from __future__ import annotations
 
 from vllm_grpc_bench.ci import estimate
-from vllm_grpc_bench.m3_types import RunCohort
+from vllm_grpc_bench.types import RunCohort
 
 
 def ttft_samples(cohort: RunCohort) -> list[float]:

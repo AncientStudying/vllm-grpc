@@ -25,7 +25,7 @@ import time
 import grpc
 from vllm_grpc.v1 import health_pb2, health_pb2_grpc
 
-from vllm_grpc_bench.m3_types import RTTRecord
+from vllm_grpc_bench.types import RTTRecord
 
 _DEFAULT_PROBE_N: int = 32
 
