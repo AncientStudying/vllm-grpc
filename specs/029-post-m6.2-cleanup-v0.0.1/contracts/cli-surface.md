@@ -1,13 +1,23 @@
 # Contract: CLI surface after de-prefix (FR-018a, SC-009)
 
-The harness CLI is the harness's only operator-facing interface. v0.0.1 flattens it to a single milestone-agnostic sweep. **BC break** — recoverable via the M6.2 tag.
+The harness CLI is the harness's only operator-facing interface. v0.0.1 removes the
+milestone CLI and de-prefixes the surviving sweep. **BC break** — recoverable via the
+M6.2 tag.
 
-## Default invocation
+> **Reconciled in T018 (ADR 0006).** The original wording ("the de-prefixed sweep becomes
+> the *default* invocation") collided with the retained, README/Makefile-documented `bench`
+> (proxy-vs-native) no-arg default + `compare*` subcommands (Entity 3/8). Decision: **keep
+> `bench` as the no-arg default + `compare*` subcommands; the de-prefixed sweep is a
+> `sweep` subcommand.** The testable invariant — *zero `--m[0-9]` flags* — is unchanged.
+
+## Invocation
 
 Before: `python -m vllm_grpc_bench --m6_2 --m6_2-modal-region=eu-west-1 --m6_2-n=100`
-After:  `python -m vllm_grpc_bench --modal-region=eu-west-1 --n=100`
+After:  `python -m vllm_grpc_bench sweep --modal-region=eu-west-1 --n=100`
 
-The `--m6_2` selector is **dropped**; running the module *is* running the (only) sweep. Subcommands are de-prefixed flags on that default invocation.
+The `--m6_2` selector is **dropped**; the sweep is the **`sweep` subcommand** with
+de-prefixed flags. The no-arg default remains the `bench` proxy-vs-native benchmark;
+`compare`/`compare-cross`/`compare-three-way` remain subcommands.
 
 ## Flag rename table (the surviving M6.2 operator flags)
 
@@ -38,7 +48,7 @@ All flags and argparse subparsers / `args.mN` dispatch branches for: `--m3`, `--
 
 ## Contract assertions (testable)
 
-1. `python -m vllm_grpc_bench --help` lists **zero** flags matching `--m[0-9]`.
+1. `python -m vllm_grpc_bench --help` (and `… sweep --help`) list **zero** flags matching `--m[0-9]`.
 2. No `args.m3`/`args.m4`/…/`args.m6_1_3` attribute reference remains in `__main__.py`.
-3. `python -m vllm_grpc_bench --validate --skip-deploy` runs the fake-backed validate smoke end-to-end (FR-013 / SC-006).
-4. The default invocation (no `--m6_2` selector) dispatches the de-prefixed sweep.
+3. `python -m vllm_grpc_bench sweep --validate --skip-deploy` runs the fake-backed validate smoke end-to-end (FR-013 / SC-006).
+4. The `sweep` subcommand dispatches the de-prefixed sweep (`run_m6_2`); the no-arg default dispatches `bench` (`_run`); `compare*` subcommands are retained.

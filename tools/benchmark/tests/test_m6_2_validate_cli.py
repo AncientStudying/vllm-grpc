@@ -1,7 +1,7 @@
 """T032 — M6.2 validate CLI integration test.
 
 Exercises ``--m6_2-validate --m6_2-skip-deploy`` end-to-end against the stub
-RPC driver wired into :mod:`m6_2_validate`. Asserts the validate-sibling
+RPC driver wired into :mod:`validate`. Asserts the validate-sibling
 artifact JSON:
 
 - Contains exactly 72 measured rows + 72 ``not_validated`` placeholder rows
@@ -30,20 +30,19 @@ def _build_validate_args(*, md_path: Path, json_path: Path) -> argparse.Namespac
     """Construct the ``argparse.Namespace`` shape ``run_m6_2`` expects for
     ``--m6_2-validate --m6_2-skip-deploy`` invocations."""
     return argparse.Namespace(
-        m6_2=False,
-        m6_2_validate=True,
-        m6_2_n=None,  # validate gates this to 20 internally
-        m6_2_modal_region="eu-west-1",
-        m6_2_modal_token_env="MODAL_BENCH_TOKEN",
-        m6_2_modal_endpoint=None,
-        m6_2_skip_deploy=True,
-        m6_2_base_seed=42,
-        m6_2_model="Qwen/Qwen3-8B",
-        m6_2_m6_1_3_baseline="docs/benchmarks/m6_1_3-attribution-closure.json",
-        m6_2_report_out=md_path,
-        m6_2_report_json_out=json_path,
-        m6_2_events_sidecar_out=None,
-        m6_2_allow_engine_mismatch=False,
+        validate=True,
+        n=None,  # validate gates this to 20 internally
+        modal_region="eu-west-1",
+        modal_token_env="MODAL_BENCH_TOKEN",
+        modal_endpoint=None,
+        skip_deploy=True,
+        base_seed=42,
+        model="Qwen/Qwen3-8B",
+        baseline="docs/benchmarks/m6_1_3-attribution-closure.json",
+        report_out=md_path,
+        report_json_out=json_path,
+        events_sidecar_out=None,
+        allow_engine_mismatch=False,
     )
 
 
@@ -250,13 +249,12 @@ def test_validate_protocol_crossover_has_six_records(tmp_path: Path) -> None:
     assert "Validate-mode crossover analysis is restricted" in md
 
 
-def test_validate_cli_refuses_m6_2_with_unset_n(tmp_path: Path) -> None:
-    """FR-004 round-3 deferral: ``--m6_2`` (publish) must REFUSE to start
-    when ``--m6_2-n`` is unset. Validate mode is exempt (pins n=20)."""
+def test_validate_cli_refuses_publish_with_unset_n(tmp_path: Path) -> None:
+    """FR-004 round-3 deferral: publish mode (the default invocation) must
+    REFUSE to start when ``--n`` is unset. Validate mode is exempt (pins n=20)."""
     md_path = tmp_path / "m6_2-token-budget.md"
     json_path = tmp_path / "m6_2-token-budget.json"
     args = _build_validate_args(md_path=md_path, json_path=json_path)
-    args.m6_2_validate = False
-    args.m6_2 = True
+    args.validate = False
     exit_code = run_m6_2(args, sweep_mode="publish")
-    assert exit_code == 5, "publish without --m6_2-n must fail with exit 5"
+    assert exit_code == 5, "publish without --n must fail with exit 5"

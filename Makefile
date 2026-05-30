@@ -6,7 +6,7 @@ FRONTEND_ADDR ?= localhost:$(FRONTEND_PORT)
 BENCH_PROXY_PORT ?= 8900
 BENCH_NATIVE_PORT ?= 8901
 
-.PHONY: proto bootstrap lint typecheck test check run-proxy run-frontend bench bench-ci bench-compare download-weights smoke-grpc-frontend smoke-rest modal-serve-frontend bench-modal regen-bench-reports
+.PHONY: proto bootstrap lint typecheck test check run-proxy run-frontend bench bench-ci bench-compare sweep sweep-validate download-weights smoke-grpc-frontend smoke-rest modal-serve-frontend bench-modal regen-bench-reports
 
 proto:
 	uv run python -m grpc_tools.protoc \
@@ -72,6 +72,16 @@ bench-ci:
 
 bench-compare:
 	uv run python -m vllm_grpc_bench compare $(BASELINE) $(RESULTS) --threshold $(or $(THRESHOLD),0.10)
+
+# Token-budget characterization sweep (de-prefixed M6.2; v0.0.1 FR-018a).
+# Publish sweep: operator MUST pass N (no silent default) + Modal config via SWEEP_ARGS,
+# e.g. `make sweep N=40 SWEEP_ARGS="--modal-region=eu-west-1"`.
+sweep:
+	uv run python -m vllm_grpc_bench sweep --n=$(N) $(SWEEP_ARGS)
+
+# Validate (wiring-confidence) sweep: n is hard-pinned to 20 internally.
+sweep-validate:
+	uv run python -m vllm_grpc_bench sweep --validate $(SWEEP_ARGS)
 
 download-weights:
 	uv run --with modal modal run scripts/python/modal_download_weights.py

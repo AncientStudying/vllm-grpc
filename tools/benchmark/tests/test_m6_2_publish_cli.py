@@ -40,20 +40,19 @@ def _build_publish_args(
     matches :data:`sweep_types.M6_2_PUBLISH_N` (40) so the test exercises
     the round-3-pinned production value verbatim."""
     return argparse.Namespace(
-        m6_2=True,
-        m6_2_validate=False,
-        m6_2_n=n,
-        m6_2_modal_region="eu-west-1",
-        m6_2_modal_token_env="MODAL_BENCH_TOKEN",
-        m6_2_modal_endpoint=None,
-        m6_2_skip_deploy=True,
-        m6_2_base_seed=42,
-        m6_2_model="Qwen/Qwen3-8B",
-        m6_2_m6_1_3_baseline="docs/benchmarks/m6_1_3-attribution-closure.json",
-        m6_2_report_out=md_path,
-        m6_2_report_json_out=json_path,
-        m6_2_events_sidecar_out=None,
-        m6_2_allow_engine_mismatch=False,
+        validate=False,
+        n=n,
+        modal_region="eu-west-1",
+        modal_token_env="MODAL_BENCH_TOKEN",
+        modal_endpoint=None,
+        skip_deploy=True,
+        base_seed=42,
+        model="Qwen/Qwen3-8B",
+        baseline="docs/benchmarks/m6_1_3-attribution-closure.json",
+        report_out=md_path,
+        report_json_out=json_path,
+        events_sidecar_out=None,
+        allow_engine_mismatch=False,
     )
 
 

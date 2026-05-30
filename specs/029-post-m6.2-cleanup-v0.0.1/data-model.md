@@ -60,10 +60,11 @@ The "entities" of a refactor are **modules**, **symbols**, **tests**, **CLI flag
 
 | Class | Action |
 |---|---|
-| `--m3 … --m6_1_3` flag groups + dispatch | **remove** (call deleted code) |
-| `--m6_2` selector | **drop** (sweep becomes default invocation) |
-| `--m6_2-<x>` operator flags | **rename** → `--<x>` |
-| Invariant | `--help` shows zero milestone-prefixed flags (SC-009) |
+| `--m3 … --m6_1_3` flag groups + `_run_mN` dispatch | **remove** (call deleted code) |
+| `--m6_2` selector | **drop**; the sweep becomes a **`sweep` subcommand** (ADR 0006 — not the no-arg default; that stays `bench`) |
+| `--m6_2-<x>` operator flags | **rename** → `--<x>` under the `sweep` subparser (+ arg dests `m6_2_x`→`x`) |
+| `bench` (no-arg default) + `compare`/`compare-cross`/`compare-three-way` subcommands | **retained** (Entity 3/8; `make bench`/`bench-ci`/`bench-compare` unchanged) |
+| Invariant | `--help` (+ `sweep --help`) shows zero milestone-prefixed flags (SC-009) |
 
 ## Entity 7 — Deleted legacy modules (zero live importers)
 

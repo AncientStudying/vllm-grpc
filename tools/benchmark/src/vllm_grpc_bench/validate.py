@@ -101,14 +101,14 @@ def infer_output_path(
     overrides take precedence; otherwise the path defaults to the
     canonical (publish) or validate sibling.
     """
-    explicit_md = getattr(args, "m6_2_report_out", None)
-    explicit_json = getattr(args, "m6_2_report_json_out", None)
+    explicit_md = getattr(args, "report_out", None)
+    explicit_json = getattr(args, "report_json_out", None)
     if kind == "md" and explicit_md is not None:
         return str(explicit_md)
     if kind == "json" and explicit_json is not None:
         return str(explicit_json)
 
-    sweep_mode: M6_2SweepMode = "validate" if getattr(args, "m6_2_validate", False) else "publish"
+    sweep_mode: M6_2SweepMode = "validate" if getattr(args, "validate", False) else "publish"
     if sweep_mode == "validate":
         return _VALIDATE_MD if kind == "md" else _VALIDATE_JSON
     return _CANONICAL_MD if kind == "md" else _CANONICAL_JSON
@@ -1620,7 +1620,7 @@ async def _run_modal_backed(
     from vllm_grpc_bench.seq_len import pin_seq_len_at_sweep_start
     from vllm_grpc_bench.sweep import M6_2SweepInputs
 
-    token_env = str(getattr(args, "m6_2_modal_token_env", "MODAL_BENCH_TOKEN"))
+    token_env = str(getattr(args, "modal_token_env", "MODAL_BENCH_TOKEN"))
 
     pinned_seq_len = pin_seq_len_at_sweep_start(model_identifier)
     print(
@@ -1838,8 +1838,8 @@ def _resolve_resume_state(
         write_checkpoint_header,
     )
 
-    resume_path = getattr(args, "m6_2_resume", None)
-    checkpoint_out = getattr(args, "m6_2_checkpoint_out", None)
+    resume_path = getattr(args, "resume", None)
+    checkpoint_out = getattr(args, "checkpoint_out", None)
 
     if resume_path is not None:
         try:
@@ -1937,7 +1937,7 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
         gate_publish_mode_n,
     )
 
-    args_m6_2_n: int | None = getattr(args, "m6_2_n", None)
+    args_m6_2_n: int | None = getattr(args, "n", None)
     try:
         n_per_point = gate_publish_mode_n(args_m6_2_n, sweep_mode)
     except ValueError as exc:
@@ -1964,10 +1964,10 @@ def run_m6_2(args: argparse.Namespace, *, sweep_mode: M6_2SweepMode) -> int:
     axis = _resolve_axis(sweep_mode)
     md_path = Path(infer_output_path(args, kind="md"))
     json_path = Path(infer_output_path(args, kind="json"))
-    base_seed = int(getattr(args, "m6_2_base_seed", 42))
-    modal_region = str(getattr(args, "m6_2_modal_region", "eu-west-1"))
-    model_identifier = str(getattr(args, "m6_2_model", "Qwen/Qwen3-8B"))
-    skip_deploy = bool(getattr(args, "m6_2_skip_deploy", False))
+    base_seed = int(getattr(args, "base_seed", 42))
+    modal_region = str(getattr(args, "modal_region", "eu-west-1"))
+    model_identifier = str(getattr(args, "model", "Qwen/Qwen3-8B"))
+    skip_deploy = bool(getattr(args, "skip_deploy", False))
 
     # Phase-1 resume / checkpoint resolution. Three cases:
     #
