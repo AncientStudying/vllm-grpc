@@ -4,6 +4,8 @@ The gRPC frontend server for [vllm-grpc](https://github.com/AncientStudying/vllm
 It wraps vLLM's V1 `AsyncLLM` engine and serves the project's protobuf
 `ChatService`, `CompletionsService`, and `HealthService` over gRPC.
 
+> **Affiliation:** vllm-grpc is an independent, community project and is not affiliated with, endorsed by, or sponsored by the vLLM project. "vLLM" is used here only to identify the inference engine this frontend works with.
+
 ## Install
 
 ```bash

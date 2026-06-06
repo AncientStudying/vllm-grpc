@@ -2,6 +2,8 @@
 
 A Protobuf/gRPC frontend for vLLM that measures wire-size and protocol-overhead tradeoffs for LLM inference. The core thesis: replacing the OpenAI JSON wire format with protobuf-over-gRPC reduces response size by up to 89% for chat completions and 25% for embed request payloads.
 
+> **Affiliation:** vllm-grpc is an independent, community project and is not affiliated with, endorsed by, or sponsored by the vLLM project or its maintainers. "vLLM" is used here only to identify the inference engine this frontend works with.
+
 ---
 
 ## What is this?
@@ -206,8 +208,25 @@ ANALYSIS.md                    # Top-level milestone-by-milestone findings (M1�
 contracts/
   instrumentation.md           # Canonical artifact-schema reference (dispatch_mode, network_paths, cohort_set, ...)
 
-specs/                         # spec-kit planning artifacts (per-feature)
+specs/                         # spec-kit planning artifacts (maintainers' internal workflow — optional, see below)
 ```
+
+---
+
+## Spec-Kit
+
+> **Optional — not required to contribute.** The maintainers use [spec-kit](https://github.com/github/spec-kit) to plan larger phases of work, and you'll see its artifacts under `specs/NNN-feature-name/` and a `NNN-` branch-numbering scheme on some branches. None of this is a prerequisite for contributing — most fixes, docs changes, and self-contained features just need a branch, a passing `make check`, and a PR. See [CONTRIBUTING.md](CONTRIBUTING.md#branch-naming) for the (permissive) branch and PR conventions.
+
+If you *do* want to use spec-kit for a large, multi-file change (and have the tooling installed), the cycle is:
+
+```
+/speckit-specify   → create feature specification (spec.md)
+/speckit-plan      → generate implementation plan + research
+/speckit-tasks     → generate ordered task list
+/speckit-implement → execute the task list
+```
+
+Artifacts are written to `specs/NNN-feature-name/`.
 
 ---
 

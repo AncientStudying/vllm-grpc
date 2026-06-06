@@ -6,6 +6,8 @@ frontend. It exposes an HTTP surface (chat + completions endpoints and a
 `vllm-grpc-frontend` server. Use it when you want REST clients to reach the gRPC
 backend.
 
+> **Affiliation:** vllm-grpc is an independent, community project and is not affiliated with, endorsed by, or sponsored by the vLLM project. "vLLM" is used here only to identify the inference engine this project works with.
+
 ## Install
 
 ```bash

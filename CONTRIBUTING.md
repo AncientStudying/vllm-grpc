@@ -50,15 +50,15 @@ All three CI jobs must pass before any PR is merged: lint/type-check, unit tests
 
 ## Branch Naming
 
-Branches follow the `NNN-short-description` convention, where `NNN` is the next sequential spec number:
+Use a short, descriptive branch name that conveys the change — there's no required format. Common prefixes like `fix/`, `feat/`, `docs/`, or `chore/` are welcome but optional:
 
 ```
-013-contributing-roadmap
-012-demo-polish
-011-phase-6.1
+fix/proxy-timeout
+feat/streaming-embeds
+docs/contributing-cleanup
 ```
 
-Check `specs/` to find the current highest number. New feature branches should increment from there.
+> **Note:** You may see existing branches and `specs/` directories that use a `NNN-short-description` numbering scheme (e.g. `013-contributing-roadmap`). That convention comes from the maintainers' internal spec-kit workflow (see below) and is **not** required for outside contributions.
 
 ---
 
@@ -67,7 +67,7 @@ Check `specs/` to find the current highest number. New feature branches should i
 - CI must pass (all three jobs: lint, tests, proto check).
 - The PR description should explain **why** the change is needed, not just what changed. The diff shows the what.
 - Keep each PR to one concern. Unrelated fixes belong in a separate branch.
-- Reference the relevant spec directory (e.g., `specs/013-contributing-roadmap/`) if the change was planned through the spec-kit workflow.
+- If your change happens to be planned through the spec-kit workflow, feel free to reference the relevant spec directory (e.g., `specs/013-contributing-roadmap/`) — but this is optional and not expected for most contributions.
 
 ---
 
@@ -85,9 +85,11 @@ For feature requests, describe the use case and how it fits the project's wire-o
 
 ---
 
-## Spec-Kit Workflow
+## Spec-Kit Workflow (optional)
 
-Planned phases in this project follow a spec-kit cycle before any code is written:
+The maintainers use a spec-kit cycle to plan larger phases of work, and you'll find its artifacts under `specs/NNN-feature-name/`. **This is entirely optional and not a prerequisite for contributing** — most fixes, docs changes, and self-contained features need nothing more than a branch, a passing `make check`, and a PR.
+
+If you *want* to use it for a large, multi-file change (and you have the spec-kit tooling installed), the cycle is:
 
 ```
 /speckit-specify   → create feature specification (spec.md)
@@ -95,8 +97,6 @@ Planned phases in this project follow a spec-kit cycle before any code is writte
 /speckit-tasks     → generate ordered task list
 /speckit-implement → execute the task list
 ```
-
-Artifacts are written to `specs/NNN-feature-name/`. If you are contributing a planned change that spans multiple files, start with `/speckit-specify` and open the spec for review before implementation.
 
 See the [README](README.md#spec-kit) for more detail.
 

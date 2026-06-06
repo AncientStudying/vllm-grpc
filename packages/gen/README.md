@@ -8,6 +8,8 @@ service definitions (`vllm_grpc.v1`) that every other package imports.
 The stubs are produced at build time from the `proto/` source of truth (via a
 `protoc` build hook); they are never committed to the repository.
 
+> **Affiliation:** vllm-grpc is an independent, community project and is not affiliated with, endorsed by, or sponsored by the vLLM project. "vLLM" is used here only to identify the inference engine this project works with.
+
 ## Install
 
 ```bash

@@ -5,6 +5,8 @@ frontend. It speaks the project's protobuf `ChatService` and `CompletionsService
 directly over gRPC — no web-server stack, no `fastapi`/`uvicorn` pulled in. The
 generated stubs (`vllm-grpc-gen`) install transitively.
 
+> **Affiliation:** vllm-grpc is an independent, community project and is not affiliated with, endorsed by, or sponsored by the vLLM project. "vLLM" is used here only to identify the inference engine this project works with.
+
 ## Install
 
 ```bash

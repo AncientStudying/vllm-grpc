@@ -2,7 +2,7 @@
 name = "vllm-grpc"
 version = "0.0.0"
 requires-python = ">=3.12,<3.13"
-description = "Protobuf/gRPC frontend for vLLM"
+description = "A Protobuf/gRPC frontend for the vLLM inference engine"
 readme = "README.md"
 dependencies = []
 
