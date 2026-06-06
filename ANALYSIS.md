@@ -6,6 +6,28 @@ The per-milestone benchmark reports under [`docs/benchmarks/`](docs/benchmarks/)
 
 > **Reading order tip.** M1–M4 measure single-protocol or pre-REST-vs-gRPC questions; their findings are largely topology-independent. M5 onward measures cross-host and REST-vs-gRPC dynamics where deployment topology starts to matter. The [Topology guide](#topology-guide--which-milestone-result-applies-to-your-deployment) at the bottom names which M5-era milestone applies to which deployment shape.
 
+### Glossary
+
+Shorthand used throughout this document and the per-milestone reports. Each term
+is defined here once; later sections use it without re-glossing.
+
+| Term | Meaning |
+|------|---------|
+| **Milestone IDs** (M1, M3, M5.1, M5.2, M6.1.2, …) | Sequential research deliverables; each has a section below and a `milestone/*` git tag. Sub-numbers (M5.1, M6.1.2) are follow-ups that refine an earlier milestone. |
+| **TTFT** | Time To First Token — latency from request send to the first streamed token. |
+| **TPOT** | Time Per Output Token — steady-state per-token generation latency after the first. |
+| **RPC** | Remote Procedure Call — one request/response over gRPC. |
+| **KV cache** | Key/Value attention cache vLLM holds in GPU memory during generation. |
+| **CSP** | Cloud Service Provider (AWS, Azure, …); relevant because routing between CSPs changes the network path. |
+| **cohort** | One protocol/transport configuration under test (e.g. `default_grpc`, `rest_https_edge`, `rest_plain_tcp`). |
+| **cell** | One workload point in the matrix — a (request type, concurrency `c`) pair, e.g. `chat_stream_c8`. |
+| **c=N** | Concurrency: N requests dispatched in flight at once. |
+| **wall_p50 / wall_p95** | 50th / 95th percentile wall-clock latency across a block of requests. |
+| **seg_\* / segment decomposition** | Per-RPC latency broken into named segments (queue, prefill, ingress, egress, …) to attribute where time goes. |
+| **anchor / null anchor** | A fixed reference workload point (`max_tokens` ∈ {10, 50}) kept stable across milestones for cross-baseline comparison. |
+| **same-fabric vs managed-edge** | Two deployment topologies: client+server in one network vs client reaching a managed provider through its HTTPS edge POP. |
+| **OIDC** | OpenID Connect — the token-less "Trusted Publishing" auth GitHub Actions uses to publish to PyPI. |
+
 ---
 
 ## M1 — Foundation

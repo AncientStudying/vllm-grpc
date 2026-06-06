@@ -1,0 +1,75 @@
+name: Release
+
+# Tag-triggered publish pipeline (FR-011). Pushing a `v*` tag builds all four
+# distributions, publishes them to TestPyPI, then — after a manual approval
+# gate — to real PyPI. Authentication is Trusted Publishing (OIDC); no API
+# token is ever stored in the repo (FR-012).
+#
+# Prerequisites (operator, one-time): configure the Trusted Publisher for each
+# of vllm-grpc-gen, vllm-grpc-proxy, vllm-grpc-frontend, vllm-grpc-client on
+# both test.pypi.org and pypi.org, and create a `pypi-release` GitHub
+# Environment with required reviewers.
+#
+# Re-run strategy for the "version already on index" edge case: a PyPI/TestPyPI
+# version is immutable once uploaded. To re-publish after a failed partial run,
+# bump the version (all four packages in lockstep — see CONTRIBUTING.md) and
+# push a new tag. For TestPyPI dry-runs, append a `.devN` suffix to the version
+# so the index accepts the re-upload.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    # Builds wheel + sdist for all four packages — gen first so it is available
+    # to satisfy the leaf packages downstream (FR-011/FR-015/SC-001).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Build vllm-grpc-gen (first — leaf packages resolve it)
+        run: uv build --package vllm-grpc-gen --out-dir dist
+      - name: Build vllm-grpc-proxy
+        run: uv build --package vllm-grpc-proxy --out-dir dist
+      - name: Build vllm-grpc-frontend
+        run: uv build --package vllm-grpc-frontend --out-dir dist
+      - name: Build vllm-grpc-client
+        run: uv build --package vllm-grpc-client --out-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-testpypi:
+    # FR-013 — publish to the test index first. OIDC only, no stored token.
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    # FR-014 — real-index publish, gated behind a protected environment with
+    # required reviewers (manual approval). Runs only after TestPyPI succeeds.
+    needs: publish-testpypi
+    runs-on: ubuntu-latest
+    environment: pypi-release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

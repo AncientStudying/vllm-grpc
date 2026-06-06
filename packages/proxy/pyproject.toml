@@ -2,13 +2,32 @@
 name = "vllm-grpc-proxy"
 version = "0.1.0"
 requires-python = ">=3.12"
-description = "REST proxy server for vllm-grpc"
-dependencies = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
-    "grpcio>=1.65",
-    "vllm-grpc-gen",
+description = "REST-to-gRPC proxy server for the vllm-grpc frontend"
+readme = "README.md"
+license = "MIT"
+keywords = ["vllm", "grpc", "llm", "inference", "proxy", "rest"]
+authors = [{ name = "AncientStudying", email = "bsansom@gmail.com" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+dependencies = [
+    "fastapi>=0.136",
+    "uvicorn[standard]>=0.46",
+    "grpcio>=1.80",
+    "vllm-grpc-gen~=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/AncientStudying/vllm-grpc"
+Repository = "https://github.com/AncientStudying/vllm-grpc"
+Issues = "https://github.com/AncientStudying/vllm-grpc/issues"
+Changelog = "https://github.com/AncientStudying/vllm-grpc/blob/main/CHANGELOG.md"
+
+[project.scripts]
+vllm-grpc-proxy = "vllm_grpc_proxy.main:main"
 
 [tool.uv.sources]
 vllm-grpc-gen = { workspace = true }

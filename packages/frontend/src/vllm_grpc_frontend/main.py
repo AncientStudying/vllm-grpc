@@ -48,14 +48,14 @@ async def serve(
     options: Sequence[ChannelOption] | None = None,
     compression: grpc.Compression | None = None,
 ) -> None:
-    from transformers import AutoTokenizer
-    from vllm import AsyncEngineArgs, AsyncLLMEngine
+    from vllm import AsyncEngineArgs
+    from vllm.v1.engine.async_llm import AsyncLLM
 
     model_name = os.environ.get("MODEL_NAME", "Qwen/Qwen3-0.6B")
-    engine = AsyncLLMEngine.from_engine_args(
-        AsyncEngineArgs(model=model_name, enable_prompt_embeds=True)
-    )
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    engine = AsyncLLM.from_engine_args(AsyncEngineArgs(model=model_name, enable_prompt_embeds=True))
+    # AsyncLLM exposes the engine's tokenizer; reuse it for the chat translator
+    # (mirrors the M6.x real-engine benchmark harness).
+    tokenizer = engine.tokenizer
 
     host = os.environ.get("FRONTEND_HOST", "0.0.0.0")
     port = os.environ.get("FRONTEND_PORT", "50051")

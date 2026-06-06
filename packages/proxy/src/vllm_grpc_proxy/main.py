@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -39,3 +40,20 @@ async def healthz() -> Response:
             {"status": "error", "detail": str(exc)},
             status_code=503,
         )
+
+
+def main() -> None:
+    """Console-script entry point: launch the REST proxy with uvicorn.
+
+    Host/port read from the environment (``PROXY_HOST`` / ``PROXY_PORT``),
+    mirroring the ``make run-proxy`` target's defaults.
+    """
+    import uvicorn
+
+    host = os.environ.get("PROXY_HOST", "0.0.0.0")
+    port = int(os.environ.get("PROXY_PORT", "8000"))
+    uvicorn.run("vllm_grpc_proxy.main:app", host=host, port=port)
+
+
+if __name__ == "__main__":
+    main()
