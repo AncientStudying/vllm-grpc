@@ -58,6 +58,10 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          # Idempotent re-runs: skip any (name, version) already on the index
+          # instead of failing. PyPI versions are immutable, so a re-tag of an
+          # already-published version is a safe no-op rather than a hard error.
+          skip-existing: true
 
   publish-pypi:
     # FR-014 — real-index publish, gated behind a protected environment with
@@ -73,3 +77,7 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Idempotent re-runs: skip any (name, version) already on the index
+          # instead of failing. See publish-testpypi above.
+          skip-existing: true
